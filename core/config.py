@@ -1,47 +1,95 @@
 import json
 import os
+import threading
+from dotenv import load_dotenv
+from core.logger import get_logger
+from core.paths import BASE_DIR
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+logger = get_logger(__name__)
 
-def load_config():
-    if not os.path.exists(CONFIG_FILE):
-        return {}
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+ENV_FILE = os.path.join(BASE_DIR, ".env")
+
+_config_lock = threading.Lock()
+
+load_dotenv(ENV_FILE)
+
+
+def load_config() -> dict:
+    config = {}
+    if os.path.exists(CONFIG_FILE):
         try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return {}
+            with open(CONFIG_FILE, "r") as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, PermissionError) as e:
+            logger.error("config.json o'qishda xatolik: %s", e)
 
-def save_config(new_config: dict):
-    config = load_config()
-    config.update(new_config)
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=4)
+    # Defaults and Env overrides
+    config["url"] = os.getenv("FRAPPE_URL", config.get("url", "http://localhost:8000")).rstrip("/")
+    config["site"] = os.getenv("FRAPPE_SITE", config.get("site", ""))
+    config["api_key"] = os.getenv("FRAPPE_API_KEY", config.get("api_key", ""))
+    config["api_secret"] = os.getenv("FRAPPE_API_SECRET", config.get("api_secret", ""))
+    config["user"] = os.getenv("FRAPPE_USER", config.get("user", ""))
+    config["password"] = os.getenv("FRAPPE_PASSWORD", config.get("password", ""))
+
+    return config
 
 
-def write_config(config: dict):
-    """Persist exactly provided config without merging with existing content."""
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=4)
+def save_config(data: dict):
+    with _config_lock:
+        config = {}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    config = json.load(f)
+            except (json.JSONDecodeError, PermissionError):
+                pass
+
+        # config.json ga yozilmasligi kerak bo'lgan kalitlar
+        # url, site, user, password, api_key, api_secret → .env da saqlanadi
+        excluded_keys = {"url", "site", "user", "password", "api_key", "api_secret"}
+        clean_data = {k: v for k, v in data.items() if k not in excluded_keys}
+        config.update(clean_data)
+
+        # Eski qoldiqlarni tozalash
+        for key in excluded_keys:
+            config.pop(key, None)
+
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+        except PermissionError:
+            logger.error("config.json yozishda ruxsat yo'q")
+
+
+
+def save_credentials(url: str, user: str, password: str, site: str = ""):
+    env_lines = [
+        f"FRAPPE_URL={url}\n",
+        f"FRAPPE_USER={user}\n",
+        f"FRAPPE_PASSWORD={password}\n",
+        f"FRAPPE_SITE={site}\n",
+    ]
+    try:
+        with open(ENV_FILE, "w") as f:
+            f.writelines(env_lines)
+        load_dotenv(ENV_FILE, override=True)
+        logger.info("Credentials .env fayliga saqlandi")
+    except PermissionError:
+        logger.error(".env fayliga yozishda ruxsat yo'q")
+
 
 def clear_credentials():
-    config = load_config()
-    config.pop("apiKey", None)
-    config.pop("apiSecret", None)
-    config.pop("user", None)
-    config.pop("password", None)
-    config.pop("site", None)
-    write_config(config)
-
-
-def persist_login_config(url: str, site: str, user: str, save_password: bool = False, password: str = ""):
-    """Store auth settings while avoiding plaintext password persistence by default."""
-    payload = {
-        "serverUrl": url,
-        "site": site,
-        "user": user,
-        "password": password if save_password else "",
-        "apiKey": "",
-        "apiSecret": "",
-    }
-    save_config(payload)
+    if os.path.exists(ENV_FILE):
+        try:
+            os.remove(ENV_FILE)
+            logger.info(".env fayli o'chirildi (logout)")
+        except Exception as e:
+            logger.error(".env faylini o'chirishda xatolik: %s", e)
+    
+    os.environ.pop("FRAPPE_URL", None)
+    os.environ.pop("FRAPPE_USER", None)
+    os.environ.pop("FRAPPE_PASSWORD", None)
+    os.environ.pop("FRAPPE_SITE", None)
+    os.environ.pop("FRAPPE_API_KEY", None)
+    os.environ.pop("FRAPPE_API_SECRET", None)

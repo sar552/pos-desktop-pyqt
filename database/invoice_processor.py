@@ -1,186 +1,129 @@
+"""Shared invoice processing logic for sync and offline_sync workers."""
 import json
-import uuid
-from core.api import FrappeAPI
-from database.models import SalesInvoice, SalesInvoiceItem, SalesInvoicePayment
 from core.logger import get_logger
-from core.config import load_config
 
 logger = get_logger(__name__)
 
+# ──────────────────────────────────────────────────
+#  Permanent error detection
+# ──────────────────────────────────────────────────
+PERMANENT_KEYWORDS = [
+    "validationerror",
+    "permissionerror",
+    "doesnotexisterror",
+    "mandatoryerror",
+    "invalidcolumnname",
+    "server xatosi (417)",
+    "server xatosi (403)",
+    "server xatosi (404)",
+]
 
-def _is_probable_invoice_id(value: str) -> bool:
-    if not value:
-        return False
-    clean = value.strip()
-    if len(clean) > 140 or " " in clean:
-        return False
-    return any(ch.isdigit() for ch in clean)
+
+def is_permanent_error(error_msg: str) -> bool:
+    msg_lower = error_msg.lower()
+    return any(kw in msg_lower for kw in PERMANENT_KEYWORDS)
 
 
-def _extract_invoice_name(response) -> str:
-    """Extract created Sales Invoice name from POSAwesome submit response."""
-    if isinstance(response, str):
-        candidate = response.strip()
-        return candidate if _is_probable_invoice_id(candidate) else ""
+# ──────────────────────────────────────────────────
+#  Mandatory field defaults
+# ──────────────────────────────────────────────────
+def ensure_mandatory_fields(payload: dict):
+    defaults = {
+        "mode_of_payment": "Cash",
+        "no_of_pax": 1,
+        "last_invoice": "",
+        "waiter": payload.get("cashier") or "Administrator",  # server API talab qiladi
+        "room": "",
+        "aggregator_id": "",
+        "items": [],
+    }
+    for field, default in defaults.items():
+        if field not in payload:
+            payload[field] = default
 
-    if not isinstance(response, dict):
-        return ""
 
-    message = response.get("message")
-    if isinstance(message, str):
-        candidate = message.strip()
-        return candidate if _is_probable_invoice_id(candidate) else ""
-    if isinstance(message, dict):
-        candidate = str(message.get("name") or message.get("value") or "").strip()
-        return candidate if _is_probable_invoice_id(candidate) else ""
-
-    candidate = str(response.get("name") or "").strip()
-    return candidate if _is_probable_invoice_id(candidate) else ""
-
-def process_pending_invoice(api: FrappeAPI, inv: SalesInvoice) -> tuple[str, str]:
-    """Bitta oflayn chekni serverga yuborish.
-    Qaytaradi: (status_string, error_message)
-    status_string: "Synced" yoki "Failed" yoki "Draft"
-    """
-    if not api.is_configured():
-        return "Draft", "API sozlanmagan"
-
+# ──────────────────────────────────────────────────
+#  Submit invoice (make_invoice + print)
+# ──────────────────────────────────────────────────
+def submit_invoice(api, payload: dict, invoice_name: str, payments: list):
+    """sync_order dan keyin make_invoice chaqirish va chop etish"""
     try:
-        config = load_config()
-        currency = config.get("currency", "UZS")
-
-        # Invoice ma'lumotlarini yig'ish (Frappe/PosAwesome formatida)
-        items = []
-        for it in inv.items:
-            amount = float(it.amount or 0)
-            items.append({
-                "item_code": it.item_code,
-                "item_name": it.item_name,
-                "qty": it.qty,
-                "rate": it.rate,
-                "amount": amount,
-                "base_amount": amount,
-                "uom": it.uom,
-                "batch_no": it.batch_no,
-                "serial_no": it.serial_no
-            })
-
-        payments = []
-        for p in inv.payments:
-            amount = float(p.amount or 0)
-            p_type = "Cash" if "cash" in (p.mode_of_payment or "").lower() else "Bank"
-            payments.append({
-                "mode_of_payment": p.mode_of_payment,
-                "amount": amount,
-                "base_amount": amount,
-                "account": p.account,
-                "type": p_type,
-                "currency": currency,
-            })
-
-        effective_pos_profile = inv.pos_profile
-        configured_profile = config.get("pos_profile")
-        if configured_profile and effective_pos_profile and effective_pos_profile != configured_profile:
-            logger.warning(
-                "Invoice %s da pos_profile '%s' topildi, configured profile '%s' ishlatiladi.",
-                inv.offline_id,
-                effective_pos_profile,
-                configured_profile,
-            )
-            effective_pos_profile = configured_profile
-
-        invoice_payload = {
-            "customer": inv.customer,
-            "pos_profile": effective_pos_profile,
-            "company": inv.company,
-            "posting_date": inv.posting_date.strftime("%Y-%m-%d"),
-            "items": items,
+        payment_payload = {
+            "customer": payload.get("customer"),
             "payments": payments,
-            "is_pos": 1,
-            "update_stock": 1,
-            "total": float(inv.total or inv.net_total or inv.grand_total or 0),
-            "net_total": float(inv.net_total or inv.total or inv.grand_total or 0),
-            "grand_total": float(inv.grand_total or 0),
-            "rounded_total": float(inv.grand_total or 0),
-            "paid_amount": float(inv.paid_amount or 0),
-            "base_grand_total": float(inv.grand_total or 0),
-            "base_paid_amount": float(inv.paid_amount or 0),
-            "currency": currency,
+            "cashier": payload.get("cashier"),
+            "pos_profile": payload.get("pos_profile"),
+            "owner": payload.get("owner"),
+            "additionalDiscount": 0,
+            "table": None,
+            "invoice": invoice_name,
         }
-        
-        # PosAwesome asosan `submit_invoice` metodini kutadi
-        # invoice: json_string, data: json_string
-        
         success, response = api.call_method(
-            "posawesome.posawesome.api.invoices.submit_invoice",
-            {
-                "invoice": json.dumps(invoice_payload),
-                "data": json.dumps(
-                    {
-                        "is_credit_sale": int((inv.paid_amount or 0) < (inv.grand_total or 0)),
-                        "paid_change": max(0, float(inv.paid_amount or 0) - float(inv.grand_total or 0)),
-                        "write_off_amount": 0,
-                    }
-                ),
-            }
+            "ury.ury.doctype.ury_order.ury_order.make_invoice", payment_payload
         )
-
         if success:
-            server_name = _extract_invoice_name(response)
-            if not server_name:
-                logger.error("submit_invoice javobida invoice nomi yo'q: %s", response)
-                return "Draft", "Server invoice nomi qaytmadi"
-
-            inv.name = server_name
-            logger.info("Invoice serverga muvaffaqiyatli ketdi: %s (Server Name: %s)", inv.offline_id, server_name)
-            return "Synced", ""
+            logger.info("make_invoice muvaffaqiyatli: %s", invoice_name)
+            print_invoice(invoice_name, payload, payments)
         else:
-            logger.error("Invoice yuborishda xatolik: %s", response)
-            return "Draft", str(response)
-
+            logger.error("make_invoice xatosi (%s): %s", invoice_name, response)
     except Exception as e:
-        logger.error("Invoice yuborishda kutilmagan xatolik: %s", e)
-        return "Draft", str(e)
+        logger.error("make_invoice chaqiruvida xatolik (%s): %s", invoice_name, e)
 
-def save_offline_invoice(invoice_data: dict) -> SalesInvoice:
-    """Sotuv ma'lumotlarini lokal bazaga saqlash"""
-    from database.models import db
-    
-    with db.atomic():
-        offline_id = str(uuid.uuid4())
-        
-        inv = SalesInvoice.create(
-            offline_id=offline_id,
-            customer=invoice_data["customer"],
-            pos_profile=invoice_data["pos_profile"],
-            company=invoice_data["company"],
-            total_qty=invoice_data["total_qty"],
-            grand_total=invoice_data["grand_total"],
-            net_total=invoice_data.get("net_total", 0),
-            discount_amount=invoice_data.get("discount_amount", 0),
-            paid_amount=invoice_data["paid_amount"],
-            status="Draft"
+
+def print_invoice(invoice_name: str, payload: dict, payments: list):
+    """Lokal printer orqali chop etish"""
+    try:
+        from core.printer import print_receipt
+
+        order_data = payload.copy()
+        total_amount = sum(
+            float(item.get("qty", 0)) * float(item.get("rate", 0))
+            for item in payload.get("items", [])
         )
-        
-        for item in invoice_data["items"]:
-            SalesInvoiceItem.create(
-                invoice=inv,
-                item_code=item["item_code"],
-                item_name=item["item_name"],
-                qty=item["qty"],
-                uom=item["uom"],
-                rate=item["rate"],
-                amount=item["amount"],
-                batch_no=item.get("batch_no"),
-                serial_no=item.get("serial_no")
-            )
-            
-        for p in invoice_data["payments"]:
-            SalesInvoicePayment.create(
-                invoice=inv,
-                mode_of_payment=p["mode_of_payment"],
-                amount=p["amount"],
-                account=p.get("account")
-            )
-            
-        return inv
+        order_data["total_amount"] = total_amount
+
+        results = print_receipt(None, order_data, payments)
+        for p_type, success in results.items():
+            if success:
+                logger.info("Invoice %s — %s printer chop etildi", invoice_name, p_type)
+            else:
+                logger.warning("Invoice %s — %s printer chop etilmadi", invoice_name, p_type)
+    except Exception as e:
+        logger.error("Lokal print xatosi: %s", e)
+
+
+# ──────────────────────────────────────────────────
+#  Process a single pending invoice
+# ──────────────────────────────────────────────────
+def process_pending_invoice(api, invoice) -> tuple[str, str]:
+    """Bitta pending invoiceni serverga yuborish.
+
+    Returns: (status, message)
+        status: 'Synced' | 'Failed' | 'Pending' (retry)
+    """
+    try:
+        payload = json.loads(invoice.invoice_data)
+        saved_payments = payload.pop("_payments", None)
+        ensure_mandatory_fields(payload)
+
+        success, response = api.call_method(
+            "ury.ury.doctype.ury_order.ury_order.sync_order", payload
+        )
+
+        if success and isinstance(response, dict) and response.get("status") != "Failure":
+            invoice_name = response.get("name")
+            if invoice_name and saved_payments:
+                submit_invoice(api, payload, invoice_name, saved_payments)
+            return "Synced", "Muvaffaqiyatli"
+        else:
+            error_str = str(response)
+            if is_permanent_error(error_str):
+                return "Failed", error_str
+            return "Pending", error_str
+
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error("Chek #%d JSON xatosi: %s", invoice.id, e)
+        return "Failed", str(e)
+    except Exception as e:
+        logger.error("Chek #%d sinxronizatsiya xatosi: %s", invoice.id, e)
+        return "Pending", str(e)

@@ -1,13 +1,11 @@
 import json
+import datetime
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.api import FrappeAPI
 from core.config import load_config, save_config
 from core.logger import get_logger
-from core.constants import CUSTOMER_SYNC_LIMIT, DEFAULT_CURRENCY, DEFAULT_CUSTOMER, DEFAULT_UOM
-from database.models import (
-    Item, Customer, ItemPrice, SalesInvoice, 
-    SalesInvoiceItem, SalesInvoicePayment, ItemGroup, db
-)
+from core.constants import CUSTOMER_SYNC_LIMIT
+from database.models import Item, Customer, PosProfile, PosShift, PendingInvoice, db
 from database.invoice_processor import process_pending_invoice
 
 logger = get_logger(__name__)
@@ -26,12 +24,14 @@ class SyncWorker(QThread):
             db.connect(reuse_if_open=True)
 
             self._sync_pending_invoices()
-            
             logged_user = self._get_logged_user()
-            self._sync_pos_profile(logged_user)
-            self._sync_item_groups()
-            self._sync_items()
-            self._sync_customers()
+            pos_profile_data = self._sync_pos_profile(logged_user)
+            if not pos_profile_data:
+                self.sync_finished.emit(False, "POS Profil ochiq emas yoki topilmadi. Avval smena oching.")
+                return
+
+            self._sync_items(pos_profile_data)
+            self._sync_customers(pos_profile_data)
 
             self.sync_finished.emit(True, "Sinxronizatsiya muvaffaqiyatli yakunlandi!")
         except Exception as e:
@@ -43,10 +43,8 @@ class SyncWorker(QThread):
 
     def _sync_pending_invoices(self):
         self.progress_update.emit("Oflayn cheklar yuborilmoqda...")
-        # Draft va legacy Failed holatlarni qayta yuboramiz.
-        pending = SalesInvoice.select().where(
-            (SalesInvoice.status == "Draft") | (SalesInvoice.status == "Failed")
-        )
+        pending = PendingInvoice.select().where(PendingInvoice.status == "Pending")
+
         if not pending.exists():
             return
 
@@ -55,158 +53,218 @@ class SyncWorker(QThread):
             self.progress_update.emit(f"Oflayn chek yuborilmoqda: {i + 1}/{count}")
             status, message = process_pending_invoice(self.api, inv)
             inv.status = status
-            inv.sync_message = message
+            inv.error_message = message
             inv.save()
 
     def _get_logged_user(self) -> str:
-        self.progress_update.emit("Foydalanuvchi tekshirilmoqda...")
+        self.progress_update.emit("Foydalanuvchi ma'lumotlari olinmoqda...")
         success, user_data = self.api.call_method("frappe.auth.get_logged_user")
-        return user_data if success else self.api.user
+        return user_data if success else "Administrator"
 
-    def _sync_pos_profile(self, logged_user: str):
-        self.progress_update.emit("POS Profile olinmoqda...")
-        success, pos_profile_data = self.api.call_method("posawesome.posawesome.api.utils.get_active_pos_profile")
-        
-        # pos_profile_data string bo'lishi kerak, lekin ba'zida ro'yxat yoki dict kelishi mumkin
-        pos_profile_name = ""
-        if success:
-            if isinstance(pos_profile_data, str):
-                pos_profile_name = pos_profile_data
-            elif isinstance(pos_profile_data, list) and len(pos_profile_data) > 0:
-                pos_profile_name = pos_profile_data[0]
-            elif isinstance(pos_profile_data, dict):
-                pos_profile_name = pos_profile_data.get("name") or pos_profile_data.get("message")
-
-        if not success or not pos_profile_name:
-            raise Exception("Faol POS profili topilmadi. Iltimos, serverda POS profilini sozlang.")
-
-        success_detail, profile_doc = self.api.call_method(
-            "frappe.client.get", {"doctype": "POS Profile", "name": str(pos_profile_name)}
+    def _sync_pos_profile(self, logged_user: str) -> dict:
+        self.progress_update.emit("POS Smena tekshirilmoqda...")
+        success, shift_data = self.api.call_method(
+            "posawesome.posawesome.api.shifts.check_opening_shift", 
+            {"user": logged_user}
         )
 
-        if success_detail and isinstance(profile_doc, dict):
-            payments = profile_doc.get("payments", [])
-            payment_methods = [p.get("mode_of_payment") for p in payments]
-            default_customer = profile_doc.get("customer") or DEFAULT_CUSTOMER
-            currency = profile_doc.get("currency", DEFAULT_CURRENCY)
-            price_list = profile_doc.get("selling_price_list", "")
-            
-            save_config({
-                "pos_profile": pos_profile_name,
-                "cashier": logged_user,
-                "company": profile_doc.get("company"),
-                "currency": currency,
-                "price_list": price_list,
-                "payment_methods": payment_methods,
-                "default_customer": default_customer,
-                "posa_tax_inclusive": profile_doc.get("posa_tax_inclusive", 0),
-                "warehouse": profile_doc.get("warehouse")
-            })
+        if not success or not shift_data:
+            logger.warning("No open shift found")
+            return None
 
-    def _sync_item_groups(self):
-        self.progress_update.emit("Mahsulot guruhlari yuklanmoqda...")
-        success, groups = self.api.call_method(
-            "frappe.client.get_list", {
-                "doctype": "Item Group",
-                "fields": ["name", "parent_item_group", "is_group"],
-                "limit_page_length": 1000
-            }
-        )
-        if success and isinstance(groups, list):
-            with db.atomic():
-                for g in groups:
-                    ItemGroup.insert(
-                        name=g["name"],
-                        parent_item_group=g.get("parent_item_group"),
-                        is_group=bool(g.get("is_group"))
-                    ).on_conflict_replace().execute()
+        # PosAwesome qaytargan ma'lumotlar
+        pos_profile = shift_data.get("pos_profile", {})
+        pos_opening_shift = shift_data.get("pos_opening_shift", {})
+        company = shift_data.get("company", {})
 
-    def _sync_items(self):
+        profile_name = pos_profile.get("name")
+        if not profile_name:
+            return None
+
+        # Config'ga joriy profilni saqlash
         config = load_config()
-        pos_profile = config.get("pos_profile")
-        price_list = config.get("price_list")
-        if not pos_profile:
-            return
-            
-        self.progress_update.emit(f"'{pos_profile}' profilidagi tovarlar yuklanmoqda...")
-        # PosAwesome'dan barcha kerakli fieldlarni olamiz
-        success, items_data = self.api.call_method(
-            "posawesome.posawesome.api.items.get_items", 
-            {"pos_profile": pos_profile, "price_list": price_list}
-        )
+        config["pos_profile"] = profile_name
+        config["company"] = company.get("name")
+        config["warehouse"] = pos_profile.get("warehouse")
+        config["currency"] = pos_profile.get("currency")
+        save_config(config)
 
-        if not success or not isinstance(items_data, list):
-            logger.warning("Items ma'lumotlari olinmadi")
-            return
+        # Bazaga POS Profile'ni seriyali Json sifatida saqlash
+        with db.atomic():
+            PosProfile.insert(
+                name=profile_name,
+                company=company.get("name"),
+                warehouse=pos_profile.get("warehouse"),
+                currency=pos_profile.get("currency"),
+                profile_data=json.dumps(pos_profile),
+                last_sync=datetime.datetime.now()
+            ).on_conflict(
+                conflict_target=[PosProfile.name],
+                preserve=[PosProfile.company, PosProfile.warehouse, PosProfile.currency, PosProfile.profile_data, PosProfile.last_sync],
+            ).execute()
+
+            # PosShift ni locally ochiq qilib belgilash
+            shift_entry = pos_opening_shift.get("name")
+            if shift_entry:
+                PosShift.insert(
+                    opening_entry=shift_entry,
+                    pos_profile=profile_name,
+                    company=company.get("name"),
+                    user=logged_user,
+                    status="Open",
+                    opened_at=pos_opening_shift.get("period_start_date") or datetime.datetime.now()
+                ).on_conflict_ignore().execute() # Agar bor bo'lsa ignore
+
+        return pos_profile
+
+    def _sync_items(self, pos_profile_data: dict):
+        self.progress_update.emit("Tovarlar POSAwesome'dan yuklanmoqda...")
+        profile_json = json.dumps(pos_profile_data)
+        
+        # Batch synchronization parameters
+        limit = 500
+        start_after = ""
+        total_synced = 0
+        has_more = True
 
         server_item_codes = set()
-        with db.atomic():
-            for it in items_data:
-                item_code = it.get("item_code")
-                if not item_code:
-                    continue
-                server_item_codes.add(item_code)
 
-                # Soliqlarni JSON formatida saqlaymiz
-                taxes = it.get("taxes")
-                taxes_json = json.dumps(taxes) if taxes else None
+        while has_more:
+            params = {
+                "pos_profile": profile_json,
+                "limit": limit,
+            }
+            if start_after:
+                params["start_after"] = start_after
 
-                Item.insert(
-                    item_code=item_code,
-                    item_name=it.get("item_name", item_code),
-                    item_group=it.get("item_group", ""),
-                    description=it.get("description", ""),
-                    barcode=it.get("barcode", ""),
-                    custom_barcode=it.get("custom_barcode", ""),
-                    image=it.get("image", ""),
-                    uom=it.get("uom", DEFAULT_UOM),
-                    has_batch_no=bool(it.get("has_batch_no", 0)),
-                    has_serial_no=bool(it.get("has_serial_no", 0)),
-                    is_stock_item=bool(it.get("is_stock_item", 1)),
-                    allow_negative_stock=bool(it.get("allow_negative_stock", 0)),
-                    actual_qty=float(it.get("actual_qty") or 0.0),
-                    taxes=taxes_json
-                ).on_conflict_replace().execute()
+            success, items_response = self.api.call_method(
+                "posawesome.posawesome.api.items.get_items", params
+            )
 
-                rate = float(it.get("rate") or it.get("price_list_rate") or 0.0)
-                ItemPrice.insert(
-                    name=f"Price-{item_code}",
-                    item_code=item_code,
-                    price_list=price_list,
-                    price_list_rate=rate,
-                    currency=config.get("currency", DEFAULT_CURRENCY),
-                ).on_conflict_replace().execute()
-
-    def _sync_customers(self):
-        self.progress_update.emit("Mijozlar ro'yxati yuklanmoqda...")
-        config = load_config()
-        pos_profile = config.get("pos_profile")
-        if not pos_profile:
-            return
-
-        # customers API json.loads(pos_profile) kutadi.
-        pos_profile_payload = json.dumps({
-            "name": pos_profile,
-            "posa_use_server_cache": 0,
-            "posa_server_cache_duration": 30,
-        })
+            if not success or not items_response:
+                break
             
-        success, customers = self.api.call_method(
-            "posawesome.posawesome.api.customers.get_customer_names", 
-            {"pos_profile": pos_profile_payload, "limit": CUSTOMER_SYNC_LIMIT}
-        )
-        if not success or not isinstance(customers, list):
-            return
+            # items_response format list of dicts based on posawesome api
+            if not isinstance(items_response, list):
+                break
 
-        with db.atomic():
-            for cust in customers:
-                c_name = cust.get("name")
-                if not c_name: continue
-                Customer.insert(
-                    name=c_name,
-                    customer_name=cust.get("customer_name", c_name),
-                    customer_group=cust.get("customer_group", ""),
-                    phone=cust.get("mobile_no", ""),
-                    email=cust.get("email_id", ""),
-                    tax_id=cust.get("tax_id", "")
-                ).on_conflict_replace().execute()
+            with db.atomic():
+                for itm in items_response:
+                    item_code = itm.get("item_code")
+                    if not item_code:
+                        continue
+                        
+                    server_item_codes.add(item_code)
+                    
+                    Item.insert(
+                        item_code=item_code,
+                        item_name=itm.get("item_name") or item_code,
+                        description=itm.get("description"),
+                        item_group=itm.get("item_group"),
+                        barcode=itm.get("barcode"),
+                        uom=itm.get("uom") or itm.get("stock_uom"),
+                        stock_uom=itm.get("stock_uom"),
+                        image=itm.get("image"),
+                        has_batch_no=bool(itm.get("has_batch_no")),
+                        has_serial_no=bool(itm.get("has_serial_no") or itm.get("has_serial_no")),
+                        has_variants=bool(itm.get("has_variants")),
+                        is_stock_item=bool(itm.get("is_stock_item")),
+                        standard_rate=float(itm.get("price_list_rate") or 0.0),
+                        posawesome_data=json.dumps(itm),
+                        last_sync=datetime.datetime.now()
+                    ).on_conflict(
+                        conflict_target=[Item.item_code],
+                        update={
+                            "item_name": itm.get("item_name") or item_code,
+                            "description": itm.get("description"),
+                            "item_group": itm.get("item_group"),
+                            "barcode": itm.get("barcode"),
+                            "uom": itm.get("uom") or itm.get("stock_uom"),
+                            "stock_uom": itm.get("stock_uom"),
+                            "image": itm.get("image"),
+                            "has_batch_no": bool(itm.get("has_batch_no")),
+                            "has_serial_no": bool(itm.get("has_serial_no") or itm.get("has_serial_no")),
+                            "has_variants": bool(itm.get("has_variants")),
+                            "is_stock_item": bool(itm.get("is_stock_item")),
+                            "standard_rate": float(itm.get("price_list_rate") or 0.0),
+                            "posawesome_data": json.dumps(itm),
+                            "last_sync": datetime.datetime.now()
+                        }
+                    ).execute()
+                    
+                    # Update start_after hook for keyset pagination
+                    start_after = item_code
+
+            total_synced += len(items_response)
+            self.progress_update.emit(f"Tovarlar POSAwesome dan yuklandi: {total_synced}")
+            
+            if len(items_response) < limit:
+                has_more = False
+
+        if server_item_codes:
+            # Optionally remove items not in server_item_codes if you want pure sync
+            pass
+
+    def _sync_customers(self, pos_profile_data: dict):
+        self.progress_update.emit("Mijozlar POSAwesome'dan yuklanmoqda...")
+        profile_json = json.dumps(pos_profile_data)
+        
+        limit = CUSTOMER_SYNC_LIMIT
+        start_after = ""
+        total_synced = 0
+        has_more = True
+
+        while has_more:
+            params = {
+                "pos_profile": profile_json,
+                "limit": limit,
+            }
+            if start_after:
+                params["start_after"] = start_after
+
+            success, customer_response = self.api.call_method(
+                "posawesome.posawesome.api.customers.get_customer_names", params
+            )
+
+            if not success or not customer_response:
+                break
+                
+            if not isinstance(customer_response, list):
+                break
+
+            with db.atomic():
+                for cust in customer_response:
+                    # customer returns object with name, customer_name, customer_group, mobile_no
+                    name = cust.get("name")
+                    if not name:
+                        continue
+                        
+                    Customer.insert(
+                        name=name,
+                        customer_name=cust.get("customer_name") or name,
+                        customer_group=cust.get("customer_group"),
+                        phone=cust.get("mobile_no") or cust.get("phone"),
+                        email=cust.get("email_id"),
+                        address=cust.get("customer_primary_address"),
+                        posawesome_data=json.dumps(cust),
+                        last_sync=datetime.datetime.now()
+                    ).on_conflict(
+                        conflict_target=[Customer.name],
+                        update={
+                            "customer_name": cust.get("customer_name") or name,
+                            "customer_group": cust.get("customer_group"),
+                            "phone": cust.get("mobile_no") or cust.get("phone"),
+                            "email": cust.get("email_id"),
+                            "address": cust.get("customer_primary_address"),
+                            "posawesome_data": json.dumps(cust),
+                            "last_sync": datetime.datetime.now()
+                        }
+                    ).execute()
+                    
+                    start_after = name
+
+            total_synced += len(customer_response)
+            self.progress_update.emit(f"Mijozlar POSAwesome dan yuklandi: {total_synced}")
+            
+            if len(customer_response) < limit:
+                has_more = False
