@@ -191,3 +191,8 @@ pyrightconfig.json
 # Ignore all local history of files
 .history
 .ionide
+
+# SQLite temporary files
+*.db-shm
+*.db-wal
+database/pos.db
