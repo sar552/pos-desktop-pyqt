@@ -55,7 +55,8 @@ class CartWidget(QWidget):
         
         self.customer_combo = QComboBox()
         self.customer_combo.setEditable(True)
-        self.customer_combo.setFixedHeight(40)
+        self.customer_combo.setMinimumHeight(34)
+        self.customer_combo.setMaximumHeight(44)
         self.customer_combo.setStyleSheet("""
             QComboBox { background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px; }
             QComboBox QAbstractItemView { background: #1e1e1e; color: white; }
@@ -70,7 +71,8 @@ class CartWidget(QWidget):
         cg_label.setStyleSheet("color: #a0a0a0; font-size: 11px;")
         self.cg_mock = QComboBox()
         self.cg_mock.addItems(["All Groups", "Commercial", "Government", "Individual"])
-        self.cg_mock.setFixedHeight(40)
+        self.cg_mock.setMinimumHeight(34)
+        self.cg_mock.setMaximumHeight(44)
         self.cg_mock.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
         cg_vbox.addWidget(cg_label)
         cg_vbox.addWidget(self.cg_mock)
@@ -84,7 +86,8 @@ class CartWidget(QWidget):
         search_bar = QHBoxLayout()
         self.search_item_input = QLineEdit()
         self.search_item_input.setPlaceholderText("Search items or barcode...")
-        self.search_item_input.setFixedHeight(40)
+        self.search_item_input.setMinimumHeight(34)
+        self.search_item_input.setMaximumHeight(44)
         self.search_item_input.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
         
         pl_vbox = QVBoxLayout()
@@ -93,7 +96,8 @@ class CartWidget(QWidget):
         pl_label.setStyleSheet("color: #a0a0a0; font-size: 11px;")
         self.pl_mock = QComboBox()
         self.pl_mock.addItems(["Standard Selling...", "Wholesale"])
-        self.pl_mock.setFixedHeight(30)
+        self.pl_mock.setMinimumHeight(26)
+        self.pl_mock.setMaximumHeight(36)
         self.pl_mock.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
         pl_vbox.addWidget(pl_label)
         pl_vbox.addWidget(self.pl_mock)
@@ -184,12 +188,14 @@ class CartWidget(QWidget):
         
         # Action Buttons
         save_btn = QPushButton("SAVE & CLEAR")
-        save_btn.setFixedHeight(45)
+        save_btn.setMinimumHeight(38)
+        save_btn.setMaximumHeight(50)
         save_btn.setStyleSheet("background: #f97316; color: white; font-weight: 900; border-radius: 4px; font-size: 12px;")
         save_btn.clicked.connect(self.clear_cart)
         
         cancel_btn = QPushButton("CANCEL SALE")
-        cancel_btn.setFixedHeight(45)
+        cancel_btn.setMinimumHeight(38)
+        cancel_btn.setMaximumHeight(50)
         cancel_btn.setStyleSheet("background: #ec4899; color: white; font-weight: 900; border-radius: 4px; font-size: 12px;")
         cancel_btn.clicked.connect(self.clear_cart)
         
@@ -219,7 +225,8 @@ class CartWidget(QWidget):
         t_vbox.addWidget(self.total_label)
         
         self.checkout_btn = QPushButton("PAY")
-        self.checkout_btn.setFixedHeight(50)
+        self.checkout_btn.setMinimumHeight(42)
+        self.checkout_btn.setMaximumHeight(56)
         self.checkout_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.checkout_btn.setStyleSheet("""
             QPushButton {

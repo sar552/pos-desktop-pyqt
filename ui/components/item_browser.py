@@ -61,7 +61,8 @@ class ItemButton(QFrame):
 
         # --- Rasm qismi (karta yuqori qismi) ---
         self.image_container = QWidget()
-        self.image_container.setFixedHeight(130)
+        self.image_container.setMinimumHeight(100)
+        self.image_container.setMaximumHeight(150)
         self.image_container.setStyleSheet("""
             background: #222222;
             border-top-left-radius: 8px;
@@ -72,7 +73,8 @@ class ItemButton(QFrame):
         img_inner.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.image_label = QLabel()
-        self.image_label.setFixedSize(90, 90)
+        self.image_label.setMinimumSize(70, 70)
+        self.image_label.setMaximumSize(100, 100)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet("""
             background: rgba(0,0,0,0.3);
@@ -116,7 +118,8 @@ class ItemButton(QFrame):
             border: none;
             line-height: 1.3;
         """)
-        name_label.setFixedHeight(36)
+        name_label.setMinimumHeight(30)
+        name_label.setMaximumHeight(42)
 
         # Narx badge
         price_str = f"{price:,.0f}".replace(",", " ") + f" {currency}"
@@ -132,7 +135,8 @@ class ItemButton(QFrame):
             padding: 4px 8px;
             border: none;
         """)
-        price_label.setFixedHeight(28)
+        price_label.setMinimumHeight(24)
+        price_label.setMaximumHeight(32)
 
         
         # Stock Info
@@ -215,7 +219,8 @@ class ItemBrowser(QWidget):
         # Top row: Search input
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("🔍  Search Items...")
-        self.search_input.setFixedHeight(46)
+        self.search_input.setMinimumHeight(38)
+        self.search_input.setMaximumHeight(52)
         self.search_input.setStyleSheet("""
             QLineEdit {
                 padding: 10px 16px;
@@ -295,7 +300,8 @@ class ItemBrowser(QWidget):
 
         # Categories - Horizontal Scroll
         self.category_scroll = QScrollArea()
-        self.category_scroll.setFixedHeight(60)
+        self.category_scroll.setMinimumHeight(48)
+        self.category_scroll.setMaximumHeight(70)
         self.category_scroll.setWidgetResizable(True)
         self.category_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.category_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -316,11 +322,13 @@ class ItemBrowser(QWidget):
         bottom_bar = QHBoxLayout()
         
         self.btn_list_view = QPushButton("LIST")
-        self.btn_list_view.setFixedHeight(40)
+        self.btn_list_view.setMinimumHeight(34)
+        self.btn_list_view.setMaximumHeight(44)
         self.btn_list_view.clicked.connect(lambda: self.set_view_mode("list"))
         
         self.btn_card_view = QPushButton("CARD")
-        self.btn_card_view.setFixedHeight(40)
+        self.btn_card_view.setMinimumHeight(34)
+        self.btn_card_view.setMaximumHeight(44)
         self.btn_card_view.clicked.connect(lambda: self.set_view_mode("card"))
         
         self._update_toggle_styles()

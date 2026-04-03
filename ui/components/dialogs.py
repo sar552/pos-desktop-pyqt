@@ -30,7 +30,8 @@ class InfoDialog(QDialog):
     def __init__(self, parent, title: str, message: str, kind: str = "success"):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setFixedWidth(380)
+        self.setMinimumWidth(320)
+        self.setMaximumWidth(500)
         self.setStyleSheet("background: white;")
 
         layout = QVBoxLayout(self)
@@ -61,7 +62,7 @@ class InfoDialog(QDialog):
         layout.addWidget(msg)
 
         ok = QPushButton("OK")
-        ok.setFixedHeight(42)
+        ok.setMinimumHeight(38)
         ok.setStyleSheet(
             f"QPushButton{{background:{self._COLORS.get(kind, '#3b82f6')};"
             f"color:white;font-weight:700;border-radius:10px;border:none;}}"
@@ -78,7 +79,8 @@ class ConfirmDialog(QDialog):
                  yes_color: str = "#dc2626"):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setFixedWidth(380)
+        self.setMinimumWidth(320)
+        self.setMaximumWidth(500)
         self.setStyleSheet("background: white;")
         self.result_accepted = False
 
@@ -112,7 +114,7 @@ class ConfirmDialog(QDialog):
         btn_row.setSpacing(10)
 
         no_btn = QPushButton(no_text)
-        no_btn.setFixedHeight(42)
+        no_btn.setMinimumHeight(38)
         no_btn.setStyleSheet(
             "QPushButton{background:#f1f5f9;color:#64748b;font-weight:700;"
             "border-radius:10px;border:none;}"
@@ -121,7 +123,7 @@ class ConfirmDialog(QDialog):
         no_btn.clicked.connect(self.reject)
 
         yes_btn = QPushButton(yes_text)
-        yes_btn.setFixedHeight(42)
+        yes_btn.setMinimumHeight(38)
         yes_btn.setStyleSheet(
             f"QPushButton{{background:{yes_color};color:white;font-weight:700;"
             f"border-radius:10px;border:none;}}"

@@ -87,7 +87,8 @@ class TransactionDetailDialog(QDialog):
         self.api = api
         self.invoice_id = invoice_id
         self.setWindowTitle(f"Chek: {invoice_id}")
-        self.setFixedSize(520, 560)
+        self.setMinimumSize(420, 450)
+        self.resize(520, 560)
         self.setStyleSheet("background: white;")
         self._init_ui()
         self._load()
@@ -147,7 +148,7 @@ class TransactionDetailDialog(QDialog):
         layout.addStretch()
 
         close_btn = QPushButton("Yopish")
-        close_btn.setFixedHeight(44)
+        close_btn.setMinimumHeight(40)
         close_btn.setStyleSheet("""
             QPushButton { background: #f1f5f9; color: #475569;
                 font-weight: 700; border-radius: 10px; border: none; }
@@ -210,7 +211,8 @@ class CancelReasonDialog(QDialog):
         super().__init__(parent)
         self.invoice_id = invoice_id
         self.setWindowTitle("Bekor qilish sababi")
-        self.setFixedSize(620, 480)
+        self.setMinimumSize(500, 400)
+        self.resize(620, 480)
         self.setStyleSheet("background: white;")
         self._init_ui()
 
@@ -228,7 +230,7 @@ class CancelReasonDialog(QDialog):
         self.input = QLineEdit()
         self.input.setReadOnly(True)
         self.input.setPlaceholderText("Sabab yozing...")
-        self.input.setFixedHeight(46)
+        self.input.setMinimumHeight(40)
         self.input.setStyleSheet("""
             QLineEdit {
                 font-size: 15px; color: #1e293b;
@@ -257,7 +259,7 @@ class CancelReasonDialog(QDialog):
         btn_row = QHBoxLayout()
 
         cancel_btn = QPushButton("Bekor")
-        cancel_btn.setFixedHeight(44)
+        cancel_btn.setMinimumHeight(40)
         cancel_btn.setStyleSheet("""
             QPushButton { background: #f1f5f9; color: #64748b;
                 font-weight: 700; border-radius: 10px; border: none; }
@@ -267,7 +269,7 @@ class CancelReasonDialog(QDialog):
         btn_row.addWidget(cancel_btn)
 
         confirm_btn = QPushButton("✓  Tasdiqlash")
-        confirm_btn.setFixedHeight(44)
+        confirm_btn.setMinimumHeight(40)
         confirm_btn.setStyleSheet("""
             QPushButton { background: #ef4444; color: white;
                 font-weight: 700; font-size: 14px;
@@ -282,7 +284,7 @@ class CancelReasonDialog(QDialog):
     def _make_key(self, key):
         label = '␣' if key == 'SPACE' else ('TOZALASH' if key == 'CLR' else key)
         btn = QPushButton(label)
-        btn.setFixedHeight(44)
+        btn.setMinimumHeight(40)
         if key == '⌫':
             style = "background:#fee2e2; color:#ef4444; font-size:15px; font-weight:bold;"
         elif key == 'CLR':
@@ -361,7 +363,8 @@ class HistoryWindow(QWidget):
         hdr_row.addStretch()
 
         refresh_btn = QPushButton("⟳  Yangilash")
-        refresh_btn.setFixedHeight(44)
+        refresh_btn.setMinimumHeight(38)
+        refresh_btn.setMaximumHeight(48)
         refresh_btn.setStyleSheet("""
             QPushButton {
                 padding: 0 16px; background: #f1f5f9; color: #475569;
@@ -374,7 +377,8 @@ class HistoryWindow(QWidget):
         hdr_row.addWidget(refresh_btn)
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(44, 44)
+        close_btn.setMinimumSize(38, 38)
+        close_btn.setMaximumSize(48, 48)
         close_btn.setStyleSheet("""
             QPushButton { background: #fee2e2; color: #b91c1c;
                 font-weight: 700; font-size: 14px; border-radius: 8px; border: none; }

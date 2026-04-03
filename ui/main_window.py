@@ -149,7 +149,8 @@ class MainWindow(QMainWindow):
 
         # ── POSAwesome Brand Logo ──────────────────
         logo_widget = QWidget()
-        logo_widget.setFixedWidth(200)
+        logo_widget.setMinimumWidth(150)
+        logo_widget.setMaximumWidth(220)
         logo_widget.setStyleSheet("""
             QWidget {
                 background: transparent;
@@ -207,14 +208,15 @@ class MainWindow(QMainWindow):
         def _tb_btn(label: str, bg: str, color: str = "white",
                     hover: str = "", border: str = "none") -> QPushButton:
             b = QPushButton(label)
-            b.setFixedHeight(48)
+            b.setMinimumHeight(36)
+            b.setMaximumHeight(52)
             h = hover or bg
             b.setStyleSheet(f"""
                 QPushButton {{
                     background: {bg}; color: {color};
                     font-weight: 700; font-size: 13px;
                     border-radius: 10px; border: {border};
-                    padding: 0 16px;
+                    padding: 0 14px;
                 }}
                 QPushButton:hover {{ background: {h}; }}
                 QPushButton:pressed {{ opacity: 0.85; }}
@@ -344,7 +346,9 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.item_browser)
         splitter.addWidget(self.sales_tabs)
         
-        splitter.setSizes([500, 600])
+        # Foizli o'lcham - 45% item_browser, 55% sales_tabs
+        splitter.setStretchFactor(0, 45)
+        splitter.setStretchFactor(1, 55)
 
         main_layout.addWidget(splitter, stretch=1)
 
@@ -388,7 +392,8 @@ class MainWindow(QMainWindow):
 
         # Bottom Keyboard Button
         self.keyboard_btn = QPushButton("⌨️ Elektron Klaviatura (F11)")
-        self.keyboard_btn.setFixedHeight(30)
+        self.keyboard_btn.setMinimumHeight(26)
+        self.keyboard_btn.setMaximumHeight(36)
         self.keyboard_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.keyboard_btn.setStyleSheet("""
             QPushButton {

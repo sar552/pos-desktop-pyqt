@@ -90,7 +90,8 @@ class ShiftDetailDialog(QDialog):
         self.api = api
         self.opening_name = opening_name
         self.setWindowTitle("Smena tafsilotlari")
-        self.setFixedSize(650, 700)
+        self.setMinimumSize(520, 550)
+        self.resize(650, 700)
         self.setStyleSheet("""
             QDialog { background: #f8fafc; }
             QLabel { background: transparent; border: none; }
@@ -179,7 +180,7 @@ class ShiftDetailDialog(QDialog):
         footer_layout.addStretch()
         
         close_btn = QPushButton("Yopish")
-        close_btn.setFixedSize(150, 45)
+        close_btn.setMinimumSize(120, 40)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet("""
             QPushButton { 
@@ -221,7 +222,7 @@ class ShiftDetailDialog(QDialog):
         layout.addWidget(lbl)
         
         line = QFrame()
-        line.setFixedHeight(1)
+        line.setMaximumHeight(1)
         line.setStyleSheet("background: #f1f5f9; border: none;")
         layout.addWidget(line)
         
@@ -297,21 +298,21 @@ class ShiftDetailDialog(QDialog):
             
             for text, align, width in [
                 ("To'lov turi", Qt.AlignmentFlag.AlignLeft, 0),
-                ("Dasturda", Qt.AlignmentFlag.AlignRight, 120),
-                ("Kassada", Qt.AlignmentFlag.AlignRight, 120),
-                ("Farq", Qt.AlignmentFlag.AlignRight, 100),
+                ("Dasturda", Qt.AlignmentFlag.AlignRight, 100),
+                ("Kassada", Qt.AlignmentFlag.AlignRight, 100),
+                ("Farq", Qt.AlignmentFlag.AlignRight, 90),
             ]:
                 lbl = QLabel(text)
                 lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #64748b; border: none;")
                 lbl.setAlignment(align)
                 if width:
-                    lbl.setFixedWidth(width)
+                    lbl.setMinimumWidth(width)
                 hdr_l.addWidget(lbl)
             
             p_lyt.addWidget(hdr)
             
             line = QFrame()
-            line.setFixedHeight(1)
+            line.setMaximumHeight(1)
             line.setStyleSheet("background: #f1f5f9; border: none;")
             p_lyt.addWidget(line)
 
@@ -332,19 +333,19 @@ class ShiftDetailDialog(QDialog):
                 row_l.addWidget(mop_lbl)
 
                 exp_lbl = QLabel(self._fmt(expected))
-                exp_lbl.setFixedWidth(120)
+                exp_lbl.setMinimumWidth(100)
                 exp_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
                 exp_lbl.setStyleSheet("font-size: 15px; color: #475569; border: none;")
                 row_l.addWidget(exp_lbl)
 
                 clos_lbl = QLabel(self._fmt(closing))
-                clos_lbl.setFixedWidth(120)
+                clos_lbl.setMinimumWidth(100)
                 clos_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
                 clos_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #0f172a; border: none;")
                 row_l.addWidget(clos_lbl)
 
                 diff_lbl = QLabel(self._fmt(diff))
-                diff_lbl.setFixedWidth(100)
+                diff_lbl.setMinimumWidth(90)
                 diff_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
                 if diff < 0:
                     diff_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #ef4444; border: none;") # Qizil (Kamo'mad)
@@ -399,7 +400,8 @@ class PosShiftsWindow(QWidget):
         hdr_row.addStretch()
 
         refresh_btn = QPushButton("⟳  Yangilash")
-        refresh_btn.setFixedHeight(44)
+        refresh_btn.setMinimumHeight(38)
+        refresh_btn.setMaximumHeight(48)
         refresh_btn.setStyleSheet("""
             QPushButton {
                 padding: 0 16px; background: #f1f5f9; color: #475569;
@@ -412,7 +414,8 @@ class PosShiftsWindow(QWidget):
         hdr_row.addWidget(refresh_btn)
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(44, 44)
+        close_btn.setMinimumSize(38, 38)
+        close_btn.setMaximumSize(48, 48)
         close_btn.setStyleSheet("""
             QPushButton { background: #fee2e2; color: #b91c1c;
                 font-weight: 700; font-size: 14px; border-radius: 8px; border: none; }

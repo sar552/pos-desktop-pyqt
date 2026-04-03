@@ -14,7 +14,8 @@ class OfflineQueueWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Yuborilmagan (Offline) Cheklar")
-        self.setFixedSize(700, 500)
+        self.setMinimumSize(550, 400)
+        self.resize(700, 500)
         self.init_ui()
         self._load_pending_invoices()
 
@@ -40,7 +41,7 @@ class OfflineQueueWindow(QDialog):
         layout.addWidget(self.table)
 
         close_btn = QPushButton("YOPISH")
-        close_btn.setFixedHeight(50)
+        close_btn.setMinimumHeight(44)
         close_btn.setStyleSheet("""
             QPushButton { background-color: #f3f4f6; color: #374151; font-weight: bold; border-radius: 8px; }
             QPushButton:hover { background-color: #e5e7eb; }

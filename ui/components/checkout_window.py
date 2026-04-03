@@ -110,7 +110,8 @@ class CheckoutWindow(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("To'lov")
-        self.setFixedSize(880, 620)
+        self.setMinimumSize(700, 500)
+        self.resize(880, 620)
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setStyleSheet("background: white;")
@@ -183,8 +184,9 @@ class CheckoutWindow(QDialog):
                     "border: 1.5px solid #e2e8f0; border-radius: 10px; background: white; color: #1e293b;"
                 )
 
-            input_field.setFixedWidth(190)
-            input_field.setFixedHeight(48)
+            input_field.setMinimumWidth(140)
+            input_field.setMaximumWidth(220)
+            input_field.setMinimumHeight(44)
             input_field.setAlignment(Qt.AlignmentFlag.AlignRight)
             input_field.clicked.connect(self._set_active_input)
             input_field.textChanged.connect(self._on_payment_changed)
@@ -213,7 +215,8 @@ class CheckoutWindow(QDialog):
         btn_layout.setSpacing(10)
 
         btn_cancel = QPushButton("Bekor")
-        btn_cancel.setFixedHeight(52)
+        btn_cancel.setMinimumHeight(44)
+        btn_cancel.setMaximumHeight(58)
         btn_cancel.setStyleSheet("""
             QPushButton { background: #f1f5f9; color: #64748b;
                 font-weight: 700; font-size: 14px; border-radius: 12px; border: none; }
@@ -222,7 +225,8 @@ class CheckoutWindow(QDialog):
         btn_cancel.clicked.connect(self.reject)
 
         self.btn_confirm = QPushButton("✓  TO'LOV QILISH")
-        self.btn_confirm.setFixedHeight(52)
+        self.btn_confirm.setMinimumHeight(44)
+        self.btn_confirm.setMaximumHeight(58)
         self.btn_confirm.setStyleSheet("""
             QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
                     stop:0 #22c55e, stop:1 #16a34a);
@@ -272,7 +276,8 @@ class CheckoutWindow(QDialog):
         for amt in amounts:
             display_text = f"{amt:,}".replace(",", " ") if isinstance(amt, int) else "MAX"
             btn = QPushButton(display_text)
-            btn.setFixedSize(100, 48)
+            btn.setMinimumSize(80, 40)
+            btn.setMaximumSize(120, 54)
             if amt == "MAX":
                 btn.setStyleSheet("""
                     QPushButton { background: #3b82f6; color: white;

@@ -9,7 +9,8 @@ class TouchKeyboard(QDialog):
     def __init__(self, parent=None, initial_text="", title="Matn kiriting", is_numeric=False):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setFixedSize(900, 500)
+        self.setMinimumSize(700, 400)
+        self.resize(900, 500)
         self.setModal(False) # Allows interaction with parent (Item Grid)
         self.is_numeric = is_numeric
         self._caps = False
@@ -52,7 +53,7 @@ class TouchKeyboard(QDialog):
         footer = QHBoxLayout()
         btn_cancel = QPushButton("YOPISH")
         btn_cancel.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        btn_cancel.setFixedHeight(60)
+        btn_cancel.setMinimumHeight(50)
         btn_cancel.setStyleSheet("""
             QPushButton { background-color: #f3f4f6; color: #4b5563; font-weight: bold; border-radius: 10px; border: 1px solid #d1d5db; }
             QPushButton:pressed { background-color: #e5e7eb; }
@@ -61,7 +62,7 @@ class TouchKeyboard(QDialog):
 
         btn_ok = QPushButton("TASDIQLASH (OK)")
         btn_ok.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        btn_ok.setFixedHeight(60)
+        btn_ok.setMinimumHeight(50)
         btn_ok.setStyleSheet("""
             QPushButton { background-color: #10b981; color: white; font-weight: bold; border-radius: 10px; font-size: 18px; }
             QPushButton:pressed { background-color: #059669; }

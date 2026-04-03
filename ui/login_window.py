@@ -52,7 +52,8 @@ class LoginWindow(QWidget):
 
         card = QFrame()
         card.setObjectName("loginCard")
-        card.setFixedWidth(420)
+        card.setMinimumWidth(340)
+        card.setMaximumWidth(460)
         card.setStyleSheet("""
             QFrame#loginCard {
                 background: white;

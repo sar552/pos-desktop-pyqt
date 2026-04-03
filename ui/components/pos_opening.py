@@ -99,7 +99,8 @@ class PosOpeningDialog(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("Kassa ochish")
-        self.setFixedSize(780, 560)
+        self.setMinimumSize(640, 480)
+        self.resize(780, 560)
         self.setModal(True)
         self.setWindowFlags(
             self.windowFlags()
@@ -168,8 +169,9 @@ class PosOpeningDialog(QDialog):
             inp.setValidator(QDoubleValidator(0.0, 999999999.0, 2))
             inp.setPlaceholderText("0")
             inp.setText("0")
-            inp.setFixedWidth(190)
-            inp.setFixedHeight(48)
+            inp.setMinimumWidth(140)
+            inp.setMaximumWidth(220)
+            inp.setMinimumHeight(44)
             inp.setAlignment(Qt.AlignmentFlag.AlignRight)
 
             if idx == 0:
@@ -202,7 +204,7 @@ class PosOpeningDialog(QDialog):
         btn_layout.setSpacing(10)
 
         btn_exit = QPushButton("Chiqish")
-        btn_exit.setFixedHeight(52)
+        btn_exit.setMinimumHeight(44)
         btn_exit.setStyleSheet("""
             QPushButton { background: #f1f5f9; color: #64748b;
                 font-weight: 700; font-size: 13px; border-radius: 12px; border: none; }
@@ -211,7 +213,7 @@ class PosOpeningDialog(QDialog):
         btn_exit.clicked.connect(self._on_exit)
 
         btn_logout = QPushButton("Logout")
-        btn_logout.setFixedHeight(52)
+        btn_logout.setMinimumHeight(44)
         btn_logout.setStyleSheet("""
             QPushButton { background: #fef3c7; color: #92400e;
                 font-weight: 700; font-size: 13px; border-radius: 12px; border: 1px solid #fde68a; }
@@ -220,7 +222,7 @@ class PosOpeningDialog(QDialog):
         btn_logout.clicked.connect(self._on_logout)
 
         self.btn_open = QPushButton("KASSANI OCHISH")
-        self.btn_open.setFixedHeight(52)
+        self.btn_open.setMinimumHeight(44)
         self.btn_open.setStyleSheet("""
             QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
                     stop:0 #1d4ed8, stop:1 #1e40af);

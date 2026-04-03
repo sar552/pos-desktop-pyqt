@@ -97,7 +97,8 @@ class PosClosingDialog(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("Kassa yopish")
-        self.setFixedSize(820, 600)
+        self.setMinimumSize(660, 500)
+        self.resize(820, 600)
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setStyleSheet("background: white;")
@@ -153,7 +154,7 @@ class PosClosingDialog(QDialog):
         btn_layout.setSpacing(10)
 
         btn_cancel = QPushButton("Bekor")
-        btn_cancel.setFixedHeight(52)
+        btn_cancel.setMinimumHeight(44)
         btn_cancel.setStyleSheet("""
             QPushButton { background: #f1f5f9; color: #64748b;
                 font-weight: 700; font-size: 14px; border-radius: 12px; border: none; }
@@ -162,7 +163,7 @@ class PosClosingDialog(QDialog):
         btn_cancel.clicked.connect(self.reject)
 
         self.btn_close = QPushButton("KASSANI YOPISH")
-        self.btn_close.setFixedHeight(52)
+        self.btn_close.setMinimumHeight(44)
         self.btn_close.setEnabled(False)
         self.btn_close.setStyleSheet("""
             QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
@@ -230,9 +231,9 @@ class PosClosingDialog(QDialog):
         scroll_layout.setSpacing(8)
 
         col_header = QHBoxLayout()
-        for text, width in [("To'lov turi", 120), ("Kutilgan", 100), ("Haqiqiy", 130)]:
+        for text, width in [("To'lov turi", 100), ("Kutilgan", 90), ("Haqiqiy", 110)]:
             lbl = QLabel(text)
-            lbl.setFixedWidth(width)
+            lbl.setMinimumWidth(width)
             lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;")
             col_header.addWidget(lbl)
         col_header.addStretch()
@@ -245,12 +246,12 @@ class PosClosingDialog(QDialog):
             row = QHBoxLayout()
 
             lbl = QLabel(mop)
-            lbl.setFixedWidth(120)
+            lbl.setMinimumWidth(100)
             lbl.setStyleSheet("font-size: 13px; font-weight: 600; color: #334155;")
             row.addWidget(lbl)
 
             exp_lbl = QLabel(f"{expected:,.0f}".replace(",", " "))
-            exp_lbl.setFixedWidth(100)
+            exp_lbl.setMinimumWidth(90)
             exp_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #1e40af;")
             row.addWidget(exp_lbl)
 
@@ -258,8 +259,9 @@ class PosClosingDialog(QDialog):
             inp.setValidator(QDoubleValidator(0.0, 999999999.0, 2))
             inp.setPlaceholderText("0")
             inp.setText(str(int(expected)))
-            inp.setFixedWidth(130)
-            inp.setFixedHeight(44)
+            inp.setMinimumWidth(100)
+            inp.setMaximumWidth(160)
+            inp.setMinimumHeight(40)
             inp.setAlignment(Qt.AlignmentFlag.AlignRight)
             inp.clicked.connect(self._set_active_input)
             inp.textChanged.connect(self._update_difference)

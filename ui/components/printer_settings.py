@@ -132,7 +132,8 @@ class PrinterSettingsDialog(QDialog):
 
         # ── Header ──
         hdr = QFrame()
-        hdr.setFixedHeight(56)
+        hdr.setMinimumHeight(48)
+        hdr.setMaximumHeight(64)
         hdr.setStyleSheet("background: #1e293b;")
         hdr_layout = QHBoxLayout(hdr)
         hdr_layout.setContentsMargins(20, 0, 20, 0)
@@ -147,7 +148,8 @@ class PrinterSettingsDialog(QDialog):
 
         # Yangilash tugmasi
         refresh_btn = QPushButton("⟳  Yangilash")
-        refresh_btn.setFixedHeight(40)
+        refresh_btn.setMinimumHeight(34)
+        refresh_btn.setMaximumHeight(44)
         refresh_btn.setStyleSheet("""
             QPushButton {
                 background: #3b82f6; color: white;
@@ -161,7 +163,8 @@ class PrinterSettingsDialog(QDialog):
         hdr_layout.addWidget(refresh_btn)
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(40, 40)
+        close_btn.setMinimumSize(34, 34)
+        close_btn.setMaximumSize(44, 44)
         close_btn.setStyleSheet("""
             QPushButton {
                 background: #475569; color: white;
@@ -196,7 +199,8 @@ class PrinterSettingsDialog(QDialog):
         bottom_layout.setContentsMargins(20, 12, 20, 12)
 
         save_btn = QPushButton("SAQLASH")
-        save_btn.setFixedHeight(52)
+        save_btn.setMinimumHeight(44)
+        save_btn.setMaximumHeight(58)
         save_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
@@ -356,7 +360,8 @@ class PrinterSettingsDialog(QDialog):
         row.addWidget(combo, stretch=1)
 
         test_btn = QPushButton("Sinov")
-        test_btn.setFixedSize(90, 48)
+        test_btn.setMinimumSize(70, 40)
+        test_btn.setMaximumSize(100, 54)
         test_btn.setStyleSheet("""
             QPushButton {
                 background: #22c55e; color: white;

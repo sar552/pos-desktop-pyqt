@@ -32,9 +32,10 @@ class TouchNumpad(QWidget):
             else:
                 btn.setText(text)
             
-            # Match width with Quick Amount buttons (100px)
-            btn.setFixedHeight(60)
-            btn.setMinimumWidth(100)
+            # Match width with Quick Amount buttons
+            btn.setMinimumHeight(48)
+            btn.setMaximumHeight(70)
+            btn.setMinimumWidth(80)
             
             btn.setStyleSheet("""
                 QPushButton {
