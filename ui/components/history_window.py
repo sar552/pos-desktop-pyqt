@@ -29,10 +29,10 @@ class FetchHistoryWorker(QThread):
             return
 
         fields = json.dumps(["name", "customer", "grand_total", "posting_date", "posting_time", "status", "docstatus"])
-        filters = json.dumps([["POS Invoice", "pos_opening_entry", "=", self.opening_entry]])
+        filters = json.dumps([["Sales Invoice", "pos_opening_entry", "=", self.opening_entry]])
 
         data = self.api.fetch_data(
-            "POS Invoice", fields=fields, filters=filters, limit=HISTORY_FETCH_LIMIT,
+            "Sales Invoice", fields=fields, filters=filters, limit=HISTORY_FETCH_LIMIT,
         )
         if data is not None:
             data.sort(key=lambda x: x.get("creation", ""), reverse=True)
@@ -51,7 +51,7 @@ class FetchDetailsWorker(QThread):
 
     def run(self):
         success, doc = self.api.call_method(
-            "frappe.client.get", {"doctype": "POS Invoice", "name": self.invoice_id}
+            "frappe.client.get", {"doctype": "Sales Invoice", "name": self.invoice_id}
         )
         self.finished.emit(success and isinstance(doc, dict), doc if isinstance(doc, dict) else {})
 
@@ -67,8 +67,8 @@ class CancelOrderWorker(QThread):
 
     def run(self):
         success, response = self.api.call_method(
-            "ury.ury.doctype.ury_order.ury_order.cancel_order",
-            {"invoice_id": self.invoice_id, "reason": self.reason},
+            "frappe.client.cancel",
+            {"doctype": "Sales Invoice", "name": self.invoice_id},
         )
         if success:
             self.finished.emit(True, "Chek muvaffaqiyatli bekor qilindi!")

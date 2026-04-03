@@ -1,11 +1,13 @@
 import json
 import datetime
+import requests
+from peewee import DatabaseError, IntegrityError
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.api import FrappeAPI
 from core.config import load_config, save_config
 from core.logger import get_logger
 from core.constants import CUSTOMER_SYNC_LIMIT
-from database.models import Item, Customer, PosProfile, PosShift, PendingInvoice, db
+from database.models import Item, ItemPrice, Customer, PosProfile, PosShift, PendingInvoice, db
 from database.invoice_processor import process_pending_invoice
 
 logger = get_logger(__name__)
@@ -31,11 +33,21 @@ class SyncWorker(QThread):
                 return
 
             self._sync_items(pos_profile_data)
+            self._sync_item_prices(pos_profile_data)
             self._sync_customers(pos_profile_data)
 
             self.sync_finished.emit(True, "Sinxronizatsiya muvaffaqiyatli yakunlandi!")
+        except requests.exceptions.ConnectionError as e:
+            logger.error("Server bilan aloqa xatosi: %s", e)
+            self.sync_finished.emit(False, "Server bilan aloqa o'rnatib bo'lmadi")
+        except requests.exceptions.Timeout as e:
+            logger.error("Server javob bermadi (timeout): %s", e)
+            self.sync_finished.emit(False, "Server javob bermadi (timeout)")
+        except (DatabaseError, IntegrityError) as e:
+            logger.error("Database xatosi: %s", e)
+            self.sync_finished.emit(False, f"Ma'lumotlar bazasi xatosi: {e}")
         except Exception as e:
-            logger.error("Sinxronizatsiya xatosi: %s", e)
+            logger.error("Sinxronizatsiya xatosi: %s", e, exc_info=True)
             self.sync_finished.emit(False, str(e))
         finally:
             if not db.is_closed():
@@ -87,6 +99,17 @@ class SyncWorker(QThread):
         config["company"] = company.get("name")
         config["warehouse"] = pos_profile.get("warehouse")
         config["currency"] = pos_profile.get("currency")
+        
+        # Default customer ni POS Profile dan olish
+        default_customer = pos_profile.get("customer")
+        if default_customer:
+            config["default_customer"] = default_customer
+        
+        # Payment methods ni POS Profile dan olish
+        payments = pos_profile.get("payments", [])
+        if payments:
+            config["payment_methods"] = [p.get("mode_of_payment") for p in payments if p.get("mode_of_payment")]
+        
         save_config(config)
 
         # Bazaga POS Profile'ni seriyali Json sifatida saqlash
@@ -166,7 +189,7 @@ class SyncWorker(QThread):
                         stock_uom=itm.get("stock_uom"),
                         image=itm.get("image"),
                         has_batch_no=bool(itm.get("has_batch_no")),
-                        has_serial_no=bool(itm.get("has_serial_no") or itm.get("has_serial_no")),
+                        has_serial_no=bool(itm.get("has_serial_no")),
                         has_variants=bool(itm.get("has_variants")),
                         is_stock_item=bool(itm.get("is_stock_item")),
                         standard_rate=float(itm.get("price_list_rate") or 0.0),
@@ -183,7 +206,7 @@ class SyncWorker(QThread):
                             "stock_uom": itm.get("stock_uom"),
                             "image": itm.get("image"),
                             "has_batch_no": bool(itm.get("has_batch_no")),
-                            "has_serial_no": bool(itm.get("has_serial_no") or itm.get("has_serial_no")),
+                            "has_serial_no": bool(itm.get("has_serial_no")),
                             "has_variants": bool(itm.get("has_variants")),
                             "is_stock_item": bool(itm.get("is_stock_item")),
                             "standard_rate": float(itm.get("price_list_rate") or 0.0),
@@ -204,6 +227,78 @@ class SyncWorker(QThread):
         if server_item_codes:
             # Optionally remove items not in server_item_codes if you want pure sync
             pass
+
+
+    def _sync_item_prices(self, pos_profile_data: dict):
+        self.progress_update.emit("Narxlar ro'yxati (Price Lists) yuklanmoqda...")
+        
+        # 1. Barcha ruxsat etilgan Price Listlarni olish
+        success, response = self.api.call_method("posawesome.posawesome.api.utilities.get_selling_price_lists", {})
+        if not success or not response:
+            logger.error("Narxlar ro'yxatini olib bo'lmadi.")
+            return
+            
+        price_lists = [pl.get("name") for pl in response if pl.get("name")]
+        profile_json = json.dumps(pos_profile_data)
+        
+        # 2. Har bir price list uchun narxlarni yuklash
+        for price_list in price_lists:
+            self.progress_update.emit(f"'{price_list}' narxlari yuklanmoqda...")
+            limit = 500
+            start_after = ""
+            total_for_pl = 0
+            has_more = True
+            
+            while has_more:
+                params = {
+                    "pos_profile": profile_json,
+                    "price_list": price_list,
+                    "limit": limit,
+                }
+                if start_after:
+                    params["start_after"] = start_after
+
+                succ, items_res = self.api.call_method("posawesome.posawesome.api.items.get_items", params)
+
+                if not succ or not items_res or not isinstance(items_res, list):
+                    break
+
+                with db.atomic():
+                    for itm in items_res:
+                        item_code = itm.get("item_code")
+                        rate = float(itm.get("price_list_rate") or itm.get("rate") or 0.0)
+                        currency = itm.get("price_list_currency") or itm.get("currency") or "UZS"
+                        
+                        if not item_code:
+                            continue
+                            
+                        # Composite name: ItemCode-PriceList
+                        idx_name = f"{item_code}-{price_list}"
+                        
+                        ItemPrice.insert(
+                            name=idx_name,
+                            item_code=item_code,
+                            price_list=price_list,
+                            price_list_rate=rate,
+                            currency=currency,
+                            last_sync=datetime.datetime.now()
+                        ).on_conflict(
+                            conflict_target=[ItemPrice.name],
+                            update={
+                                "price_list": price_list,
+                                "price_list_rate": rate,
+                                "currency": currency,
+                                "last_sync": datetime.datetime.now()
+                            }
+                        ).execute()
+                        
+                        start_after = item_code
+
+                total_for_pl += len(items_res)
+                self.progress_update.emit(f"'{price_list}' dan {total_for_pl} tasi yuklandi")
+                
+                if len(items_res) < limit:
+                    has_more = False
 
     def _sync_customers(self, pos_profile_data: dict):
         self.progress_update.emit("Mijozlar POSAwesome'dan yuklanmoqda...")
@@ -268,3 +363,12 @@ class SyncWorker(QThread):
             
             if len(customer_response) < limit:
                 has_more = False
+        
+        # Agar default_customer configda yo'q bo'lsa, birinchi customerni default qilish
+        config = load_config()
+        if not config.get("default_customer"):
+            first_customer = Customer.select().first()
+            if first_customer:
+                config["default_customer"] = first_customer.name
+                save_config(config)
+                self.progress_update.emit(f"Default mijoz: {first_customer.name}")

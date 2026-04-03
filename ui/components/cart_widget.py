@@ -22,10 +22,16 @@ class QtyLabel(QLabel):
 
 class CartWidget(QWidget):
     checkout_requested = pyqtSignal(dict)
+    price_list_changed = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
         self.items = {}
+        self.col_settings = {
+            "show_qty": {"label": "QTY (Miqdor) ustunini ko'rsatish", "value": True},
+            "show_rate": {"label": "RATE (Narx) ustunini ko'rsatish", "value": True},
+            "show_amount": {"label": "AMOUNT (Summa) ustunini ko'rsatish", "value": True},
+        }
         self.total_amount = 0.0
         self.current_order_type = ORDER_TYPES[0]
         self.order_type_buttons = {}
@@ -33,6 +39,7 @@ class CartWidget(QWidget):
         self._active_qty_item = None
         self.init_ui()
         self.load_customers()
+        self.load_price_lists()
 
     # ─────────────────────────────────────────
     #  UI
@@ -55,8 +62,7 @@ class CartWidget(QWidget):
         
         self.customer_combo = QComboBox()
         self.customer_combo.setEditable(True)
-        self.customer_combo.setMinimumHeight(34)
-        self.customer_combo.setMaximumHeight(44)
+        self.customer_combo.setFixedHeight(40)
         self.customer_combo.setStyleSheet("""
             QComboBox { background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px; }
             QComboBox QAbstractItemView { background: #1e1e1e; color: white; }
@@ -71,8 +77,7 @@ class CartWidget(QWidget):
         cg_label.setStyleSheet("color: #a0a0a0; font-size: 11px;")
         self.cg_mock = QComboBox()
         self.cg_mock.addItems(["All Groups", "Commercial", "Government", "Individual"])
-        self.cg_mock.setMinimumHeight(34)
-        self.cg_mock.setMaximumHeight(44)
+        self.cg_mock.setFixedHeight(40)
         self.cg_mock.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
         cg_vbox.addWidget(cg_label)
         cg_vbox.addWidget(self.cg_mock)
@@ -86,24 +91,25 @@ class CartWidget(QWidget):
         search_bar = QHBoxLayout()
         self.search_item_input = QLineEdit()
         self.search_item_input.setPlaceholderText("Search items or barcode...")
-        self.search_item_input.setMinimumHeight(34)
-        self.search_item_input.setMaximumHeight(44)
+        self.search_item_input.setFixedHeight(40)
         self.search_item_input.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
         
         pl_vbox = QVBoxLayout()
         pl_vbox.setSpacing(2)
         pl_label = QLabel("Price List")
         pl_label.setStyleSheet("color: #a0a0a0; font-size: 11px;")
-        self.pl_mock = QComboBox()
-        self.pl_mock.addItems(["Standard Selling...", "Wholesale"])
-        self.pl_mock.setMinimumHeight(26)
-        self.pl_mock.setMaximumHeight(36)
-        self.pl_mock.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
+        self.price_list_combo = QComboBox()
+        
+        self.price_list_combo.setFixedHeight(35)
+        self.price_list_combo.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
         pl_vbox.addWidget(pl_label)
-        pl_vbox.addWidget(self.pl_mock)
+        pl_vbox.addWidget(self.price_list_combo)
+        self.price_list_combo.currentTextChanged.connect(self._on_pl_changed)
         
         col_lbl = QPushButton("COLUMNS")
         col_lbl.setStyleSheet("color: #60a5fa; font-weight: bold; font-size: 12px; margin-top: 15px; margin-left: 10px;")
+        col_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        col_lbl.clicked.connect(self.open_columns_settings)
         
         search_bar.addWidget(self.search_item_input, 3)
         search_bar.addLayout(pl_vbox, 1)
@@ -122,9 +128,29 @@ class CartWidget(QWidget):
 
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(1, 120)  # QTY
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(2, 90)   # RATE
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(3, 100)  # AMOUNT
+        
+        # Make row height dynamic based on content
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setWordWrap(True)
+        self.table.setStyleSheet(
+            """
+            QTableWidget {
+                background: transparent; border: none; font-size: 13px;
+                selection-background-color: transparent; outline: none;
+            }
+            QHeaderView::section {
+                background-color: #1e293b; color: #94a3b8; font-weight: 700;
+                font-size: 11px; padding: 10px 5px; border: none; border-bottom: 1px solid #334155;
+            }
+            QTableWidget::item { padding: 8px 4px; border-bottom: 1px solid #334155; }
+            """
+        )
 
         header.setMinimumHeight(35)
         
@@ -175,27 +201,15 @@ class CartWidget(QWidget):
             return vbox
         
         row1.addLayout(_stat_box("Total Qty", "total_qty_label"))
-        # Final Price Box (mock)
-        fp_vbox = QVBoxLayout()
-        fp_lbl = QLabel("Final Price")
-        fp_lbl.setStyleSheet("color: #a0a0a0; font-size: 11px;")
-        fp_val = QLineEdit()
-        fp_val.setPlaceholderText("Final Price")
-        fp_val.setStyleSheet("background: #2a2a2a; color: #a0a0a0; padding: 10px; border: none; border-radius: 4px; font-size: 14px;")
-        fp_vbox.addWidget(fp_lbl)
-        fp_vbox.addWidget(fp_val)
-        row1.addLayout(fp_vbox)
         
         # Action Buttons
         save_btn = QPushButton("SAVE & CLEAR")
-        save_btn.setMinimumHeight(38)
-        save_btn.setMaximumHeight(50)
+        save_btn.setFixedHeight(45)
         save_btn.setStyleSheet("background: #f97316; color: white; font-weight: 900; border-radius: 4px; font-size: 12px;")
         save_btn.clicked.connect(self.clear_cart)
         
         cancel_btn = QPushButton("CANCEL SALE")
-        cancel_btn.setMinimumHeight(38)
-        cancel_btn.setMaximumHeight(50)
+        cancel_btn.setFixedHeight(45)
         cancel_btn.setStyleSheet("background: #ec4899; color: white; font-weight: 900; border-radius: 4px; font-size: 12px;")
         cancel_btn.clicked.connect(self.clear_cart)
         
@@ -225,8 +239,7 @@ class CartWidget(QWidget):
         t_vbox.addWidget(self.total_label)
         
         self.checkout_btn = QPushButton("PAY")
-        self.checkout_btn.setMinimumHeight(42)
-        self.checkout_btn.setMaximumHeight(56)
+        self.checkout_btn.setFixedHeight(50)
         self.checkout_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.checkout_btn.setStyleSheet("""
             QPushButton {
@@ -524,12 +537,76 @@ class CartWidget(QWidget):
         else:
             self.ticket_input.setStyleSheet(self._input_style() + "border: 2px solid #3b82f6;")
 
+
+    def load_price_lists(self):
+        from database.models import ItemPrice, db
+        db.connect(reuse_if_open=True)
+        try:
+            pls = [r.price_list for r in ItemPrice.select(ItemPrice.price_list).distinct() if r.price_list]
+            if not pls:
+                pls = ["Standard Selling"]
+            
+            # Avoid resetting if items are identically same
+            current = [self.price_list_combo.itemText(i) for i in range(self.price_list_combo.count())]
+            if set(current) != set(pls):
+                curr_txt = self.price_list_combo.currentText()
+                self.price_list_combo.blockSignals(True)
+                self.price_list_combo.clear()
+                self.price_list_combo.addItems(pls)
+                if curr_txt in pls:
+                    self.price_list_combo.setCurrentText(curr_txt)
+                self.price_list_combo.blockSignals(False)
+        finally:
+            if not db.is_closed(): db.close()
+
+    def _on_pl_changed(self, text):
+        from database.models import ItemPrice, db
+        db.connect(reuse_if_open=True)
+        try:
+            for code in list(self.items.keys()):
+                pr = ItemPrice.get_or_none((ItemPrice.item_code == code) & (ItemPrice.price_list == text)) or ItemPrice.get_or_none(ItemPrice.item_code == code)
+                if pr:
+                    self.items[code]["price"] = pr.price_list_rate
+                    self.items[code]["currency"] = pr.currency
+                else:
+                    from database.models import Item
+                    it = Item.get_or_none(Item.item_code == code)
+                    if it:
+                        self.items[code]["price"] = it.standard_rate
+            self.refresh_table()
+        except:
+            pass
+        finally:
+            if not db.is_closed(): db.close()
+        self.price_list_changed.emit(text)
+
     def load_customers(self):
+        """Mijozlarni lokal bazadan yuklash"""
         try:
             db.connect(reuse_if_open=True)
-            customers = ["guest"]
-            customers.extend([c.name for c in Customer.select()])
+            
+            # Default customer ni configdan olish
+            from core.config import load_config
+            config = load_config()
+            default_customer = config.get("default_customer", "")
+            
+            customers = []
+            # Default customer birinchi bo'lsin
+            if default_customer:
+                customers.append(default_customer)
+            
+            # Bazadagi mijozlarni qo'shish
+            for c in Customer.select().order_by(Customer.customer_name):
+                if c.name not in customers:
+                    customers.append(c.name)
+            
+            self.customer_combo.clear()
             self.customer_combo.addItems(customers)
+            
+            # Default customerni tanlash
+            if default_customer and default_customer in customers:
+                self.customer_combo.setCurrentText(default_customer)
+                
         except Exception as e:
             logger.debug("Mijozlar yuklanmadi: %s", e)
         finally:
@@ -560,6 +637,20 @@ class CartWidget(QWidget):
             self.refresh_table()
         except (ValueError, KeyError):
             pass
+
+
+    def open_columns_settings(self):
+        from ui.components.dialogs import SettingsDialog
+        dlg = SettingsDialog(self, "Ustunlar sozlanmasi", self.col_settings)
+        if dlg.exec():
+            res = dlg.get_results()
+            for k in res:
+                self.col_settings[k]["value"] = res[k]
+            
+            # Apply column visibility (0 is Name, 1 is Qty, 2 is Rate, 3 is Amount)
+            self.table.setColumnHidden(1, not self.col_settings["show_qty"]["value"])
+            self.table.setColumnHidden(2, not self.col_settings["show_rate"]["value"])
+            self.table.setColumnHidden(3, not self.col_settings["show_amount"]["value"])
 
     def refresh_table(self):
         self.table.setRowCount(0)
@@ -645,6 +736,21 @@ class CartWidget(QWidget):
             self.total_label.setText(f"UZS {self.total_amount:,.0f}")
         if hasattr(self, 'total_qty_label'):
             self.total_qty_label.setText(str(total_qty))
+        
+        # Re-apply column visibility after refresh
+        self.table.setColumnHidden(1, not self.col_settings["show_qty"]["value"])
+        self.table.setColumnHidden(2, not self.col_settings["show_rate"]["value"])
+        self.table.setColumnHidden(3, not self.col_settings["show_amount"]["value"])
+        
+        # Re-apply column visibility after refresh
+        self.table.setColumnHidden(1, not self.col_settings["show_qty"]["value"])
+        self.table.setColumnHidden(2, not self.col_settings["show_rate"]["value"])
+        self.table.setColumnHidden(3, not self.col_settings["show_amount"]["value"])
+            
+        # Re-apply column visibility after refresh
+        self.table.setColumnHidden(1, not self.col_settings["show_qty"]["value"])
+        self.table.setColumnHidden(2, not self.col_settings["show_rate"]["value"])
+        self.table.setColumnHidden(3, not self.col_settings["show_amount"]["value"])
         
     def _dummy_refresh(self): pass
     def _open_qty_numpad(self, item_code: str, current_qty: str):

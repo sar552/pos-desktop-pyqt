@@ -4,7 +4,7 @@ from peewee import (
     SqliteDatabase, Model, CharField, FloatField,
     BooleanField, DateTimeField, TextField, IntegerField,
 )
-from core.config import BASE_DIR
+from core.paths import BASE_DIR
 
 db_path = os.path.join(BASE_DIR, "pos_data.db")
 db = SqliteDatabase(db_path, pragmas={"journal_mode": "wal", "foreign_keys": 1})

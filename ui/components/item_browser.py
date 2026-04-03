@@ -1,3 +1,4 @@
+from ui.components.dialogs import InfoDialog
 import json
 from PyQt6.QtWidgets import QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 import requests
@@ -50,6 +51,7 @@ class ItemButton(QFrame):
         self.price = price
         self.currency = currency
         self.api = api
+        self.loader = None  # ImageLoader reference
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -87,6 +89,7 @@ class ItemButton(QFrame):
         if image_url and api:
             self.loader = ImageLoader(image_url, api)
             self.loader.image_loaded.connect(self._set_pixmap)
+            self.loader.finished.connect(self._on_loader_finished)
             self.loader.start()
 
         img_inner.addWidget(self.image_label)
@@ -178,6 +181,12 @@ class ItemButton(QFrame):
             }
         """)
 
+    def _on_loader_finished(self):
+        """ImageLoader tugaganda resurslarni tozalash"""
+        if self.loader:
+            self.loader.deleteLater()
+            self.loader = None
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._apply_pressed_style()
@@ -192,10 +201,18 @@ class ItemButton(QFrame):
 
 class ItemBrowser(QWidget):
     item_selected = pyqtSignal(str, str, float, str)
+    settings_clicked = pyqtSignal()
 
     def __init__(self, api: FrappeAPI):
         super().__init__()
         self.api = api
+        self.settings = {
+            "hide_zero_stock": {"label": "0 qoldiqchilarni yashirish", "value": False},
+            "hide_zero_rate": {"label": "Nol narxlilarni yashirish", "value": False},
+            "hide_decimals": {"label": "O'nli kasrlarni yashirish", "value": False},
+        }
+        self.current_price_list = "Standard Selling"
+
         self.current_category = None
         self.kb = None
         self._last_columns = 0
@@ -242,6 +259,7 @@ class ItemBrowser(QWidget):
         s_lbl = QPushButton("SETTINGS")
         s_lbl.setStyleSheet("color: #0ea5e9; font-weight: bold; font-size: 11px; background: transparent; border: none; text-align: left;")
         s_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        s_lbl.clicked.connect(self.open_settings)
         sync_lbl = QLabel("Last sync: 00:00:00 PM")
         sync_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
         sync_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -394,6 +412,17 @@ class ItemBrowser(QWidget):
         except:
             rate = 0.0
             
+        from database.models import Item
+        import json
+        it = Item.get_or_none(Item.item_code == code)
+        if it:
+            p_data = json.loads(it.posawesome_data) if it.posawesome_data else {}
+            st_qty = float(p_data.get("actual_qty", 0))
+            allow_negative = bool(p_data.get("allow_negative_stock", 0))
+            is_stock = bool(p_data.get("is_stock_item", 1))
+            if is_stock and not allow_negative and st_qty <= 0:
+                InfoDialog(self, "Xatolik", f"{name} omborda qolmagan!", kind="warning").exec()
+                return
         self.item_selected.emit(code, name, rate, "UZS")
 
     def _build_keyboard_panel(self):
@@ -591,6 +620,32 @@ class ItemBrowser(QWidget):
         cols = max(2, (available + spacing) // (min_card_width + spacing))
         return cols
 
+    def _handle_item_click(self, item, price, currency):
+        p_data = json.loads(item.posawesome_data) if item.posawesome_data else {}
+        st_qty = float(p_data.get("actual_qty", 0))
+        allow_negative = bool(p_data.get("allow_negative_stock", 0))
+        is_stock = bool(p_data.get("is_stock_item", 1))
+        
+        if is_stock and not allow_negative and st_qty <= 0:
+            InfoDialog(self, "Xatolik", f"{item.item_name} omborda qolmagan (0 qt)!", kind="warning").exec()
+            return
+            
+        self.item_selected.emit(item.item_code, item.item_name, float(price), currency)
+        
+    def set_price_list(self, price_list):
+        self.current_price_list = price_list
+        self.load_items(self.search_input.text())
+
+
+    def open_settings(self):
+        from ui.components.dialogs import SettingsDialog
+        dlg = SettingsDialog(self, "Jadvallar Sozlanmalari", self.settings)
+        if dlg.exec():
+            res = dlg.get_results()
+            for k in res:
+                self.settings[k]["value"] = res[k]
+            # Reload to apply filters
+            self.load_items(self.search_input.text())
     def load_items(self, search=""):
         # Gridni tozalash
         while self.items_grid.count():
@@ -620,16 +675,27 @@ class ItemBrowser(QWidget):
             table_row = 0
             
             for item in query.limit(ITEM_LOAD_LIMIT):
-                price_rec = ItemPrice.get_or_none(ItemPrice.item_code == item.item_code)
-                p = price_rec.price_list_rate if price_rec else 0
+                price_rec = ItemPrice.get_or_none((ItemPrice.item_code == item.item_code) & (ItemPrice.price_list == self.current_price_list)) or ItemPrice.get_or_none(ItemPrice.item_code == item.item_code)
+                p = price_rec.price_list_rate if price_rec else item.standard_rate
                 cur = price_rec.currency if price_rec else "UZS"
                 st_qty = float(json.loads(item.posawesome_data).get("actual_qty", 0)) if item.posawesome_data else 0.0
                 uom_val = item.uom or item.stock_uom or "Nos"
 
+                # Apply Settings Filters
+                if self.settings["hide_zero_stock"]["value"] and st_qty <= 0:
+                    continue
+                if self.settings["hide_zero_rate"]["value"] and p <= 0:
+                    continue
+                
+                # Apply Decimals Setting
+                if self.settings["hide_decimals"]["value"]:
+                    st_qty = int(st_qty)
+                    p = int(p)
+
                 # 1. Update Grid Card
                 card = ItemButton(item.item_code, item.item_name, p, cur, item.image, self.api, stock_qty=st_qty, uom=uom_val)
                 card.clicked.connect(
-                    lambda i=item, pr=p, c=cur: self.item_selected.emit(i.item_code, i.item_name, float(pr), c)
+                    lambda i=item, pr=p, c=cur: self._handle_item_click(i, float(pr), c)
                 )
                 self.items_grid.addWidget(card, row, col)
                 col += 1

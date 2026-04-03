@@ -11,17 +11,18 @@ logger = get_logger(__name__)
 class FrappeAPI:
     def __init__(self):
         self.session = requests.Session()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.reload_config()
 
     def reload_config(self):
-        config = load_config()
-        self.url = config.get("url", "").rstrip("/")
-        self.site = config.get("site", "")
-        self.api_key = config.get("api_key", "")
-        self.api_secret = config.get("api_secret", "")
-        self.user = config.get("user", "")
-        self.password = config.get("password", "")
+        with self._lock:
+            config = load_config()
+            self.url = config.get("url", "").rstrip("/")
+            self.site = config.get("site", "")
+            self.api_key = config.get("api_key", "")
+            self.api_secret = config.get("api_secret", "")
+            self.user = config.get("user", "")
+            self.password = config.get("password", "")
 
     def get_headers(self, is_json=True) -> dict:
         headers = {
@@ -57,10 +58,11 @@ class FrappeAPI:
             response = self.session.post(login_url, data=payload, headers=headers, timeout=API_TIMEOUT_DEFAULT)
             if response.status_code == 200:
                 logger.info("Login muvaffaqiyatli: %s (User: %s)", url, usr)
-                self.url = url.rstrip("/")
-                self.user = usr
-                self.password = pwd
-                self.site = site
+                with self._lock:
+                    self.url = url.rstrip("/")
+                    self.user = usr
+                    self.password = pwd
+                    self.site = site
                 return True, "Success"
             else:
                 error_msg = "Login yoki parol noto'g'ri"
@@ -156,9 +158,17 @@ class FrappeAPI:
                             response = self.session.get(endpoint, headers=headers, timeout=API_TIMEOUT_DEFAULT)
 
                 if response.status_code == 200:
-                    return True, response.json().get("message", response.json())
+                    try:
+                        json_data = response.json()
+                        return True, json_data.get("message", json_data)
+                    except (json.JSONDecodeError, ValueError) as e:
+                        logger.error("JSON decode xatosi: %s", e)
+                        return False, "Server noto'g'ri javob qaytardi"
                 else:
                     return False, f"Server xatosi ({response.status_code})"
+        except requests.exceptions.RequestException as e:
+            logger.error("call_method %s ulanish xatosi: %s", method, e)
+            return False, f"Server bilan aloqa xatosi: {e}"
         except Exception as e:
             logger.error("call_method %s xatosi: %s", method, e)
             return False, str(e)

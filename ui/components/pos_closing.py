@@ -26,7 +26,7 @@ class ClosingDataWorker(QThread):
 
     def run(self):
         success, response = self.api.call_method(
-            "ury.ury_pos.api.getPosClosingData",
+            "posawesome.posawesome.api.shifts.get_closing_data",
             {"pos_opening_entry": self.opening_entry},
         )
         if success and isinstance(response, dict):
@@ -47,7 +47,7 @@ class ClosingWorker(QThread):
 
     def run(self):
         success, response = self.api.call_method(
-            "ury.ury_pos.api.createPosClosing",
+            "posawesome.posawesome.api.shifts.submit_closing_shift",
             {
                 "pos_opening_entry": self.opening_entry,
                 "payment_reconciliation": json.dumps(self.payment_reconciliation),

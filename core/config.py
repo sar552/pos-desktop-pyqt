@@ -64,19 +64,37 @@ def save_config(data: dict):
 
 
 def save_credentials(url: str, user: str, password: str, site: str = ""):
+    # Validatsiya
+    if not url or not url.strip():
+        logger.error("URL bo'sh bo'lishi mumkin emas")
+        return False
+    if not user or not user.strip():
+        logger.error("Foydalanuvchi nomi bo'sh bo'lishi mumkin emas")
+        return False
+    if not password:
+        logger.error("Parol bo'sh bo'lishi mumkin emas")
+        return False
+    
+    # URL formatini tekshirish
+    url = url.strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    
     env_lines = [
         f"FRAPPE_URL={url}\n",
-        f"FRAPPE_USER={user}\n",
+        f"FRAPPE_USER={user.strip()}\n",
         f"FRAPPE_PASSWORD={password}\n",
-        f"FRAPPE_SITE={site}\n",
+        f"FRAPPE_SITE={site.strip()}\n",
     ]
     try:
         with open(ENV_FILE, "w") as f:
             f.writelines(env_lines)
         load_dotenv(ENV_FILE, override=True)
         logger.info("Credentials .env fayliga saqlandi")
+        return True
     except PermissionError:
         logger.error(".env fayliga yozishda ruxsat yo'q")
+        return False
 
 
 def clear_credentials():

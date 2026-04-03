@@ -138,3 +138,139 @@ class ConfirmDialog(QDialog):
     def _on_yes(self):
         self.result_accepted = True
         self.accept()
+
+
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox, QFrame
+
+class SettingsDialog(QDialog):
+    '''Asosiy Settings (Jadvallar) dialogi — POSAwesome veb-uslubida'''
+    def __init__(self, parent, title: str, options: dict):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedWidth(360)
+        self.setStyleSheet("background: white; color: #1e293b;")
+        
+        self.options = options
+        self.checkboxes = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        lbl = QLabel(title)
+        lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #0f172a;")
+        layout.addWidget(lbl)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("background: #e2e8f0; max-height: 1px;")
+        layout.addWidget(line)
+
+        for key, details in options.items():
+            label_text = details.get("label", key)
+            is_checked = details.get("value", False)
+            cb = QCheckBox(label_text)
+            cb.setChecked(is_checked)
+            cb.setStyleSheet("""
+                QCheckBox { font-size: 14px; font-weight: 500; color: #334155; padding: 4px 0; }
+                QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px; border: 1px solid #cbd5e1; }
+                QCheckBox::indicator:checked { background: #3b82f6; border: 1px solid #3b82f6; }
+            """)
+            self.checkboxes[key] = cb
+            layout.addWidget(cb)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        
+        cancel_btn = QPushButton("Bekor qilish")
+        cancel_btn.setFixedHeight(40)
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #64748b; font-weight: 600; border: none; font-size: 14px; }"
+            "QPushButton:hover { color: #f43f5e; background: #fef2f2; border-radius: 6px; }"
+        )
+        cancel_btn.clicked.connect(self.reject)
+        
+        save_btn = QPushButton("Saqlash")
+        save_btn.setFixedHeight(40)
+        save_btn.setStyleSheet(
+            "QPushButton { background: #3b82f6; color: white; font-weight: 600; border-radius: 6px; border: none; font-size: 14px; padding: 0 20px; }"
+            "QPushButton:hover { background: #2563eb; }"
+        )
+        save_btn.clicked.connect(self.accept)
+
+        btn_row.addWidget(cancel_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+    def get_results(self) -> dict:
+        return {key: cb.isChecked() for key, cb in self.checkboxes.items()}
+
+
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox, QFrame
+
+class SettingsDialog(QDialog):
+    '''Asosiy Settings (Jadvallar) dialogi — POSAwesome veb-uslubida'''
+    def __init__(self, parent, title: str, options: dict):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedWidth(360)
+        self.setStyleSheet("background: white; color: #1e293b;")
+        
+        self.options = options
+        self.checkboxes = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        lbl = QLabel(title)
+        lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #0f172a;")
+        layout.addWidget(lbl)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("background: #e2e8f0; max-height: 1px;")
+        layout.addWidget(line)
+
+        for key, details in options.items():
+            label_text = details.get("label", key)
+            is_checked = details.get("value", False)
+            cb = QCheckBox(label_text)
+            cb.setChecked(is_checked)
+            cb.setStyleSheet("""
+                QCheckBox { font-size: 14px; font-weight: 500; color: #334155; padding: 4px 0; }
+                QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px; border: 1px solid #cbd5e1; }
+                QCheckBox::indicator:checked { background: #3b82f6; border: 1px solid #3b82f6; }
+            """)
+            self.checkboxes[key] = cb
+            layout.addWidget(cb)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        
+        cancel_btn = QPushButton("Bekor qilish")
+        cancel_btn.setFixedHeight(40)
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #64748b; font-weight: 600; border: none; font-size: 14px; }"
+            "QPushButton:hover { color: #f43f5e; background: #fef2f2; border-radius: 6px; }"
+        )
+        cancel_btn.clicked.connect(self.reject)
+        
+        save_btn = QPushButton("Saqlash")
+        save_btn.setFixedHeight(40)
+        save_btn.setStyleSheet(
+            "QPushButton { background: #3b82f6; color: white; font-weight: 600; border-radius: 6px; border: none; font-size: 14px; padding: 0 20px; }"
+            "QPushButton:hover { background: #2563eb; }"
+        )
+        save_btn.clicked.connect(self.accept)
+
+        btn_row.addWidget(cancel_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+    def get_results(self) -> dict:
+        return {key: cb.isChecked() for key, cb in self.checkboxes.items()}

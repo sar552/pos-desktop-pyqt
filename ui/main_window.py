@@ -74,6 +74,7 @@ class PosOpeningCheckWorker(QThread):
                 else:
                     self.finished.emit(False, "", {})
         else:
+            # Oflayn rejim - local bazadan tekshirish
             try:
                 db.connect(reuse_if_open=True)
                 shift = PosShift.select().where(PosShift.status == "Open").first()
@@ -81,7 +82,8 @@ class PosOpeningCheckWorker(QThread):
                     self.finished.emit(True, shift.opening_entry or "", {})
                 else:
                     self.finished.emit(False, "", {})
-            except Exception:
+            except Exception as e:
+                logger.debug("Local shift tekshirishda xato: %s", e)
                 self.finished.emit(False, "", {})
             finally:
                 if not db.is_closed():
@@ -224,77 +226,63 @@ class MainWindow(QMainWindow):
             """)
             return b
 
-        # Offline Queue Button — neutral pill
+        # Offline Queue Button — white
         self.offline_btn = _tb_btn(
-            "📦  Offline: 0", "#f1f5f9", "#374151",
-            hover="#e2e8f0", border="1px solid #e2e8f0",
+            "Offline: 0", "#f8fafc", "#0f172a",
+            hover="#f1f5f9", border="1px solid #cbd5e1"
         )
         self.offline_btn.clicked.connect(self.show_offline_queue)
         top_bar.addWidget(self.offline_btn)
 
-        # New Sale Button — green accent
+        # New Sale Button — green
         self.add_sale_btn = _tb_btn(
-            "＋  Yangi sotuv", "#22c55e", hover="#16a34a",
+            "+ Yangi sotuv", "#10b981", hover="#059669"
         )
         self.add_sale_btn.clicked.connect(self.add_new_sale_tab)
         top_bar.addWidget(self.add_sale_btn)
 
-        # History Button — indigo pill
+        # History Button — purple
         self.history_btn = _tb_btn(
-            "🕐  Tarix", "#6366f1", hover="#4338ca",
+            "Tarix", "#8b5cf6", hover="#7c3aed"
         )
         self.history_btn.clicked.connect(self.show_history)
         top_bar.addWidget(self.history_btn)
 
         # Sync Button — blue
         self.sync_btn = _tb_btn(
-            "⟳  Sinxronlash", "#3b82f6", hover="#2563eb",
+            "Sinxronlash", "#3b82f6", hover="#2563eb"
         )
         self.sync_btn.clicked.connect(self.start_sync)
         top_bar.addWidget(self.sync_btn)
 
-        # Printer Settings Button — slate
+        # Printer Settings Button — gray
         self.printer_btn = _tb_btn(
-            "Printer", "#475569", hover="#334155",
+            "Printer", "#64748b", hover="#475569"
         )
         self.printer_btn.clicked.connect(self.show_printer_settings)
         top_bar.addWidget(self.printer_btn)
 
-        # Kassa tarixi Button — slate
+        # Kassa tarixi Button — dark gray
         self.shifts_btn = _tb_btn(
-            "Kassa tarixi", "#475569", hover="#334155",
+            "Kassa tarixi", "#475569", hover="#334155"
         )
         self.shifts_btn.clicked.connect(self.show_shifts_history)
         top_bar.addWidget(self.shifts_btn)
 
-        # Kassa ochish Button — green (kassa ochilmagan holatda ko'rinadi)
+        # Kassa ochish Button — green
         self.open_shift_btn = _tb_btn(
-            "Kassa ochish", "#16a34a", hover="#15803d",
+            "Kassa ochish", "#10b981", hover="#059669"
         )
-        self.open_shift_btn.clicked.connect(self._show_pos_opening_dialog)
-        self.open_shift_btn.setVisible(False)
+        self.open_shift_btn.clicked.connect(lambda: self._show_pos_opening_dialog({}))
         top_bar.addWidget(self.open_shift_btn)
+        self.open_shift_btn.hide()  # hidden initially
 
-        # Kassa yopish Button — orange/red
+        # Kassa yopish Button — red
         self.close_shift_btn = _tb_btn(
-            "Kassa yopish", "#dc2626", hover="#b91c1c",
+            "Kassa yopish", "#ef4444", hover="#dc2626"
         )
         self.close_shift_btn.clicked.connect(self.show_pos_closing)
         top_bar.addWidget(self.close_shift_btn)
-
-        # Logout Button — amber
-        self.logout_btn = _tb_btn(
-            "🔓  Chiqish", "#f59e0b", hover="#d97706",
-        )
-        self.logout_btn.clicked.connect(self.request_logout)
-        top_bar.addWidget(self.logout_btn)
-
-        # Exit Button — red
-        self.exit_btn = _tb_btn(
-            "✕  Dasturdan chiqish", "#ef4444", hover="#dc2626",
-        )
-        self.exit_btn.clicked.connect(self.request_exit)
-        top_bar.addWidget(self.exit_btn)
 
         main_layout.addLayout(top_bar)
 
@@ -310,6 +298,7 @@ class MainWindow(QMainWindow):
         self.sales_tabs.setTabsClosable(True)
         self.sales_tabs.setMovable(True)
         self.sales_tabs.tabCloseRequested.connect(self.close_sale_tab)
+        self.sales_tabs.currentChanged.connect(self._on_tab_changed)
         self.sales_tabs.setStyleSheet("""
             QTabWidget::pane {
                 border: none;
@@ -513,8 +502,14 @@ class MainWindow(QMainWindow):
         tab_count = self.sales_tabs.count()
         new_cart = CartWidget()
         new_cart.checkout_requested.connect(self.on_checkout)
+        new_cart.price_list_changed.connect(self.item_browser.set_price_list)
         tab_index = self.sales_tabs.addTab(new_cart, f"Sotuv {tab_count + 1}")
         self.sales_tabs.setCurrentIndex(tab_index)
+
+    def _on_tab_changed(self, index: int):
+        cart = self.sales_tabs.widget(index)
+        if cart:
+            self.item_browser.set_price_list(cart.price_list_combo.currentText())
 
     def close_sale_tab(self, index: int):
         if self.sales_tabs.count() > 1:
@@ -600,6 +595,11 @@ class MainWindow(QMainWindow):
         self._update_company_badge(cfg.get("company", ""), cfg.get("pos_profile", ""))
         if success:
             self.item_browser.load_items()
+            # Also refresh Cart's price list combo
+            for i in range(self.sales_tabs.count()):
+                cart = self.sales_tabs.widget(i)
+                if hasattr(cart, 'load_price_lists'):
+                    cart.load_price_lists()
         # Avtomatik sinxronizatsiyada dialog ko'rsatmaymiz
         if self._auto_sync:
             self._auto_sync = False
@@ -684,7 +684,7 @@ class MainWindow(QMainWindow):
         ).exec()
 
         # Yangi kassa ochish dialogini ko'rsatish
-        self._show_pos_opening_dialog()
+        self._show_pos_opening_dialog({})
 
     def _set_pos_enabled(self, enabled: bool):
         """Kassa ochiq/yopiq holatiga qarab UI elementlarini boshqarish."""
@@ -725,5 +725,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self.monitor_timer.stop()
         self.offline_sync_worker.stop()
-        self.offline_sync_worker.wait(2000)  # max 2 sek kutish
+        if not self.offline_sync_worker.wait(2000):
+            logger.warning("Offline sync worker 2 sekund ichida to'xtamadi")
         super().closeEvent(event)
