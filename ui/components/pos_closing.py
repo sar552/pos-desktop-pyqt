@@ -56,6 +56,10 @@ class ClosingDataWorker(QThread):
         if not overview_success or not isinstance(overview, dict):
             overview = {}
 
+        missing_invoices = self._fetch_unlinked_invoices(opening_doc, closing_doc)
+        if missing_invoices:
+            self._merge_missing_invoices(opening_doc, closing_doc, overview, missing_invoices)
+
         self.finished.emit(
             True,
             {
@@ -64,6 +68,264 @@ class ClosingDataWorker(QThread):
                 "overview": overview,
             },
         )
+
+    def _fetch_unlinked_invoices(self, opening_doc: dict, closing_doc: dict) -> list[dict]:
+        period_start = opening_doc.get("period_start_date")
+        owner = opening_doc.get("user")
+        pos_profile = opening_doc.get("pos_profile")
+        company = opening_doc.get("company")
+        if not period_start or not owner:
+            return []
+
+        linked_names = {
+            row.get("sales_invoice")
+            for row in (closing_doc.get("pos_transactions") or [])
+            if row.get("sales_invoice")
+        }
+
+        success, rows = self.api.call_method(
+            "frappe.client.get_list",
+            {
+                "doctype": "Sales Invoice",
+                "fields": [
+                    "name",
+                    "creation",
+                    "posting_date",
+                    "customer",
+                    "grand_total",
+                    "net_total",
+                    "total_qty",
+                    "currency",
+                    "conversion_rate",
+                    "change_amount",
+                    "base_change_amount",
+                    "owner",
+                    "company",
+                    "pos_profile",
+                    "is_return",
+                    "outstanding_amount",
+                    "posa_pos_opening_shift",
+                ],
+                "filters": [
+                    ["Sales Invoice", "creation", ">=", period_start],
+                    ["Sales Invoice", "owner", "=", owner],
+                    ["Sales Invoice", "docstatus", "=", 1],
+                ],
+                "limit_page_length": 100,
+                "order_by": "creation desc",
+            },
+        )
+        if not success or not isinstance(rows, list):
+            return []
+
+        docs = []
+        for row in rows:
+            name = row.get("name")
+            if not name or name in linked_names:
+                continue
+            if row.get("posa_pos_opening_shift"):
+                continue
+            if company and row.get("company") not in (company, None, ""):
+                continue
+            if pos_profile and row.get("pos_profile") not in (pos_profile, None, ""):
+                continue
+
+            ok, doc = self.api.call_method(
+                "frappe.client.get",
+                {"doctype": "Sales Invoice", "name": name},
+            )
+            if ok and isinstance(doc, dict):
+                docs.append(doc)
+        return docs
+
+    def _base_value(self, doc: dict, fieldname: str, base_fieldname: str | None = None, conversion_rate=None) -> float:
+        base_fieldname = base_fieldname or f"base_{fieldname}"
+        base_value = doc.get(base_fieldname)
+        if base_value not in (None, ""):
+            try:
+                return float(base_value)
+            except (TypeError, ValueError):
+                return 0.0
+
+        value = doc.get(fieldname)
+        if value in (None, ""):
+            return 0.0
+        try:
+            rate = float(
+                conversion_rate
+                or doc.get("conversion_rate")
+                or doc.get("exchange_rate")
+                or doc.get("target_exchange_rate")
+                or doc.get("plc_conversion_rate")
+                or 1
+            )
+        except (TypeError, ValueError):
+            rate = 1.0
+        try:
+            return float(value) * rate
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _merge_missing_invoices(self, opening_doc: dict, closing_doc: dict, overview: dict, invoices: list[dict]):
+        company_currency = overview.get("company_currency") or opening_doc.get("currency") or "UZS"
+        cash_mode = (
+            overview.get("cash_expected", {}) or {}
+        ).get("mode_of_payment") or "Cash"
+
+        pos_transactions = closing_doc.setdefault("pos_transactions", [])
+        payment_rows = closing_doc.setdefault("payment_reconciliation", [])
+        payment_map = {row.get("mode_of_payment"): row for row in payment_rows if row.get("mode_of_payment")}
+        taxes = closing_doc.setdefault("taxes", [])
+
+        multi_currency_map = {
+            row.get("currency"): row for row in overview.setdefault("multi_currency_totals", []) if row.get("currency")
+        }
+        payments_map = {
+            (row.get("mode_of_payment"), row.get("currency")): row
+            for row in overview.setdefault("payments_by_mode", [])
+            if row.get("mode_of_payment")
+        }
+        cash_rows = {
+            row.get("currency"): row for row in (overview.setdefault("cash_expected", {}).setdefault("by_currency", [])) if row.get("currency")
+        }
+
+        sales_summary = overview.setdefault("sales_summary", {})
+        credit_summary = overview.setdefault("credit_invoices", {"count": 0, "company_currency_total": 0.0, "by_currency": []})
+        returns_summary = overview.setdefault("returns", {"count": 0, "company_currency_total": 0.0, "by_currency": []})
+        change_summary = overview.setdefault(
+            "change_returned",
+            {
+                "company_currency_total": 0.0,
+                "by_currency": [],
+                "invoice_change": {"company_currency_total": 0.0, "by_currency": []},
+                "overpayment_change": {"company_currency_total": 0.0, "by_currency": []},
+            },
+        )
+
+        for invoice in invoices:
+            conversion_rate = invoice.get("conversion_rate")
+            currency = invoice.get("currency") or company_currency
+            grand_total = float(invoice.get("grand_total") or 0)
+            net_total = float(invoice.get("net_total") or 0)
+            total_qty = float(invoice.get("total_qty") or 0)
+            base_grand_total = self._base_value(invoice, "grand_total", "base_grand_total", conversion_rate)
+            base_net_total = self._base_value(invoice, "net_total", "base_net_total", conversion_rate)
+
+            pos_transactions.append(
+                {
+                    "sales_invoice": invoice.get("name"),
+                    "posting_date": invoice.get("posting_date"),
+                    "grand_total": base_grand_total,
+                    "transaction_currency": currency,
+                    "transaction_amount": grand_total,
+                    "customer": invoice.get("customer"),
+                }
+            )
+
+            closing_doc["grand_total"] = float(closing_doc.get("grand_total") or 0) + base_grand_total
+            closing_doc["net_total"] = float(closing_doc.get("net_total") or 0) + base_net_total
+            closing_doc["total_quantity"] = float(closing_doc.get("total_quantity") or 0) + total_qty
+
+            existing_currency_row = multi_currency_map.get(currency)
+            if not existing_currency_row:
+                existing_currency_row = {
+                    "currency": currency,
+                    "total": 0.0,
+                    "company_currency_total": 0.0,
+                    "invoice_count": 0,
+                    "exchange_rates": [],
+                }
+                overview["multi_currency_totals"].append(existing_currency_row)
+                multi_currency_map[currency] = existing_currency_row
+            existing_currency_row["total"] += grand_total
+            existing_currency_row["company_currency_total"] += base_grand_total
+            existing_currency_row["invoice_count"] += 1
+
+            overview["total_invoices"] = int(overview.get("total_invoices") or 0) + 1
+            overview["company_currency_total"] = float(overview.get("company_currency_total") or 0) + base_grand_total
+            sales_summary["gross_company_currency_total"] = float(sales_summary.get("gross_company_currency_total") or 0) + base_grand_total
+            sales_summary["net_company_currency_total"] = float(sales_summary.get("net_company_currency_total") or 0) + base_net_total
+            sales_summary["sale_invoices_count"] = int(sales_summary.get("sale_invoices_count") or 0) + 1
+            total_sales = float(sales_summary.get("gross_company_currency_total") or 0)
+            total_count = int(sales_summary.get("sale_invoices_count") or 0)
+            sales_summary["average_invoice_value"] = (total_sales / total_count) if total_count else 0
+
+            if float(invoice.get("outstanding_amount") or 0) > 0:
+                credit_summary["count"] = int(credit_summary.get("count") or 0) + 1
+                credit_summary["company_currency_total"] = float(credit_summary.get("company_currency_total") or 0) + self._base_value(
+                    invoice, "outstanding_amount", "base_outstanding_amount", conversion_rate
+                )
+
+            if invoice.get("is_return"):
+                returns_summary["count"] = int(returns_summary.get("count") or 0) + 1
+                returns_summary["company_currency_total"] = float(returns_summary.get("company_currency_total") or 0) + abs(base_grand_total)
+
+            change_amount = float(invoice.get("change_amount") or 0)
+            if change_amount:
+                base_change = self._base_value(invoice, "change_amount", "base_change_amount", conversion_rate)
+                change_summary["company_currency_total"] = float(change_summary.get("company_currency_total") or 0) + base_change
+                invoice_change = change_summary.setdefault("invoice_change", {"company_currency_total": 0.0, "by_currency": []})
+                invoice_change["company_currency_total"] = float(invoice_change.get("company_currency_total") or 0) + base_change
+
+            for tax in invoice.get("taxes", []) or []:
+                account_head = tax.get("account_head")
+                rate = tax.get("rate")
+                amount = self._base_value(tax, "tax_amount", "base_tax_amount", conversion_rate)
+                existing_tax = next((row for row in taxes if row.get("account_head") == account_head and row.get("rate") == rate), None)
+                if existing_tax:
+                    existing_tax["amount"] = float(existing_tax.get("amount") or 0) + amount
+                else:
+                    taxes.append({"account_head": account_head, "rate": rate, "amount": amount})
+
+            for payment in invoice.get("payments", []) or []:
+                mode = payment.get("mode_of_payment")
+                if not mode:
+                    continue
+                expected_delta = self._base_value(payment, "amount", "base_amount", conversion_rate)
+                if mode == cash_mode and change_amount:
+                    expected_delta -= self._base_value(invoice, "change_amount", "base_change_amount", conversion_rate)
+
+                row = payment_map.get(mode)
+                if not row:
+                    row = {"mode_of_payment": mode, "opening_amount": 0, "expected_amount": 0, "closing_amount": 0}
+                    payment_rows.append(row)
+                    payment_map[mode] = row
+                row["expected_amount"] = float(row.get("expected_amount") or 0) + expected_delta
+                if row.get("closing_amount") in (None, "", 0):
+                    row["closing_amount"] = row["expected_amount"]
+
+                pay_key = (mode, currency)
+                pay_row = payments_map.get(pay_key)
+                if not pay_row:
+                    pay_row = {
+                        "mode_of_payment": mode,
+                        "currency": currency,
+                        "total": 0.0,
+                        "company_currency_total": 0.0,
+                        "exchange_rates": [],
+                    }
+                    overview["payments_by_mode"].append(pay_row)
+                    payments_map[pay_key] = pay_row
+                pay_row["total"] += float(payment.get("amount") or 0)
+                pay_row["company_currency_total"] += self._base_value(payment, "amount", "base_amount", conversion_rate)
+
+                if mode == cash_mode:
+                    cash_row = cash_rows.get(currency)
+                    if not cash_row:
+                        cash_row = {
+                            "currency": currency,
+                            "total": 0.0,
+                            "company_currency_total": 0.0,
+                            "exchange_rates": [],
+                            "mode_of_payment": cash_mode,
+                        }
+                        overview["cash_expected"]["by_currency"].append(cash_row)
+                        cash_rows[currency] = cash_row
+                    cash_row["total"] += float(payment.get("amount") or 0) - change_amount
+                    cash_row["company_currency_total"] += expected_delta
+                    overview["cash_expected"]["company_currency_total"] = float(
+                        overview["cash_expected"].get("company_currency_total") or 0
+                    ) + expected_delta
 
 
 class ClosingWorker(QThread):

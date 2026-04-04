@@ -2,7 +2,7 @@ import json
 import sched
 import time
 from threading import Thread
-from database.models import PendingInvoice, db
+from database.models import PendingInvoice, PosShift, db
 from core.api import FrappeAPI
 from core.logger import get_logger
 
@@ -58,6 +58,19 @@ def process_pending_invoice(api: FrappeAPI, invoice: PendingInvoice) -> tuple[st
     payload["doctype"] = "Sales Invoice"
     payload["is_pos"] = 1
     payload["update_stock"] = 1
+
+    if not payload.get("posa_pos_opening_shift"):
+        try:
+            shift = (
+                PosShift.select()
+                .where(PosShift.status == "Open")
+                .order_by(PosShift.id.desc())
+                .first()
+            )
+            if shift and shift.opening_entry:
+                payload["posa_pos_opening_shift"] = shift.opening_entry
+        except Exception as e:
+            logger.debug("Pending invoice uchun opening shift olinmadi: %s", e)
     
     # Currency - POSAwesome uchun majburiy
     if not payload.get("currency"):

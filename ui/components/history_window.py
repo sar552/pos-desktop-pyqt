@@ -28,6 +28,14 @@ class FetchHistoryWorker(QThread):
             self.finished.emit(True, [])
             return
 
+        success, opening_doc = self.api.call_method(
+            "frappe.client.get",
+            {"doctype": "POS Opening Shift", "name": self.opening_entry},
+        )
+        if not success or not isinstance(opening_doc, dict):
+            self.finished.emit(False, [])
+            return
+
         fields = json.dumps([
             "name",
             "customer",
@@ -45,10 +53,66 @@ class FetchHistoryWorker(QThread):
             "Sales Invoice", fields=fields, filters=filters, limit=HISTORY_FETCH_LIMIT,
         )
         if data is not None:
+            linked_names = {row.get("name") for row in data}
+            missing = self._fetch_unlinked_invoices(opening_doc, linked_names)
+            if missing:
+                data.extend(missing)
             data.sort(key=lambda x: x.get("creation", ""), reverse=True)
             self.finished.emit(True, data)
         else:
             self.finished.emit(False, [])
+
+    def _fetch_unlinked_invoices(self, opening_doc: dict, linked_names: set[str]):
+        period_start = opening_doc.get("period_start_date")
+        owner = opening_doc.get("user")
+        pos_profile = opening_doc.get("pos_profile")
+        company = opening_doc.get("company")
+        if not period_start or not owner:
+            return []
+
+        success, rows = self.api.call_method(
+            "frappe.client.get_list",
+            {
+                "doctype": "Sales Invoice",
+                "fields": [
+                    "name",
+                    "customer",
+                    "grand_total",
+                    "posting_date",
+                    "posting_time",
+                    "status",
+                    "docstatus",
+                    "creation",
+                    "owner",
+                    "company",
+                    "pos_profile",
+                    "posa_pos_opening_shift",
+                ],
+                "filters": [
+                    ["Sales Invoice", "creation", ">=", period_start],
+                    ["Sales Invoice", "owner", "=", owner],
+                    ["Sales Invoice", "docstatus", "=", 1],
+                ],
+                "limit_page_length": HISTORY_FETCH_LIMIT,
+                "order_by": "creation desc",
+            },
+        )
+        if not success or not isinstance(rows, list):
+            return []
+
+        missing = []
+        for row in rows:
+            name = row.get("name")
+            if not name or name in linked_names:
+                continue
+            if row.get("posa_pos_opening_shift"):
+                continue
+            if company and row.get("company") not in (company, None, ""):
+                continue
+            if pos_profile and row.get("pos_profile") not in (pos_profile, None, ""):
+                continue
+            missing.append(row)
+        return missing
 
 
 class FetchDetailsWorker(QThread):

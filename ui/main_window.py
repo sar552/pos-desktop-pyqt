@@ -537,6 +537,9 @@ class MainWindow(QMainWindow):
             self._sync_item_browser_cart_view()
 
     def on_checkout(self, order_data: dict):
+        if self.opening_entry:
+            order_data = dict(order_data)
+            order_data["opening_entry"] = self.opening_entry
         # CheckoutWindow ham shared API ishlatadi
         dialog = CheckoutWindow(self, order_data, self.api)
         dialog.checkout_completed.connect(self.on_checkout_completed)

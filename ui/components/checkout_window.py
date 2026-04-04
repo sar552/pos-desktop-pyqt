@@ -10,7 +10,7 @@ from PyQt6.QtGui import QDoubleValidator
 from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
-from database.models import PendingInvoice, db
+from database.models import PendingInvoice, PosShift, db
 from core.printer import print_receipt
 from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit
@@ -330,6 +330,7 @@ class CheckoutWindow(QDialog):
         selected_price_list = (
             self.order_data.get("selling_price_list", "").strip() or config.get("price_list")
         )
+        opening_entry = self.order_data.get("opening_entry") or self._get_opening_entry()
         
         invoice_data = {
             "doctype": "Sales Invoice",
@@ -345,6 +346,8 @@ class CheckoutWindow(QDialog):
             "items": [],
             "payments": payments
         }
+        if opening_entry:
+            invoice_data["posa_pos_opening_shift"] = opening_entry
         
         for item in self.order_data.get("items", []):
             rate = item.get("rate") or item.get("price", 0)
@@ -362,6 +365,23 @@ class CheckoutWindow(QDialog):
         self.worker = CheckoutWorker(invoice_data, payments, self.offline_id, self.api)
         self.worker.finished.connect(self._on_checkout_finished)
         self.worker.start()
+
+    def _get_opening_entry(self) -> str:
+        try:
+            db.connect(reuse_if_open=True)
+            shift = (
+                PosShift.select()
+                .where(PosShift.status == "Open")
+                .order_by(PosShift.id.desc())
+                .first()
+            )
+            return (shift.opening_entry or "").strip() if shift else ""
+        except Exception as e:
+            logger.debug("Opening entry olinmadi: %s", e)
+            return ""
+        finally:
+            if not db.is_closed():
+                db.close()
 
     def _on_checkout_finished(self, success, msg):
         receipt_data = dict(self.order_data)
