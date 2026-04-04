@@ -209,7 +209,11 @@ def _order_type_label(order_type: str) -> str:
 def _build_customer_receipt(order_data: dict, payments_list: list, config: dict) -> bytes:
     """Mijoz uchun to'liq chek — turiga qarab sarlavha o'zgaradi"""
     items_list = order_data.get("items", [])
-    total_amount = order_data.get("total_amount", 0.0)
+    total_amount = float(order_data.get("total_amount", 0.0) or 0)
+    gross_total_amount = float(order_data.get("gross_total_amount", total_amount) or total_amount)
+    item_discount_total = float(order_data.get("item_discount_total", 0.0) or 0)
+    invoice_discount_amount = float(order_data.get("invoice_discount_amount", 0.0) or 0)
+    total_discount = item_discount_total + invoice_discount_amount
     order_type = order_data.get("order_type", "")
     ticket_number = order_data.get("ticket_number", "")
     comment = order_data.get("comment", "")
@@ -273,6 +277,10 @@ def _build_customer_receipt(order_data: dict, payments_list: list, config: dict)
 
     # Jami
     data += _separator("=")
+    if total_discount > 0:
+        data += _line("Brutto:", f"{_format_amount(gross_total_amount)} UZS")
+        data += _line("Chegirma:", f"-{_format_amount(total_discount)} UZS")
+        data += _separator()
     data += CMD_BOLD_ON + CMD_DOUBLE_ON
     data += _line("JAMI:", f"{_format_amount(total_amount)} UZS", width=CHARS_DOUBLE)
     data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
@@ -483,6 +491,10 @@ def _is_thermal_printer(printer_config: dict) -> bool:
 def _build_customer_receipt_html(order_data: dict, payments_list: list, config: dict) -> str:
     items_list = order_data.get("items", [])
     total_amount = float(order_data.get("total_amount", 0.0) or 0)
+    gross_total_amount = float(order_data.get("gross_total_amount", total_amount) or total_amount)
+    item_discount_total = float(order_data.get("item_discount_total", 0.0) or 0)
+    invoice_discount_amount = float(order_data.get("invoice_discount_amount", 0.0) or 0)
+    total_discount = item_discount_total + invoice_discount_amount
     order_type = order_data.get("order_type", "")
     ticket_number = order_data.get("ticket_number", "")
     comment = order_data.get("comment", "")
@@ -562,6 +574,8 @@ def _build_customer_receipt_html(order_data: dict, payments_list: list, config: 
           <tbody>{''.join(payment_rows) or '<tr><td colspan="2">To&apos;lov ma&apos;lumoti yo&apos;q</td></tr>'}</tbody>
         </table>
         <div class="totals">
+          {"<div>Brutto: " + _format_amount(gross_total_amount) + " UZS</div>" if total_discount > 0 else ""}
+          {"<div>Chegirma: -" + _format_amount(total_discount) + " UZS</div>" if total_discount > 0 else ""}
           <div class="grand">Jami: {_format_amount(total_amount)} UZS</div>
           <div>To&apos;langan: {_format_amount(total_paid)} UZS</div>
           <div>Qaytim: {_format_amount(change)} UZS</div>

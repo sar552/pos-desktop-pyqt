@@ -83,11 +83,27 @@ def process_pending_invoice(api: FrappeAPI, invoice: PendingInvoice) -> tuple[st
     items = payload.get("items", [])
     formatted_items = []
     for item in items:
+        rate = item.get("rate", 0)
+        qty = item.get("qty", 1)
+        discount_amount = item.get("discount_amount", 0)
+        price_list_rate = item.get("price_list_rate", rate)
         formatted_items.append({
             "item_code": item.get("item_code"),
-            "qty": item.get("qty", 1),
-            "rate": item.get("rate", 0),
-            "amount": item.get("amount", item.get("rate", 0) * item.get("qty", 1)),
+            "item_name": item.get("item_name") or item.get("name") or item.get("item_code"),
+            "qty": qty,
+            "uom": item.get("uom"),
+            "conversion_factor": item.get("conversion_factor", 1),
+            "warehouse": item.get("warehouse") or payload.get("set_warehouse"),
+            "rate": rate,
+            "base_rate": item.get("base_rate", rate),
+            "amount": item.get("amount", rate * qty),
+            "base_amount": item.get("base_amount", rate * qty),
+            "price_list_rate": price_list_rate,
+            "base_price_list_rate": item.get("base_price_list_rate", price_list_rate),
+            "discount_amount": discount_amount,
+            "base_discount_amount": item.get("base_discount_amount", discount_amount),
+            "discount_percentage": item.get("discount_percentage", 0),
+            "is_stock_item": item.get("is_stock_item", 1),
         })
     payload["items"] = formatted_items
     
@@ -97,6 +113,7 @@ def process_pending_invoice(api: FrappeAPI, invoice: PendingInvoice) -> tuple[st
         formatted_payments.append({
             "mode_of_payment": p.get("mode_of_payment"),
             "amount": p.get("amount", 0),
+            "type": p.get("type", "Cash"),
         })
     payload["payments"] = formatted_payments
     

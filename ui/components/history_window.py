@@ -40,6 +40,7 @@ class FetchHistoryWorker(QThread):
             "name",
             "customer",
             "grand_total",
+            "outstanding_amount",
             "posting_date",
             "posting_time",
             "status",
@@ -78,6 +79,7 @@ class FetchHistoryWorker(QThread):
                     "name",
                     "customer",
                     "grand_total",
+                    "outstanding_amount",
                     "posting_date",
                     "posting_time",
                     "status",
@@ -469,8 +471,8 @@ class HistoryWindow(QWidget):
         layout.addWidget(sep)
 
         # ── Table ────────────────────────────
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["ID", "Sana", "Vaqt", "Mijoz", "Summa", "Amal"])
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(["ID", "Sana", "Vaqt", "Mijoz", "Holat", "Summa", "Amal"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
@@ -493,8 +495,10 @@ class HistoryWindow(QWidget):
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(5, 130)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(5, 150)
+        self.table.setColumnWidth(6, 130)
         layout.addWidget(self.table)
 
     def load_history(self):
@@ -519,9 +523,10 @@ class HistoryWindow(QWidget):
             self.table.setItem(i, 1, QTableWidgetItem(item.get("posting_date", "")))
             self.table.setItem(i, 2, QTableWidgetItem(item.get("posting_time", "")[:5]))
             self.table.setItem(i, 3, QTableWidgetItem(item.get("customer", "")))
+            self.table.setCellWidget(i, 4, self._build_status_badge(item))
             amt = QTableWidgetItem(f"{item.get('grand_total', 0):,.0f} UZS".replace(",", " "))
             amt.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
-            self.table.setItem(i, 4, amt)
+            self.table.setItem(i, 5, amt)
 
             if status != "Cancelled":
                 btn = QPushButton("Bekor qilish")
@@ -535,12 +540,54 @@ class HistoryWindow(QWidget):
                     QPushButton:hover { background: #ffedd5; }
                 """)
                 btn.clicked.connect(lambda _, inv=inv_name: self._confirm_cancel(inv))
-                self.table.setCellWidget(i, 5, btn)
+                self.table.setCellWidget(i, 6, btn)
             else:
                 lbl = QLabel("Bekor qilingan")
                 lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 lbl.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 11px;")
-                self.table.setCellWidget(i, 5, lbl)
+                self.table.setCellWidget(i, 6, lbl)
+
+    def _derive_payment_status(self, item: dict) -> tuple[str, str]:
+        status = str(item.get("status") or "").strip()
+        docstatus = int(item.get("docstatus") or 0)
+        outstanding = float(item.get("outstanding_amount") or 0.0)
+        grand_total = float(item.get("grand_total") or 0.0)
+        paid_amount = max(grand_total - outstanding, 0.0)
+
+        if docstatus == 2 or status.lower() == "cancelled":
+            return "Bekor qilingan", "cancelled"
+        if outstanding <= 0:
+            return "Paid", "paid"
+        if paid_amount > 0:
+            return "Qisman to'langan", "partial"
+        return "To'lanmagan", "unpaid"
+
+    def _build_status_badge(self, item: dict) -> QLabel:
+        text, tone = self._derive_payment_status(item)
+        styles = {
+            "paid": ("#dcfce7", "#166534", "#86efac"),
+            "partial": ("#fef3c7", "#92400e", "#fcd34d"),
+            "unpaid": ("#fee2e2", "#b91c1c", "#fca5a5"),
+            "cancelled": ("#e5e7eb", "#4b5563", "#d1d5db"),
+        }
+        bg, fg, border = styles.get(tone, styles["unpaid"])
+        badge = QLabel(text)
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setStyleSheet(
+            f"""
+            QLabel {{
+                background: {bg};
+                color: {fg};
+                border: 1px solid {border};
+                border-radius: 10px;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 6px 10px;
+            }}
+            """
+        )
+        badge.setToolTip(f"Asl status: {item.get('status', '')}")
+        return badge
 
     def _show_details(self, item):
         invoice_id = self.table.item(item.row(), 0).text()

@@ -1,9 +1,11 @@
+import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QHBoxLayout,
     QComboBox, QLineEdit, QGroupBox, QFrame,
 )
 from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QDoubleValidator
 from database.models import Customer, PosProfile, db
 from core.logger import get_logger
 from core.constants import TICKET_ORDER_TYPES, ORDER_TYPES
@@ -35,12 +37,23 @@ class CartWidget(QWidget):
         self._all_customers = []
         self._filtered_customers = []
         self._customer_ui_updating = False
+        self._customer_info_cache = {}
+        self._item_meta_cache = {}
+        self._is_repricing = False
+        self._current_customer_info = {}
+        self._current_profile_data = {}
         self.col_settings = {
             "show_qty": {"label": "QTY (Miqdor) ustunini ko'rsatish", "value": True},
             "show_rate": {"label": "RATE (Narx) ustunini ko'rsatish", "value": True},
             "show_amount": {"label": "AMOUNT (Summa) ustunini ko'rsatish", "value": True},
         }
         self.total_amount = 0.0
+        self.gross_total_amount = 0.0
+        self.net_total_amount = 0.0
+        self.item_discount_total = 0.0
+        self.invoice_discount_amount = 0.0
+        self.invoice_discount_percentage = 0.0
+        self.apply_discount_on = "Grand Total"
         self.current_order_type = ORDER_TYPES[0]
         self.order_type_buttons = {}
         self._numpad_mode = "ticket"   # "ticket" | "qty"
@@ -634,13 +647,401 @@ class CartWidget(QWidget):
             if not db.is_closed():
                 db.close()
 
+    @staticmethod
+    def _flt(value, default: float = 0.0) -> float:
+        try:
+            if value is None or value == "":
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _get_current_profile_data(self) -> dict:
+        config = load_config()
+        profile_name = (config.get("pos_profile") or "").strip()
+        try:
+            db.connect(reuse_if_open=True)
+            query = PosProfile.select()
+            if profile_name:
+                profile = query.where(PosProfile.name == profile_name).first()
+            else:
+                profile = query.first()
+            if not profile or not profile.profile_data:
+                self._current_profile_data = {}
+                return {}
+            self._current_profile_data = json.loads(profile.profile_data)
+            return self._current_profile_data
+        except Exception as e:
+            logger.debug("POS Profile ma'lumotlari o'qilmadi: %s", e)
+            self._current_profile_data = {}
+            return {}
+        finally:
+            if not db.is_closed():
+                db.close()
+
+    def _get_profile_flag(self, key: str, default=0):
+        profile = self._current_profile_data or self._get_current_profile_data()
+        return profile.get(key, default) if isinstance(profile, dict) else default
+
+    def _resolve_effective_customer_name(self) -> str:
+        selected = (self.get_selected_customer_name() or "").strip()
+        if selected:
+            return selected
+        profile = self._current_profile_data or self._get_current_profile_data()
+        profile_customer = (profile.get("customer") or "").strip() if isinstance(profile, dict) else ""
+        if profile_customer:
+            return profile_customer
+        return (load_config().get("default_customer") or "").strip()
+
+    def _get_customer_info_local(self, customer_name: str) -> dict:
+        if not customer_name:
+            return {}
+        try:
+            db.connect(reuse_if_open=True)
+            customer = Customer.get_or_none(Customer.name == customer_name)
+            if not customer:
+                return {}
+            payload = json.loads(customer.posawesome_data or "{}")
+            payload.setdefault("name", customer.name)
+            payload.setdefault("customer_name", customer.customer_name)
+            payload.setdefault("customer_group", customer.customer_group)
+            return payload
+        except Exception as e:
+            logger.debug("Customer info lokal o'qilmadi: %s", e)
+            return {}
+        finally:
+            if not db.is_closed():
+                db.close()
+
+    def _get_customer_info(self, customer_name: str) -> dict:
+        if not customer_name:
+            return {}
+        cached = self._customer_info_cache.get(customer_name)
+        if cached is not None:
+            return dict(cached)
+
+        info = self._get_customer_info_local(customer_name)
+        if self.api and self.api.is_configured():
+            try:
+                success, response = self.api.call_method(
+                    "posawesome.posawesome.api.customers.get_customer_info",
+                    {"customer": customer_name},
+                )
+                if success and isinstance(response, dict):
+                    info.update(response)
+            except Exception as e:
+                logger.debug("Customer info serverdan olinmadi: %s", e)
+
+        self._customer_info_cache[customer_name] = dict(info)
+        return dict(info)
+
+    def _get_item_meta(self, item_code: str) -> dict:
+        cached = self._item_meta_cache.get(item_code)
+        if cached is not None:
+            return dict(cached)
+        try:
+            db.connect(reuse_if_open=True)
+            item = Item.get_or_none(Item.item_code == item_code)
+            if not item:
+                self._item_meta_cache[item_code] = {}
+                return {}
+            payload = json.loads(item.posawesome_data or "{}")
+            payload.setdefault("item_code", item.item_code)
+            payload.setdefault("item_name", item.item_name)
+            payload.setdefault("item_group", item.item_group)
+            payload.setdefault("uom", item.uom or item.stock_uom)
+            payload.setdefault("stock_uom", item.stock_uom)
+            payload.setdefault("image", item.image)
+            payload.setdefault("is_stock_item", int(bool(item.is_stock_item)))
+            self._item_meta_cache[item_code] = payload
+            return dict(payload)
+        except Exception as e:
+            logger.debug("Item metadata o'qilmadi: %s", e)
+            self._item_meta_cache[item_code] = {}
+            return {}
+        finally:
+            if not db.is_closed():
+                db.close()
+
+    def _build_item_state(self, item_code: str, item_name: str, price: float, currency: str, qty: int = 1) -> dict:
+        meta = self._get_item_meta(item_code)
+        price_value = self._flt(price)
+        return {
+            "item_code": item_code,
+            "name": item_name or meta.get("item_name") or item_code,
+            "item_name": item_name or meta.get("item_name") or item_code,
+            "qty": int(qty),
+            "currency": currency or meta.get("currency") or "UZS",
+            "price": price_value,
+            "price_list_rate": price_value,
+            "base_price_list_rate": price_value,
+            "rate": price_value,
+            "base_rate": price_value,
+            "discount_amount": 0.0,
+            "base_discount_amount": 0.0,
+            "discount_percentage": 0.0,
+            "pricing_rules": [],
+            "max_discount": self._flt(meta.get("max_discount")),
+            "brand": meta.get("brand"),
+            "item_group": meta.get("item_group"),
+            "uom": meta.get("uom") or meta.get("stock_uom"),
+            "warehouse": meta.get("warehouse") or load_config().get("warehouse"),
+            "conversion_factor": self._flt(meta.get("conversion_factor"), 1.0) or 1.0,
+            "serial_no": meta.get("serial_no"),
+            "batch_no": meta.get("batch_no"),
+            "is_stock_item": int(bool(meta.get("is_stock_item", 1))),
+            "is_free_item": 0,
+            "posa_row_id": item_code,
+            "_manual_rate_set": False,
+            "_manual_rate_value": None,
+        }
+
+    def _can_edit_rate(self) -> bool:
+        return bool(self._flt(self._get_profile_flag("posa_allow_user_to_edit_rate", 0)))
+
+    def _apply_manual_rate_to_item(self, item: dict, desired_rate: float, persist: bool = True):
+        price_list_rate = self._flt(item.get("price_list_rate"))
+        if price_list_rate <= 0:
+            effective_rate = max(self._flt(desired_rate), 0.0)
+        else:
+            effective_rate = min(max(self._flt(desired_rate), 0.0), price_list_rate)
+
+        discount_amount = max(price_list_rate - effective_rate, 0.0)
+        discount_percentage = (discount_amount / price_list_rate * 100.0) if price_list_rate > 0 else 0.0
+
+        item["rate"] = effective_rate
+        item["base_rate"] = effective_rate
+        item["price"] = effective_rate
+        item["discount_amount"] = discount_amount
+        item["base_discount_amount"] = discount_amount
+        item["discount_percentage"] = discount_percentage
+
+        manual_enabled = effective_rate > 0 and abs(effective_rate - price_list_rate) > 0.0001
+        if persist:
+            item["_manual_rate_set"] = manual_enabled
+            item["_manual_rate_value"] = effective_rate if manual_enabled else None
+
+    def _commit_inline_rate(self, item_code: str, editor: QLineEdit):
+        item = self.items.get(item_code)
+        if not item:
+            return
+        raw = (editor.text() or "").replace(" ", "").strip()
+        if not raw:
+            self._apply_manual_rate_to_item(
+                item,
+                self._flt(item.get("price_list_rate"), self._flt(item.get("rate"))),
+                persist=True,
+            )
+            self.refresh_table()
+            return
+        try:
+            new_rate = float(raw)
+        except ValueError:
+            self.refresh_table()
+            return
+        self._apply_manual_rate_to_item(item, new_rate, persist=True)
+        self.refresh_table()
+
+    def _apply_customer_discount(self, item: dict, customer_info: dict):
+        if item.get("is_free_item"):
+            return
+        discount_percent = self._flt(customer_info.get("posa_discount"))
+        if discount_percent <= 0 or discount_percent > 100:
+            return
+
+        max_discount = self._flt(item.get("max_discount"))
+        if max_discount > 0:
+            discount_percent = min(discount_percent, max_discount)
+
+        price_list_rate = self._flt(item.get("price_list_rate"))
+        base_price_list_rate = self._flt(item.get("base_price_list_rate"), price_list_rate)
+        discount_amount = (price_list_rate * discount_percent) / 100
+        base_discount_amount = (base_price_list_rate * discount_percent) / 100
+
+        item["discount_percentage"] = discount_percent
+        item["discount_amount"] = discount_amount
+        item["base_discount_amount"] = base_discount_amount
+        item["rate"] = max(price_list_rate - discount_amount, 0)
+        item["base_rate"] = max(base_price_list_rate - base_discount_amount, 0)
+        item["price"] = item["rate"]
+
+    @staticmethod
+    def _normalize_pricing_rules(value) -> list[str]:
+        if not value:
+            return []
+        if isinstance(value, list):
+            return [str(v).strip() for v in value if str(v).strip()]
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return []
+            try:
+                decoded = json.loads(text)
+                if isinstance(decoded, list):
+                    return [str(v).strip() for v in decoded if str(v).strip()]
+            except (TypeError, ValueError):
+                pass
+            return [part.strip() for part in text.split(",") if part.strip()]
+        return []
+
+    def _build_pricing_context(self, customer_name: str, customer_info: dict) -> dict:
+        profile = self._current_profile_data or self._get_current_profile_data()
+        config = load_config()
+        return {
+            "company": profile.get("company") or config.get("company"),
+            "currency": profile.get("currency") or config.get("currency", "UZS"),
+            "price_list": self.get_selected_price_list(),
+            "customer": customer_name,
+            "customer_group": customer_info.get("customer_group"),
+            "territory": customer_info.get("territory"),
+            "date": datetime.date.today().isoformat(),
+            "conversion_rate": 1,
+        }
+
+    def _apply_server_pricing(self, customer_name: str, customer_info: dict):
+        if not self.api or not self.api.is_configured():
+            return
+
+        lines = []
+        for code, item in self.items.items():
+            if item.get("is_free_item"):
+                continue
+            lines.append(
+                {
+                    "item_code": item.get("item_code") or code,
+                    "qty": self._flt(item.get("qty"), 1),
+                    "stock_qty": self._flt(item.get("qty"), 1),
+                    "price_list_rate": self._flt(item.get("price_list_rate")),
+                    "base_price_list_rate": self._flt(item.get("base_price_list_rate")),
+                    "rate": self._flt(item.get("rate"), self._flt(item.get("price_list_rate"))),
+                    "base_rate": self._flt(item.get("base_rate"), self._flt(item.get("base_price_list_rate"))),
+                    "warehouse": item.get("warehouse"),
+                    "uom": item.get("uom"),
+                    "item_group": item.get("item_group"),
+                    "brand": item.get("brand"),
+                    "pricing_rules": item.get("pricing_rules") or [],
+                    "posa_row_id": code,
+                }
+            )
+
+        if not lines:
+            return
+
+        payload = {
+            "context": self._build_pricing_context(customer_name, customer_info),
+            "lines": lines,
+            "free_lines": [],
+        }
+        try:
+            success, response = self.api.call_method(
+                "posawesome.posawesome.api.pricing_rules.reconcile_line_prices",
+                {"cart_payload": json.dumps(payload)},
+            )
+            if not success or not isinstance(response, dict):
+                return
+
+            updates = response.get("updates") or []
+            for update in updates:
+                row_id = str(update.get("row_id") or "").strip()
+                if not row_id or row_id not in self.items:
+                    continue
+                item = self.items[row_id]
+                if item.get("_manual_rate_set"):
+                    continue
+                price_list_rate = self._flt(update.get("price_list_rate"), self._flt(item.get("price_list_rate")))
+                discount_amount = self._flt(update.get("discount_amount"))
+                discount_percentage = self._flt(update.get("discount_percentage"))
+                rate = self._flt(update.get("rate"), max(price_list_rate - discount_amount, 0))
+                item["price_list_rate"] = price_list_rate
+                item["base_price_list_rate"] = price_list_rate
+                item["discount_amount"] = discount_amount
+                item["base_discount_amount"] = discount_amount
+                item["discount_percentage"] = discount_percentage
+                item["rate"] = rate
+                item["base_rate"] = rate
+                item["price"] = rate
+                item["pricing_rules"] = self._normalize_pricing_rules(update.get("pricing_rules"))
+
+            invoice_updates = response.get("invoice_updates") or {}
+            self.invoice_discount_amount = self._flt(invoice_updates.get("discount_amount"))
+            self.invoice_discount_percentage = self._flt(
+                invoice_updates.get("additional_discount_percentage")
+            )
+            self.apply_discount_on = invoice_updates.get("apply_discount_on") or "Grand Total"
+        except Exception as e:
+            logger.debug("Pricing rule reconcile ishlamadi: %s", e)
+
+    def _reprice_cart(self):
+        if self._is_repricing:
+            return
+
+        self._is_repricing = True
+        try:
+            if not self.items:
+                self.gross_total_amount = 0.0
+                self.net_total_amount = 0.0
+                self.item_discount_total = 0.0
+                self.invoice_discount_amount = 0.0
+                self.invoice_discount_percentage = 0.0
+                self.apply_discount_on = "Grand Total"
+                self._current_customer_info = {}
+                self.refresh_table()
+                return
+
+            self._current_profile_data = self._get_current_profile_data()
+            customer_name = self._resolve_effective_customer_name()
+            customer_info = self._get_customer_info(customer_name) if customer_name else {}
+            self._current_customer_info = dict(customer_info)
+
+            selected_price_list = self.get_selected_price_list()
+            apply_customer_discount = bool(
+                self._flt(self._get_profile_flag("posa_apply_customer_discount", 0))
+            )
+
+            for code, item in self.items.items():
+                manual_rate = item.get("_manual_rate_value") if item.get("_manual_rate_set") else None
+                price, currency = self._resolve_item_price(code, selected_price_list)
+                meta = self._get_item_meta(code)
+                item["currency"] = currency or item.get("currency") or "UZS"
+                item["name"] = item.get("name") or meta.get("item_name") or code
+                item["item_name"] = item.get("item_name") or meta.get("item_name") or item["name"]
+                item["item_group"] = meta.get("item_group") or item.get("item_group")
+                item["brand"] = meta.get("brand") or item.get("brand")
+                item["uom"] = meta.get("uom") or meta.get("stock_uom") or item.get("uom")
+                item["warehouse"] = meta.get("warehouse") or item.get("warehouse") or load_config().get("warehouse")
+                item["max_discount"] = self._flt(meta.get("max_discount"), self._flt(item.get("max_discount")))
+                item["conversion_factor"] = self._flt(
+                    meta.get("conversion_factor"),
+                    self._flt(item.get("conversion_factor"), 1.0),
+                ) or 1.0
+                item["is_stock_item"] = int(bool(meta.get("is_stock_item", item.get("is_stock_item", 1))))
+                item["pricing_rules"] = []
+                item["price_list_rate"] = price
+                item["base_price_list_rate"] = price
+                item["rate"] = price
+                item["base_rate"] = price
+                item["price"] = price
+                item["discount_amount"] = 0.0
+                item["base_discount_amount"] = 0.0
+                item["discount_percentage"] = 0.0
+
+                if apply_customer_discount and customer_info and not item.get("_manual_rate_set"):
+                    self._apply_customer_discount(item, customer_info)
+
+                if manual_rate is not None:
+                    self._apply_manual_rate_to_item(item, manual_rate, persist=False)
+
+            self.invoice_discount_amount = 0.0
+            self.invoice_discount_percentage = 0.0
+            self.apply_discount_on = "Grand Total"
+            self._apply_server_pricing(customer_name, customer_info)
+            self.refresh_table()
+        finally:
+            self._is_repricing = False
+
     def _on_pl_changed(self, text):
         try:
-            for code in list(self.items.keys()):
-                price, currency = self._resolve_item_price(code, text)
-                self.items[code]["price"] = price
-                self.items[code]["currency"] = currency
-            self.refresh_table()
+            self._reprice_cart()
         except Exception as e:
             logger.debug("Price list update failed: %s", e)
         self.price_list_changed.emit(text)
@@ -911,6 +1312,7 @@ class CartWidget(QWidget):
         line_edit.clear()
         line_edit.blockSignals(False)
         self._apply_customer_filters(typed_text="", selected_name="", show_popup=True)
+        self._reprice_cart()
 
     def _on_customer_selected(self, index: int):
         if index < 0:
@@ -919,6 +1321,7 @@ class CartWidget(QWidget):
         if not name:
             return
         self._apply_customer_filters(typed_text="", selected_name=str(name), show_popup=False)
+        self._reprice_cart()
 
     def _commit_customer_search(self):
         typed = self.customer_combo.lineEdit().text().strip()
@@ -936,6 +1339,7 @@ class CartWidget(QWidget):
                 selected_name=str(first.get("name") or ""),
                 show_popup=False,
             )
+        self._reprice_cart()
 
     def get_selected_customer_name(self) -> str:
         current_index = self.customer_combo.currentIndex()
@@ -955,8 +1359,8 @@ class CartWidget(QWidget):
         if item_code in self.items:
             self.items[item_code]["qty"] = int(self.items[item_code]["qty"] + 1)
         else:
-            self.items[item_code] = {"name": item_name, "price": price, "qty": 1, "currency": currency}
-        self.refresh_table()
+            self.items[item_code] = self._build_item_state(item_code, item_name, price, currency, qty=1)
+        self._reprice_cart()
         self._emit_cart_updated()
 
     def update_qty(self, item_code: str, change: int):
@@ -964,7 +1368,7 @@ class CartWidget(QWidget):
             self.items[item_code]["qty"] = int(self.items[item_code]["qty"] + change)
             if self.items[item_code]["qty"] <= 0:
                 del self.items[item_code]
-            self.refresh_table()
+            self._reprice_cart()
             self._emit_cart_updated()
 
     def update_qty_absolute(self, item_code: str, new_qty_str: str):
@@ -974,7 +1378,7 @@ class CartWidget(QWidget):
                 self.items[item_code]["qty"] = new_qty
             else:
                 del self.items[item_code]
-            self.refresh_table()
+            self._reprice_cart()
             self._emit_cart_updated()
         except (ValueError, KeyError):
             pass
@@ -996,7 +1400,9 @@ class CartWidget(QWidget):
     def refresh_table(self):
         self.table.setRowCount(0)
         total_qty = 0
-        self.total_amount = 0.0
+        self.gross_total_amount = 0.0
+        self.net_total_amount = 0.0
+        self.item_discount_total = 0.0
 
         for row, (code, item) in enumerate(self.items.items()):
             self.table.insertRow(row)
@@ -1035,13 +1441,28 @@ class CartWidget(QWidget):
             self.table.setCellWidget(row, 1, qty_widget)
 
             # RATE
-            rate_lbl = QLabel(f"UZS {item['price']:,.0f}")
+            if self._can_edit_rate():
+                rate_lbl = QLineEdit(f"{self._flt(item.get('price'), 0):.0f}")
+                rate_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                rate_lbl.setValidator(QDoubleValidator(0.0, 9999999999.0, 2))
+                rate_lbl.setPlaceholderText("Rate")
+                rate_lbl.setToolTip("Rate ni shu joyda o'zgartiring")
+                rate_lbl.editingFinished.connect(lambda c=code, w=rate_lbl: self._commit_inline_rate(c, w))
+                rate_lbl.setStyleSheet(
+                    "color: #60a5fa; font-weight: 700; font-size: 13px; background:#0f172a; border:1px solid #334155; border-radius:6px; padding:4px;"
+                )
+            else:
+                rate_lbl = QLabel(f"UZS {item['price']:,.0f}")
+                rate_lbl.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 13px;")
             rate_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            rate_lbl.setStyleSheet("color: #94a3b8; font-weight: 900; font-size: 13px;")
             self.table.setCellWidget(row, 2, rate_lbl)
 
             # AMOUNT
-            amt = item['qty'] * item['price']
+            qty = self._flt(item.get('qty'), 0)
+            price_list_rate = self._flt(item.get('price_list_rate'), self._flt(item.get('price')))
+            line_discount = self._flt(item.get('discount_amount'))
+            rate = self._flt(item.get('rate'), self._flt(item.get('price')))
+            amt = qty * rate
             amt_lbl = QLabel(f"UZS {amt:,.0f}")
             amt_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             amt_lbl.setStyleSheet("font-weight: 900; font-size: 14px; color: white;")
@@ -1069,14 +1490,24 @@ class CartWidget(QWidget):
             name_layout.addWidget(name_lbl, 1)
             self.table.setCellWidget(row, 0, name_widget)
 
-            total_qty += item['qty']
-            self.total_amount += amt
+            total_qty += int(qty)
+            self.gross_total_amount += qty * price_list_rate
+            self.item_discount_total += qty * line_discount
+            self.net_total_amount += amt
+
+        invoice_discount = min(max(self.invoice_discount_amount, 0.0), max(self.net_total_amount, 0.0))
+        self.invoice_discount_amount = invoice_discount
+        if self.net_total_amount > 0 and invoice_discount > 0 and self.invoice_discount_percentage <= 0:
+            self.invoice_discount_percentage = (invoice_discount / self.net_total_amount) * 100
+        self.total_amount = max(self.net_total_amount - invoice_discount, 0.0)
 
         # Update totals
         if hasattr(self, 'total_label'):
             self.total_label.setText(f"UZS {self.total_amount:,.0f}")
         if hasattr(self, 'total_qty_label'):
             self.total_qty_label.setText(str(total_qty))
+        if hasattr(self, 'discounts_label'):
+            self.discounts_label.setText(f"UZS {self.item_discount_total:,.0f}")
         
         # Re-apply column visibility after refresh
         self.table.setColumnHidden(1, not self.col_settings["show_qty"]["value"])
@@ -1108,6 +1539,12 @@ class CartWidget(QWidget):
         self.ticket_input.clear()
         self.comment_input.clear()
         self._close_panels()
+        self.invoice_discount_amount = 0.0
+        self.invoice_discount_percentage = 0.0
+        self.item_discount_total = 0.0
+        self.gross_total_amount = 0.0
+        self.net_total_amount = 0.0
+        self._current_customer_info = {}
         self.refresh_table()
         self._emit_cart_updated()
 
@@ -1137,9 +1574,19 @@ class CartWidget(QWidget):
         order_data = {
             "items": [{"item_code": k, **v} for k, v in self.items.items()],
             "total_amount": self.total_amount,
+            "gross_total_amount": self.gross_total_amount,
+            "net_total_amount": self.net_total_amount,
+            "item_discount_total": self.item_discount_total,
+            "invoice_discount_amount": self.invoice_discount_amount,
+            "invoice_discount_percentage": self.invoice_discount_percentage,
+            "apply_discount_on": self.apply_discount_on,
+            "allow_additional_discount": bool(
+                self._flt(self._get_profile_flag("posa_allow_user_to_edit_additional_discount", 0))
+            ),
+            "max_discount_percentage": self._flt(self._get_profile_flag("posa_max_discount_allowed", 0)),
             "order_type": self.current_order_type,
             "ticket_number": ticket_number,
-            "customer": selected_customer,
+            "customer": self._resolve_effective_customer_name() or selected_customer,
             "selling_price_list": self.get_selected_price_list(),
             "comment": self.comment_input.text().strip(),
         }
