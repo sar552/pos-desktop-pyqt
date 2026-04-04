@@ -868,26 +868,9 @@ def reprint_receipt(order_data: dict, payments_list: list) -> bool:
 
 
 def print_closing_shift_receipt(closing_data: dict) -> bool:
-    """Kassa yopish cheki — kunlik hisobot.
+    """Kassa yopish cheki — sodda hisobot.
     
-    closing_data strukturasi:
-    {
-        "shift_name": "POS-CLOSE-2026-00001",
-        "opening_entry": "POS-OPEN-2026-00001",
-        "user": "kassir@company.com",
-        "pos_profile": "Main POS",
-        "company": "My Company",
-        "period_start": "2026-04-04 09:00:00",
-        "period_end": "2026-04-04 18:00:00",
-        "total_invoices": 25,
-        "grand_total": 15000000,
-        "net_total": 12500000,
-        "total_quantity": 150,
-        "payment_reconciliation": [
-            {"mode_of_payment": "Cash", "opening_amount": 500000, "expected_amount": 5000000, "closing_amount": 5000000},
-            {"mode_of_payment": "Card", "opening_amount": 0, "expected_amount": 10000000, "closing_amount": 10000000},
-        ]
-    }
+    Faqat: Cash, Card va Difference ko'rsatiladi.
     """
     customer_printers = get_printers_by_type("customer")
     if not customer_printers:
@@ -897,6 +880,10 @@ def print_closing_shift_receipt(closing_data: dict) -> bool:
     config = load_config()
     company = config.get("company", "POKIZA POS")
     
+    # To'lov ma'lumotlarini yig'ish
+    payment_rows = closing_data.get("payment_reconciliation", [])
+    total_diff = 0
+    
     # ESC/POS chek yaratish
     data = bytearray()
     data += CMD_INIT
@@ -905,62 +892,37 @@ def print_closing_shift_receipt(closing_data: dict) -> bool:
     # Sarlavha
     data += CMD_BOLD_ON + CMD_DOUBLE_ON
     data += _encode("KASSA YOPISH\n")
-    data += CMD_DOUBLE_OFF
-    data += _encode("KUNLIK HISOBOT\n")
-    data += CMD_BOLD_OFF
+    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
     data += _separator("=")
     
-    # Shift ma'lumotlari
+    # Kompaniya va kassir
     data += CMD_ALIGN_LEFT
     data += _line("Kompaniya:", company)
-    data += _line("POS Profil:", str(closing_data.get("pos_profile", "")))
     data += _line("Kassir:", str(closing_data.get("user", "")))
-    data += _separator("-")
-    
-    # Vaqt
-    period_start = closing_data.get("period_start", "")
-    period_end = closing_data.get("period_end", "")
-    if period_start:
-        data += _line("Ochilgan:", str(period_start)[:19])
-    if period_end:
-        data += _line("Yopilgan:", str(period_end)[:19])
-    data += _separator("-")
-    
-    # Umumiy statistika
-    data += CMD_BOLD_ON
-    data += _center_text("SAVDO STATISTIKASI")
-    data += CMD_BOLD_OFF
-    data += _line("Cheklar soni:", str(closing_data.get("total_invoices", 0)))
-    data += _line("Jami miqdor:", str(closing_data.get("total_quantity", 0)))
-    data += _separator("-")
-    
-    # Moliyaviy ma'lumotlar
-    data += CMD_BOLD_ON
-    data += _line("Sof savdo:", _format_amount(closing_data.get("net_total", 0)))
-    data += _line("Jami savdo:", _format_amount(closing_data.get("grand_total", 0)))
-    data += CMD_BOLD_OFF
+    data += _encode(datetime.now().strftime("%Y-%m-%d  %H:%M:%S") + "\n")
     data += _separator("=")
     
-    # To'lov turlari bo'yicha
+    # To'lov turlari — faqat summa va farq
+    data += CMD_ALIGN_CENTER
     data += CMD_BOLD_ON
-    data += _center_text("TO'LOV TURLARI")
+    data += _encode("TO'LOVLAR\n")
     data += CMD_BOLD_OFF
+    data += CMD_ALIGN_LEFT
+    data += _separator("-")
     
-    payment_rows = closing_data.get("payment_reconciliation", [])
     for rec in payment_rows:
         mode = rec.get("mode_of_payment", "")
-        opening = float(rec.get("opening_amount", 0) or 0)
         expected = float(rec.get("expected_amount", 0) or 0)
         closing = float(rec.get("closing_amount", 0) or 0)
         diff = closing - expected
+        total_diff += diff
         
-        data += _separator("-")
+        # To'lov turi nomi va summasi
         data += CMD_BOLD_ON
-        data += _encode(f"{mode}\n")
+        data += _line(f"{mode}:", _format_amount(closing))
         data += CMD_BOLD_OFF
-        data += _line("  Ochilish:", _format_amount(opening))
-        data += _line("  Kutilgan:", _format_amount(expected))
-        data += _line("  Yopilish:", _format_amount(closing))
+        
+        # Farq (agar bor bo'lsa)
         if diff != 0:
             diff_sign = "+" if diff > 0 else ""
             data += _line("  Farq:", f"{diff_sign}{_format_amount(diff)}")
@@ -968,26 +930,16 @@ def print_closing_shift_receipt(closing_data: dict) -> bool:
     data += _separator("=")
     
     # Umumiy farq
-    total_diff = 0
-    for rec in payment_rows:
-        expected = float(rec.get("expected_amount", 0) or 0)
-        closing = float(rec.get("closing_amount", 0) or 0)
-        total_diff += (closing - expected)
-    
+    data += CMD_BOLD_ON + CMD_DOUBLE_ON
     if total_diff == 0:
-        data += CMD_BOLD_ON
         data += _center_text("FARQ YO'Q")
-        data += CMD_BOLD_OFF
     else:
         diff_sign = "+" if total_diff > 0 else ""
-        data += CMD_BOLD_ON
+        data += CMD_ALIGN_LEFT
         data += _line("UMUMIY FARQ:", f"{diff_sign}{_format_amount(total_diff)}")
-        data += CMD_BOLD_OFF
+    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
     
     data += _separator("=")
-    data += CMD_ALIGN_CENTER
-    data += _encode(datetime.now().strftime("%Y-%m-%d  %H:%M:%S") + "\n")
-    data += _encode("\n")
     data += CMD_FEED
     data += CMD_CUT
     
@@ -1005,96 +957,66 @@ def print_closing_shift_receipt(closing_data: dict) -> bool:
 
 
 def _build_closing_shift_html(closing_data: dict, config: dict) -> str:
-    """Kassa yopish cheki uchun HTML (A4 printer)"""
+    """Kassa yopish cheki uchun HTML (A4 printer) — sodda"""
     company = escape(config.get("company", "POKIZA POS"))
-    pos_profile = escape(str(closing_data.get("pos_profile", "")))
     user = escape(str(closing_data.get("user", "")))
-    period_start = escape(str(closing_data.get("period_start", ""))[:19])
-    period_end = escape(str(closing_data.get("period_end", ""))[:19])
     
-    payment_rows_html = ""
     payment_rows = closing_data.get("payment_reconciliation", [])
     total_diff = 0
     
+    payments_html = ""
     for rec in payment_rows:
         mode = escape(str(rec.get("mode_of_payment", "")))
-        opening = float(rec.get("opening_amount", 0) or 0)
-        expected = float(rec.get("expected_amount", 0) or 0)
         closing = float(rec.get("closing_amount", 0) or 0)
+        expected = float(rec.get("expected_amount", 0) or 0)
         diff = closing - expected
         total_diff += diff
-        diff_str = f"+{_format_amount(diff)}" if diff > 0 else _format_amount(diff)
-        diff_color = "#16a34a" if diff == 0 else ("#dc2626" if diff < 0 else "#f59e0b")
         
-        payment_rows_html += f"""
-        <tr>
-            <td style="font-weight:600;">{mode}</td>
-            <td style="text-align:right;">{_format_amount(opening)}</td>
-            <td style="text-align:right;">{_format_amount(expected)}</td>
-            <td style="text-align:right;">{_format_amount(closing)}</td>
-            <td style="text-align:right;color:{diff_color};font-weight:600;">{diff_str}</td>
-        </tr>
+        diff_str = ""
+        if diff != 0:
+            diff_sign = "+" if diff > 0 else ""
+            diff_color = "#dc2626" if diff < 0 else "#f59e0b"
+            diff_str = f'<span style="color:{diff_color};font-size:12pt;"> (farq: {diff_sign}{_format_amount(diff)})</span>'
+        
+        payments_html += f"""
+        <div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #eee;">
+            <span style="font-weight:600;font-size:14pt;">{mode}</span>
+            <span style="font-weight:700;font-size:14pt;">{_format_amount(closing)}{diff_str}</span>
+        </div>
         """
     
     total_diff_str = f"+{_format_amount(total_diff)}" if total_diff > 0 else _format_amount(total_diff)
     total_diff_color = "#16a34a" if total_diff == 0 else ("#dc2626" if total_diff < 0 else "#f59e0b")
+    diff_text = "FARQ YO'Q" if total_diff == 0 else f"UMUMIY FARQ: {total_diff_str}"
     
     return f"""
     <html>
     <head>
       <style>
-        body {{ font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 11pt; color: #000; padding: 20px; }}
-        .header {{ text-align: center; margin-bottom: 20px; }}
-        .title {{ font-size: 18pt; font-weight: 700; margin-bottom: 5px; }}
-        .subtitle {{ font-size: 12pt; color: #666; }}
-        .info {{ margin: 15px 0; }}
-        .info-row {{ display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #eee; }}
-        .stats {{ background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 15px 0; }}
-        .stats-title {{ font-weight: 600; margin-bottom: 10px; }}
-        .stats-row {{ display: flex; justify-content: space-between; padding: 3px 0; }}
-        .stats-value {{ font-weight: 700; }}
-        table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
-        th {{ background: #333; color: white; padding: 8px; text-align: left; }}
-        td {{ padding: 8px; border-bottom: 1px solid #ddd; }}
-        .total-row {{ background: #f0f0f0; font-weight: 700; }}
-        .footer {{ text-align: center; margin-top: 20px; color: #666; font-size: 10pt; }}
+        body {{ font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 12pt; color: #000; padding: 30px; }}
+        .header {{ text-align: center; margin-bottom: 25px; }}
+        .title {{ font-size: 22pt; font-weight: 700; margin-bottom: 8px; }}
+        .info {{ color: #666; margin-bottom: 5px; }}
+        .payments {{ margin: 20px 0; }}
+        .total {{ text-align: center; padding: 15px; background: #f5f5f5; border-radius: 8px; margin-top: 20px; }}
+        .total-text {{ font-size: 16pt; font-weight: 700; color: {total_diff_color}; }}
+        .footer {{ text-align: center; margin-top: 25px; color: #999; font-size: 10pt; }}
       </style>
     </head>
     <body>
       <div class="header">
-        <div class="title">KASSA YOPISH HISOBOTI</div>
-        <div class="subtitle">{company}</div>
+        <div class="title">KASSA YOPISH</div>
+        <div class="info">{company}</div>
+        <div class="info">Kassir: {user}</div>
       </div>
       
-      <div class="info">
-        <div class="info-row"><span>POS Profil:</span><span>{pos_profile}</span></div>
-        <div class="info-row"><span>Kassir:</span><span>{user}</span></div>
-        <div class="info-row"><span>Ochilgan:</span><span>{period_start}</span></div>
-        <div class="info-row"><span>Yopilgan:</span><span>{period_end}</span></div>
+      <div class="payments">
+        {payments_html}
       </div>
       
-      <div class="stats">
-        <div class="stats-title">SAVDO STATISTIKASI</div>
-        <div class="stats-row"><span>Cheklar soni:</span><span class="stats-value">{closing_data.get("total_invoices", 0)}</span></div>
-        <div class="stats-row"><span>Jami miqdor:</span><span class="stats-value">{closing_data.get("total_quantity", 0)}</span></div>
-        <div class="stats-row"><span>Sof savdo:</span><span class="stats-value">{_format_amount(closing_data.get("net_total", 0))}</span></div>
-        <div class="stats-row"><span>Jami savdo:</span><span class="stats-value">{_format_amount(closing_data.get("grand_total", 0))}</span></div>
+      <div class="total">
+        <span class="total-text">{diff_text}</span>
       </div>
-      
-      <table>
-        <tr>
-          <th>To'lov turi</th>
-          <th style="text-align:right;">Ochilish</th>
-          <th style="text-align:right;">Kutilgan</th>
-          <th style="text-align:right;">Yopilish</th>
-          <th style="text-align:right;">Farq</th>
-        </tr>
-        {payment_rows_html}
-        <tr class="total-row">
-          <td colspan="4">UMUMIY FARQ</td>
-          <td style="text-align:right;color:{total_diff_color};">{total_diff_str}</td>
-        </tr>
-      </table>
       
       <div class="footer">
         {escape(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}
