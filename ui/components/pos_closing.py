@@ -15,6 +15,7 @@ from PyQt6.QtCore import pyqtSignal, Qt, QThread, QTimer
 from PyQt6.QtGui import QDoubleValidator
 from core.api import FrappeAPI
 from core.logger import get_logger
+from core.printer import print_closing_shift_receipt
 from database.models import PosShift, db
 from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit, InfoDialog
@@ -382,12 +383,14 @@ class PosClosingDialog(QDialog):
         self.closing_inputs = {}
         self.active_input = None
         self.input_style_active = (
-            "padding: 8px 12px; font-size: 16px; font-weight: 700; "
-            "border: 2px solid #3b82f6; border-radius: 10px; background: #eff6ff; color: #1e293b;"
+            "padding: 10px 14px; font-size: 15px; font-weight: 500; "
+            "border: 1px solid #22C55E; border-radius: 6px; "
+            "background: rgba(15, 23, 42, 0.8); color: #F8FAFC;"
         )
         self.input_style_idle = (
-            "padding: 8px 12px; font-size: 16px; font-weight: 700; "
-            "border: 1.5px solid #e2e8f0; border-radius: 10px; background: white; color: #1e293b;"
+            "padding: 10px 14px; font-size: 15px; font-weight: 500; "
+            "border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; "
+            "background: rgba(15, 23, 42, 0.6); color: #F8FAFC;"
         )
         self.init_ui()
         QTimer.singleShot(50, self._center_on_parent)
@@ -406,46 +409,115 @@ class PosClosingDialog(QDialog):
         self.resize(1040, 760)
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
-        self.setStyleSheet("background: white;")
+        self.setStyleSheet("""
+            QDialog {
+                background: #0F172A;
+            }
+        """)
 
-        main_h = QHBoxLayout(self)
-        main_h.setContentsMargins(20, 20, 20, 20)
-        main_h.setSpacing(20)
+        main_v = QVBoxLayout(self)
+        main_v.setContentsMargins(0, 0, 0, 0)
+        main_v.setSpacing(0)
 
+        # ══════════════════════════════════════════════════
+        # MINIMAL HEADER
+        # ══════════════════════════════════════════════════
+        header_frame = QFrame()
+        header_frame.setStyleSheet("""
+            QFrame {
+                background: transparent;
+            }
+        """)
+        header_layout = QHBoxLayout(header_frame)
+        header_layout.setContentsMargins(40, 30, 40, 20)
+        header_layout.setSpacing(20)
+
+        # Icon + Title Section
+        title_section = QVBoxLayout()
+        title_section.setSpacing(6)
+        
+        title = QLabel("Close Shift")
+        title.setStyleSheet("""
+            font-size: 24px; 
+            font-weight: 600; 
+            color: #F8FAFC; 
+            background: transparent;
+        """)
+        
+        self.info_label = QLabel("Loading data...")
+        self.info_label.setStyleSheet("""
+            font-size: 13px; 
+            color: #64748B; 
+            background: transparent;
+        """)
+        
+        self.meta_label = QLabel("")
+        self.meta_label.setStyleSheet("""
+            font-size: 12px; 
+            color: #22C55E; 
+            background: transparent;
+            font-weight: 500;
+        """)
+        
+        title_section.addWidget(title)
+        title_section.addWidget(self.info_label)
+        title_section.addWidget(self.meta_label)
+        header_layout.addLayout(title_section, stretch=1)
+        header_layout.addStretch()
+        
+        main_v.addWidget(header_frame)
+
+        # ══════════════════════════════════════════════════
+        # CONTENT AREA
+        # ══════════════════════════════════════════════════
+        content_widget = QWidget()
+        content_widget.setStyleSheet("background: transparent;")
+        main_h = QHBoxLayout(content_widget)
+        main_h.setContentsMargins(40, 20, 40, 40)
+        main_h.setSpacing(32)
+
+        # Left Panel
         left = QWidget()
+        left.setStyleSheet("background: transparent;")
         self.left_layout = QVBoxLayout(left)
         self.left_layout.setContentsMargins(0, 0, 0, 0)
-        self.left_layout.setSpacing(12)
+        self.left_layout.setSpacing(32)
 
-        header = QFrame()
-        header.setStyleSheet("background: #7c2d12; border-radius: 12px; padding: 16px;")
-        header_layout = QVBoxLayout(header)
-
-        title = QLabel("KASSA YOPISH")
-        title.setStyleSheet("color: #fed7aa; font-size: 11px; font-weight: 700; letter-spacing: 2px;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_layout.addWidget(title)
-
-        self.info_label = QLabel("Closing shift ma'lumotlari yuklanmoqda...")
-        self.info_label.setStyleSheet("color: white; font-size: 14px; font-weight: 600;")
-        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_layout.addWidget(self.info_label)
-
-        self.meta_label = QLabel("")
-        self.meta_label.setStyleSheet("color: #fde68a; font-size: 12px;")
-        self.meta_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_layout.addWidget(self.meta_label)
-
-        self.left_layout.addWidget(header)
-
-        self.loading_label = QLabel("Serverdan shift overview olinmoqda...")
-        self.loading_label.setStyleSheet("font-size: 14px; color: #64748b; padding: 20px;")
+        self.loading_label = QLabel("Loading shift data...")
+        self.loading_label.setStyleSheet("""
+            font-size: 14px; 
+            color: #64748B; 
+            padding: 60px;
+            background: transparent;
+        """)
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.left_layout.addWidget(self.loading_label)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("border: none; background: transparent;")
+        self.scroll.setStyleSheet("""
+            QScrollArea {
+                border: none; 
+                background: transparent;
+            }
+            QScrollBar:vertical {
+                background: rgba(51, 65, 85, 0.2);
+                width: 8px;
+                border-radius: 4px;
+                margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(100, 116, 139, 0.5);
+                border-radius: 4px;
+                min-height: 30px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(100, 116, 139, 0.7);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
         self.scroll.setVisible(False)
         self.left_layout.addWidget(self.scroll)
 
@@ -455,46 +527,83 @@ class PosClosingDialog(QDialog):
         self.left_layout.addWidget(self.diff_label)
 
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
+        btn_layout.setSpacing(12)
 
-        btn_cancel = QPushButton("Bekor")
+        btn_cancel = QPushButton("Cancel")
         btn_cancel.setMinimumHeight(44)
+        btn_cancel.setMaximumHeight(44)
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_cancel.setStyleSheet("""
-            QPushButton { background: #f1f5f9; color: #64748b;
-                font-weight: 700; font-size: 14px; border-radius: 12px; border: none; }
-            QPushButton:hover { background: #e2e8f0; }
+            QPushButton { 
+                background: transparent;
+                color: #94A3B8;
+                font-weight: 500; 
+                font-size: 14px; 
+                border-radius: 6px; 
+                border: none;
+                padding: 0 20px;
+            }
+            QPushButton:hover { 
+                background: rgba(71, 85, 105, 0.3); 
+                color: #E2E8F0;
+            }
         """)
         btn_cancel.clicked.connect(self.reject)
 
-        self.btn_close = QPushButton("KASSANI YOPISH")
+        self.btn_close = QPushButton("Close Shift")
         self.btn_close.setMinimumHeight(44)
+        self.btn_close.setMaximumHeight(44)
+        self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_close.setEnabled(False)
         self.btn_close.setStyleSheet("""
-            QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 #dc2626, stop:1 #b91c1c);
-                color: white; font-weight: 800; font-size: 15px;
-                border-radius: 12px; border: none; }
-            QPushButton:hover { background: #991b1b; }
-            QPushButton:disabled { background: #fca5a5; color: #fecaca; }
+            QPushButton { 
+                background: #22C55E;
+                color: #0F172A; 
+                font-weight: 600; 
+                font-size: 14px;
+                border-radius: 6px; 
+                border: none;
+                padding: 0 28px;
+            }
+            QPushButton:hover { 
+                background: #16A34A;
+            }
+            QPushButton:disabled { 
+                background: rgba(34, 197, 94, 0.2); 
+                color: rgba(34, 197, 94, 0.5);
+            }
         """)
         self.btn_close.clicked.connect(self._process_closing)
 
-        btn_layout.addWidget(btn_cancel, 1)
-        btn_layout.addWidget(self.btn_close, 1)
+        btn_layout.addWidget(btn_cancel, 0)
+        btn_layout.addWidget(self.btn_close, 0)
+        btn_layout.addStretch()
         self.left_layout.addLayout(btn_layout)
 
         main_h.addWidget(left, 3)
+        
+        main_v.addWidget(content_widget)
 
+        # Right Panel - Numpad
         right = QWidget()
-        right.setStyleSheet("background: #f8fafc; border-radius: 14px;")
+        right.setStyleSheet("""
+            QWidget {
+                background: rgba(15, 23, 42, 0.4);
+                border-radius: 8px;
+            }
+        """)
         right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(12, 12, 12, 12)
-        right_layout.setSpacing(10)
+        right_layout.setContentsMargins(20, 20, 20, 20)
+        right_layout.setSpacing(16)
 
-        numpad_lbl = QLabel("YOPISH SUMMASI")
-        numpad_lbl.setStyleSheet(
-            "font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
-        )
+        numpad_lbl = QLabel("NUMPAD")
+        numpad_lbl.setStyleSheet("""
+            font-size: 10px; 
+            font-weight: 600; 
+            color: #64748B; 
+            letter-spacing: 1px;
+            background: transparent;
+        """)
         right_layout.addWidget(numpad_lbl)
 
         self.numpad = TouchNumpad()
@@ -549,33 +658,53 @@ class PosClosingDialog(QDialog):
         card = QFrame()
         card.setStyleSheet("""
             QFrame {
-                background: #ffffff;
-                border: 1px solid #e2e8f0;
-                border-radius: 12px;
+                background: rgba(15, 23, 42, 0.4);
+                border-radius: 8px;
+            }
+            QFrame:hover {
+                background: rgba(15, 23, 42, 0.6);
             }
         """)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(4)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(8)
 
-        title_lbl = QLabel(title)
-        title_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #64748b;")
+        title_lbl = QLabel(title.upper())
+        title_lbl.setStyleSheet("""
+            font-size: 10px; 
+            font-weight: 600; 
+            color: #64748B;
+            letter-spacing: 0.8px;
+        """)
+        
         value_lbl = QLabel(value)
-        value_lbl.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
+        value_lbl.setStyleSheet("""
+            font-size: 22px; 
+            font-weight: 700; 
+            color: #F8FAFC;
+            font-family: 'IBM Plex Sans', 'Segoe UI', monospace;
+        """)
+        
         layout.addWidget(title_lbl)
         layout.addWidget(value_lbl)
+        
         if subtitle:
             sub_lbl = QLabel(subtitle)
             sub_lbl.setWordWrap(True)
-            sub_lbl.setStyleSheet("font-size: 11px; color: #94a3b8;")
+            sub_lbl.setStyleSheet("""
+                font-size: 11px; 
+                color: #22C55E;
+                font-weight: 500;
+            """)
             layout.addWidget(sub_lbl)
+            
         return card
 
     def _build_overview_section(self, content_layout: QVBoxLayout):
         company_currency = self.overview.get("company_currency") or self.opening_doc.get("currency") or "UZS"
         summary_grid = QGridLayout()
-        summary_grid.setHorizontalSpacing(12)
-        summary_grid.setVerticalSpacing(12)
+        summary_grid.setHorizontalSpacing(16)
+        summary_grid.setVerticalSpacing(16)
 
         cards = [
             ("Cheklar soni", str(self.overview.get("total_invoices", 0)), f"Shift: {self.opening_entry}"),
@@ -614,27 +743,48 @@ class PosClosingDialog(QDialog):
         payment_rows = self.overview.get("payments_by_mode") or []
         if payment_rows:
             section = QFrame()
-            section.setStyleSheet("QFrame { background: white; border: 1px solid #e2e8f0; border-radius: 12px; }")
+            section.setStyleSheet("""
+                QFrame { 
+                    background: transparent; 
+                }
+            """)
             layout = QVBoxLayout(section)
-            layout.setContentsMargins(16, 14, 16, 14)
-            layout.setSpacing(8)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(16)
 
-            title = QLabel("To'lovlar kesimi")
-            title.setStyleSheet("font-size: 13px; font-weight: 700; color: #334155;")
+            title = QLabel("💳 TO'LOVLAR KESIMI")
+            title.setStyleSheet("""
+                font-size: 11px; 
+                font-weight: 600; 
+                color: #64748B;
+                letter-spacing: 1px;
+            """)
             layout.addWidget(title)
 
             for row in payment_rows:
                 item_row = QHBoxLayout()
+                item_row.setContentsMargins(0, 8, 0, 8)
                 mop = row.get("mode_of_payment", "")
                 currency = row.get("currency", company_currency)
                 amount = self._fmt(row.get("total", 0), currency)
                 base_amount = self._fmt(row.get("company_currency_total", 0), company_currency)
 
-                left = QLabel(f"{mop} [{currency}]")
-                left.setStyleSheet("font-size: 12px; font-weight: 600; color: #0f172a;")
-                right = QLabel(f"{amount} ({base_amount})")
+                left = QLabel(mop)
+                left.setStyleSheet("""
+                    font-size: 14px; 
+                    font-weight: 500; 
+                    color: #E2E8F0;
+                """)
+                
+                right = QLabel(f"{amount}")
                 right.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                right.setStyleSheet("font-size: 12px; color: #475569;")
+                right.setStyleSheet("""
+                    font-size: 14px; 
+                    font-weight: 600;
+                    color: #F8FAFC;
+                    font-family: 'IBM Plex Sans', monospace;
+                """)
+                
                 item_row.addWidget(left)
                 item_row.addStretch()
                 item_row.addWidget(right)
@@ -644,20 +794,35 @@ class PosClosingDialog(QDialog):
 
     def _build_reconciliation_section(self, content_layout: QVBoxLayout):
         section = QFrame()
-        section.setStyleSheet("QFrame { background: white; border: 1px solid #e2e8f0; border-radius: 12px; }")
+        section.setStyleSheet("""
+            QFrame { 
+                background: transparent; 
+            }
+        """)
         layout = QVBoxLayout(section)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(20)
 
-        title = QLabel("Payment Reconciliation")
-        title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        title = QLabel("📊 PAYMENT RECONCILIATION")
+        title.setStyleSheet("""
+            font-size: 11px; 
+            font-weight: 600; 
+            color: #64748B;
+            letter-spacing: 1px;
+        """)
         layout.addWidget(title)
 
         header_row = QHBoxLayout()
-        for text, width in [("To'lov turi", 160), ("Opening", 120), ("Expected", 120), ("Closing", 140)]:
+        header_row.setContentsMargins(0, 12, 0, 8)
+        for text, width in [("Payment Method", 180), ("Opening", 120), ("Expected", 120), ("Closing Amount", 160)]:
             lbl = QLabel(text)
             lbl.setMinimumWidth(width)
-            lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;")
+            lbl.setStyleSheet("""
+                font-size: 11px; 
+                font-weight: 700; 
+                color: #fff; 
+                letter-spacing: 0.5px;
+            """)
             header_row.addWidget(lbl)
         header_row.addStretch()
         layout.addLayout(header_row)
@@ -676,29 +841,45 @@ class PosClosingDialog(QDialog):
 
             row = QHBoxLayout()
             row.setSpacing(8)
+            row.setContentsMargins(0, 10, 0, 10)
 
             mode_lbl = QLabel(mode)
-            mode_lbl.setMinimumWidth(160)
-            mode_lbl.setStyleSheet("font-size: 13px; font-weight: 600; color: #334155;")
+            mode_lbl.setMinimumWidth(180)
+            mode_lbl.setStyleSheet("""
+                font-size: 14px; 
+                font-weight: 600; 
+                color: #fff;
+            """)
             row.addWidget(mode_lbl)
 
             open_lbl = QLabel(self._fmt(opening_amount, company_currency))
             open_lbl.setMinimumWidth(120)
-            open_lbl.setStyleSheet("font-size: 13px; color: #475569;")
+            open_lbl.setStyleSheet("""
+                font-size: 14px; 
+                font-weight: 700;
+                color: #fff;
+                font-family: 'IBM Plex Sans', monospace;
+            """)
             row.addWidget(open_lbl)
 
             exp_lbl = QLabel(self._fmt(expected_amount, company_currency))
             exp_lbl.setMinimumWidth(120)
-            exp_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #1e40af;")
+            exp_lbl.setStyleSheet("""
+                font-size: 14px; 
+                font-weight: 700; 
+                color: #fff;
+                font-family: 'IBM Plex Sans', monospace;
+            """)
             row.addWidget(exp_lbl)
 
             inp = ClickableLineEdit()
             inp.setValidator(QDoubleValidator(-999999999.0, 999999999.0, 2))
             inp.setText(f"{float(closing_amount):.2f}".rstrip("0").rstrip("."))
-            inp.setMinimumWidth(140)
-            inp.setMaximumWidth(180)
+            inp.setMinimumWidth(160)
+            inp.setMaximumWidth(220)
             inp.setMinimumHeight(40)
             inp.setAlignment(Qt.AlignmentFlag.AlignRight)
+            inp.setCursor(Qt.CursorShape.PointingHandCursor)
             inp.clicked.connect(self._set_active_input)
             inp.textChanged.connect(self._update_difference)
             inp.setStyleSheet(self.input_style_active if idx == 0 else self.input_style_idle)
@@ -762,15 +943,25 @@ class PosClosingDialog(QDialog):
             total_diff += abs(diff)
 
         if total_diff == 0:
-            self.diff_label.setText("Farq yo'q — reconciliation to'g'ri")
-            self.diff_label.setStyleSheet(
-                "font-size: 14px; font-weight: 700; color: #16a34a; padding: 6px;"
-            )
+            self.diff_label.setText("✓  No difference — reconciliation matches")
+            self.diff_label.setStyleSheet("""
+                font-size: 13px;
+                font-weight: 500;
+                color: #22C55E;
+                padding: 12px 16px;
+                background: rgba(34, 197, 94, 0.08);
+                border-radius: 6px;
+            """)
         else:
-            self.diff_label.setText(f"Umumiy farq: {self._fmt(total_diff, company_currency)}")
-            self.diff_label.setStyleSheet(
-                "font-size: 14px; font-weight: 700; color: #dc2626; padding: 6px;"
-            )
+            self.diff_label.setText(f"Total difference: {self._fmt(total_diff, company_currency)}")
+            self.diff_label.setStyleSheet("""
+                font-size: 13px;
+                font-weight: 500;
+                color: #F59E0B;
+                padding: 12px 16px;
+                background: rgba(245, 158, 11, 0.08);
+                border-radius: 6px;
+            """)
 
     def _process_closing(self):
         if not self.closing_shift_doc:
@@ -786,7 +977,7 @@ class PosClosingDialog(QDialog):
                 rec["closing_amount"] = 0
 
         self.btn_close.setEnabled(False)
-        self.btn_close.setText("Kassa yopilmoqda...")
+        self.btn_close.setText("Closing shift...")
 
         self.closing_worker = ClosingWorker(self.api, self.closing_shift_doc)
         self.closing_worker.finished.connect(self._on_closing_finished)
@@ -797,9 +988,33 @@ class PosClosingDialog(QDialog):
         self.btn_close.setText("KASSANI YOPISH")
 
         if success:
+            # Kassa yopish chekini chop etish
+            self._print_closing_receipt()
             self.accept()
             self.closing_completed.emit()
             return
 
         logger.error("Kassa yopish xatosi: %s", message)
         InfoDialog(self, "Xatolik", message, kind="error").exec()
+
+    def _print_closing_receipt(self):
+        """Kassa yopish chekini printerga yuborish."""
+        try:
+            closing_data = {
+                "shift_name": self.closing_shift_doc.get("name", ""),
+                "opening_entry": self.opening_entry,
+                "user": self.opening_doc.get("user", ""),
+                "pos_profile": self.opening_doc.get("pos_profile", ""),
+                "company": self.opening_doc.get("company", ""),
+                "period_start": self.opening_doc.get("period_start_date", ""),
+                "period_end": self.closing_shift_doc.get("period_end_date", ""),
+                "total_invoices": self.overview.get("total_invoices", 0),
+                "grand_total": self.closing_shift_doc.get("grand_total", 0),
+                "net_total": self.closing_shift_doc.get("net_total", 0),
+                "total_quantity": self.closing_shift_doc.get("total_quantity", 0),
+                "payment_reconciliation": self.closing_shift_doc.get("payment_reconciliation", []),
+            }
+            print_closing_shift_receipt(closing_data)
+            logger.info("Kassa yopish cheki chop etish boshlandi")
+        except Exception as e:
+            logger.error("Kassa yopish cheki xatosi: %s", e)

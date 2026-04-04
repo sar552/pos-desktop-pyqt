@@ -39,18 +39,39 @@ class TouchNumpad(QWidget):
             
             btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #ffffff;
-                    border: 1px solid #d1d5db;
-                    border-radius: 8px;
-                    font-size: 20px;
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 rgba(51, 65, 85, 0.8), 
+                        stop:1 rgba(30, 41, 59, 0.9));
+                    border: 1px solid #334155;
+                    border-radius: 10px;
+                    font-size: 22px;
                     font-weight: bold;
-                    color: #1f2937;
+                    color: #F8FAFC;
                 }
-                QPushButton:pressed { background-color: #f3f4f6; }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 rgba(71, 85, 105, 0.9), 
+                        stop:1 rgba(51, 65, 85, 1));
+                    border: 1px solid #22C55E;
+                }
+                QPushButton:pressed { 
+                    background: rgba(34, 197, 94, 0.2);
+                    border: 1px solid #22C55E;
+                }
                 QPushButton#backspace { 
-                    background-color: #fee2e2; 
-                    color: #ef4444; 
-                    font-size: 16px; 
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 rgba(220, 38, 38, 0.2), 
+                        stop:1 rgba(185, 28, 28, 0.3)); 
+                    color: #FCA5A5; 
+                    font-size: 16px;
+                    font-weight: 700;
+                    border: 1px solid rgba(220, 38, 38, 0.4);
+                }
+                QPushButton#backspace:hover { 
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 rgba(220, 38, 38, 0.3), 
+                        stop:1 rgba(185, 28, 28, 0.4));
+                    color: #FEE2E2;
                 }
             """)
             

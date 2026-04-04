@@ -216,79 +216,90 @@ class CartWidget(QWidget):
 
         # ── Bottom Totals & Buttons (POSAwesome style) ────────────────
         bottom_area = QVBoxLayout()
-        bottom_area.setSpacing(10)
+        bottom_area.setSpacing(12)
         
+        # ROW 1: Items Discounts, Total, PAY button
         row1 = QHBoxLayout()
+        row1.setSpacing(12)
         
         def _stat_box(title, val_id):
             vbox = QVBoxLayout()
+            vbox.setSpacing(4)
             lbl = QLabel(title)
-            lbl.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+            lbl.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: 700;")
             val = QLabel("0")
-            val.setStyleSheet("color: white; font-size: 14px; font-weight: bold; background: #2a2a2a; padding: 10px; border-radius: 4px;")
+            val.setFixedHeight(50)
+            val.setStyleSheet("color: white; font-size: 18px; font-weight: 900; background: #1f2937; padding: 0 14px; border-radius: 6px;")
+            val.setAlignment(Qt.AlignmentFlag.AlignVCenter)
             setattr(self, val_id, val)
             vbox.addWidget(lbl)
             vbox.addWidget(val)
             return vbox
         
-        row1.addLayout(_stat_box("Total Qty", "total_qty_label"))
-        
-        # Action Buttons
-        save_btn = QPushButton("SAVE & CLEAR")
-        save_btn.setFixedHeight(45)
-        save_btn.setStyleSheet("background: #f97316; color: white; font-weight: 900; border-radius: 4px; font-size: 12px;")
-        save_btn.clicked.connect(self.clear_cart)
-        
-        cancel_btn = QPushButton("CANCEL SALE")
-        cancel_btn.setFixedHeight(45)
-        cancel_btn.setStyleSheet("background: #ec4899; color: white; font-weight: 900; border-radius: 4px; font-size: 12px;")
-        cancel_btn.clicked.connect(self.clear_cart)
-        
-        btn_vbox = QVBoxLayout()
-        btn_row = QHBoxLayout()
-        btn_row.addWidget(save_btn)
-        btn_row.addWidget(cancel_btn)
-        # Spacer for top alignment matching the stat boxes
-        btn_vbox.addSpacing(15)
-        btn_vbox.addLayout(btn_row)
-        
-        row1.addLayout(btn_vbox)
-        row1.setStretch(0, 1)
-        row1.setStretch(1, 1)
-        row1.setStretch(2, 2)
-        bottom_area.addLayout(row1)
-        
-        row2 = QHBoxLayout()
-        row2.addLayout(_stat_box("Items Discounts", "discounts_label"))
+        row1.addLayout(_stat_box("Items Discounts", "discounts_label"))
         
         t_vbox = QVBoxLayout()
+        t_vbox.setSpacing(4)
         t_lbl = QLabel("Total")
-        t_lbl.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+        t_lbl.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: 700;")
         self.total_label = QLabel("UZS 0")
-        self.total_label.setStyleSheet("color: #10b981; font-size: 18px; font-weight: 900; background: #2a2a2a; padding: 10px; border-radius: 4px;")
+        self.total_label.setFixedHeight(50)
+        self.total_label.setStyleSheet("color: #10b981; font-size: 22px; font-weight: 900; background: #1f2937; padding: 0 14px; border-radius: 6px;")
+        self.total_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         t_vbox.addWidget(t_lbl)
         t_vbox.addWidget(self.total_label)
         
         self.checkout_btn = QPushButton("PAY")
-        self.checkout_btn.setFixedHeight(50)
+        self.checkout_btn.setFixedHeight(60)
         self.checkout_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.checkout_btn.setStyleSheet("""
             QPushButton {
                 background-color: #10b981;
                 color: white;
-                font-weight: 800; font-size: 16px;
-                border-radius: 4px;
-                margin-top: 15px;
+                font-weight: 900; 
+                font-size: 20px;
+                border-radius: 8px;
+                margin-top: 14px;
             }
             QPushButton:hover { background-color: #059669; }
         """)
         self.checkout_btn.clicked.connect(self.handle_checkout)
         
-        row2.addLayout(t_vbox)
-        row2.addWidget(self.checkout_btn)
+        row1.addLayout(t_vbox)
+        row1.addWidget(self.checkout_btn)
+        row1.setStretch(0, 1)
+        row1.setStretch(1, 1)
+        row1.setStretch(2, 2)
+        bottom_area.addLayout(row1)
+        
+        # ROW 2: Total Qty, Cancel Sale button
+        row2 = QHBoxLayout()
+        row2.setSpacing(12)
+        row2.addLayout(_stat_box("Total Qty", "total_qty_label"))
+        
+        cancel_btn = QPushButton("CANCEL SALE")
+        cancel_btn.setFixedHeight(50)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background: #ec4899; 
+                color: white; 
+                font-weight: 900; 
+                border-radius: 6px; 
+                font-size: 15px;
+            }
+            QPushButton:hover { background-color: #db2777; }
+        """)
+        cancel_btn.clicked.connect(self.clear_cart)
+        
+        btn_vbox = QVBoxLayout()
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(cancel_btn)
+        btn_vbox.addSpacing(18)
+        btn_vbox.addLayout(btn_row)
+        
+        row2.addLayout(btn_vbox)
         row2.setStretch(0, 1)
-        row2.setStretch(1, 1)
-        row2.setStretch(2, 2)
+        row2.setStretch(1, 2)
         bottom_area.addLayout(row2)
 
         main_layout.addLayout(bottom_area)
@@ -1006,7 +1017,7 @@ class CartWidget(QWidget):
             
             qty_lbl = QtyLabel(str(item['qty']))
             qty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            qty_lbl.setStyleSheet("font-weight: 700; font-size: 14px; color: white; min-width: 30px;")
+            qty_lbl.setStyleSheet("font-weight: 900; font-size: 14px; color: white; min-width: 30px;")
             qty_lbl.clicked.connect(lambda c=code, q=str(item['qty']): self._open_qty_numpad(c, q))
             
             plus_btn = QPushButton("+")
@@ -1026,14 +1037,14 @@ class CartWidget(QWidget):
             # RATE
             rate_lbl = QLabel(f"UZS {item['price']:,.0f}")
             rate_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            rate_lbl.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 13px;")
+            rate_lbl.setStyleSheet("color: #94a3b8; font-weight: 900; font-size: 13px;")
             self.table.setCellWidget(row, 2, rate_lbl)
 
             # AMOUNT
             amt = item['qty'] * item['price']
             amt_lbl = QLabel(f"UZS {amt:,.0f}")
             amt_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            amt_lbl.setStyleSheet("font-weight: 700; font-size: 14px; color: white;")
+            amt_lbl.setStyleSheet("font-weight: 900; font-size: 14px; color: white;")
             amt_lbl.setContentsMargins(0, 0, 10, 0)
             self.table.setCellWidget(row, 3, amt_lbl)
 
