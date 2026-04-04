@@ -13,8 +13,6 @@ from database.models import Item, ItemPrice, db
 from core.api import FrappeAPI
 from core.logger import get_logger
 from core.constants import ITEM_LOAD_LIMIT, IMAGE_TIMEOUT
-from ui.components.keyboard import TouchKeyboard
-
 logger = get_logger(__name__)
 
 
@@ -206,6 +204,7 @@ class ItemBrowser(QWidget):
     def __init__(self, api: FrappeAPI):
         super().__init__()
         self.api = api
+        self.reserved_quantities = {}
         self.settings = {
             "hide_zero_stock": {"label": "0 qoldiqchilarni yashirish", "value": False},
             "hide_zero_rate": {"label": "Nol narxlilarni yashirish", "value": False},
@@ -214,7 +213,6 @@ class ItemBrowser(QWidget):
         self.current_price_list = "Standard Selling"
 
         self.current_category = None
-        self.kb = None
         self._last_columns = 0
         self._caps = False
         self._letter_buttons = []
@@ -238,6 +236,7 @@ class ItemBrowser(QWidget):
         self.search_input.setPlaceholderText("🔍  Search Items...")
         self.search_input.setMinimumHeight(38)
         self.search_input.setMaximumHeight(52)
+        self.search_input.setProperty("disable_virtual_keyboard", True)
         self.search_input.setStyleSheet("""
             QLineEdit {
                 padding: 10px 16px;
@@ -250,8 +249,6 @@ class ItemBrowser(QWidget):
             QLineEdit:focus { border: 1px solid #3b82f6; }
         """)
         self.search_input.textChanged.connect(self.filter_items)
-        self.search_input.mousePressEvent = self._open_search_keyboard
-        self.search_input.textChanged.connect(lambda t: self.kb_display.setText(t if t else "Qidiruv..."))
         main_layout.addWidget(self.search_input)
         
         # Top Settings Header (optional visible mostly in List View context in UI, but we can show always)
@@ -295,6 +292,7 @@ class ItemBrowser(QWidget):
         self.items_table.setColumnCount(4)
         self.items_table.setHorizontalHeaderLabels(["NAME", "QTY", "RATE", "UOM"])
         self.items_table.verticalHeader().setVisible(False)
+        self.items_table.verticalHeader().setDefaultSectionSize(50)
         self.items_table.setShowGrid(False)
         self.items_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.items_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -366,11 +364,6 @@ class ItemBrowser(QWidget):
 
         main_layout.addLayout(bottom_bar)
 
-        # --- Inline Keyboard Panel (pastda ko'rinmas) ---
-        self.keyboard_panel = self._build_keyboard_panel()
-        self.keyboard_panel.setVisible(False)
-        main_layout.addWidget(self.keyboard_panel)
-
     def set_view_mode(self, mode):
         self.view_mode = mode
         if mode == "list":
@@ -402,28 +395,57 @@ class ItemBrowser(QWidget):
 
     def _on_table_item_clicked(self, item):
         row = item.row()
-        item_code = self.items_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        item_meta = self.items_table.item(row, 0)
+        item_code = item_meta.data(Qt.ItemDataRole.UserRole)
         # Fetch details to emit
         code = item_code
-        name = self.items_table.item(row, 0).text()
-        rate_text = self.items_table.item(row, 2).text().replace(" UZS", "").replace(" ", "")
-        try:
-            rate = float(rate_text)
-        except:
-            rate = 0.0
+        name = item_meta.text()
+        rate = float(item_meta.data(Qt.ItemDataRole.UserRole + 1) or 0.0)
+        currency = item_meta.data(Qt.ItemDataRole.UserRole + 2) or "UZS"
             
         from database.models import Item
         import json
         it = Item.get_or_none(Item.item_code == code)
         if it:
             p_data = json.loads(it.posawesome_data) if it.posawesome_data else {}
-            st_qty = float(p_data.get("actual_qty", 0))
+            st_qty = self._get_effective_stock_qty(code, float(p_data.get("actual_qty", 0)))
             allow_negative = bool(p_data.get("allow_negative_stock", 0))
             is_stock = bool(p_data.get("is_stock_item", 1))
             if is_stock and not allow_negative and st_qty <= 0:
                 InfoDialog(self, "Xatolik", f"{name} omborda qolmagan!", kind="warning").exec()
                 return
-        self.item_selected.emit(code, name, rate, "UZS")
+        self.item_selected.emit(code, name, rate, currency)
+
+    def set_reserved_quantities(self, reservations: dict | None):
+        normalized = {}
+        for code, qty in (reservations or {}).items():
+            key = str(code).strip()
+            if not key:
+                continue
+            try:
+                numeric_qty = int(float(qty))
+            except (TypeError, ValueError):
+                continue
+            if numeric_qty > 0:
+                normalized[key] = numeric_qty
+
+        if normalized == self.reserved_quantities:
+            return
+
+        self.reserved_quantities = normalized
+        self.load_items(self.search_input.text())
+
+    def _get_effective_stock_qty(self, item_code: str, actual_qty: float) -> float:
+        reserved_qty = float(self.reserved_quantities.get(item_code, 0) or 0)
+        return float(actual_qty or 0) - reserved_qty
+
+    def _resolve_display_price(self, item) -> tuple[float, str]:
+        price_rec = ItemPrice.get_or_none(
+            (ItemPrice.item_code == item.item_code) & (ItemPrice.price_list == self.current_price_list)
+        )
+        if price_rec:
+            return float(price_rec.price_list_rate or 0), price_rec.currency or "UZS"
+        return float(item.standard_rate or 0), "UZS"
 
     def _build_keyboard_panel(self):
         """Pastdan chiqadigan inline klaviatura paneli"""
@@ -622,7 +644,7 @@ class ItemBrowser(QWidget):
 
     def _handle_item_click(self, item, price, currency):
         p_data = json.loads(item.posawesome_data) if item.posawesome_data else {}
-        st_qty = float(p_data.get("actual_qty", 0))
+        st_qty = self._get_effective_stock_qty(item.item_code, float(p_data.get("actual_qty", 0)))
         allow_negative = bool(p_data.get("allow_negative_stock", 0))
         is_stock = bool(p_data.get("is_stock_item", 1))
         
@@ -675,10 +697,9 @@ class ItemBrowser(QWidget):
             table_row = 0
             
             for item in query.limit(ITEM_LOAD_LIMIT):
-                price_rec = ItemPrice.get_or_none((ItemPrice.item_code == item.item_code) & (ItemPrice.price_list == self.current_price_list)) or ItemPrice.get_or_none(ItemPrice.item_code == item.item_code)
-                p = price_rec.price_list_rate if price_rec else item.standard_rate
-                cur = price_rec.currency if price_rec else "UZS"
-                st_qty = float(json.loads(item.posawesome_data).get("actual_qty", 0)) if item.posawesome_data else 0.0
+                p, cur = self._resolve_display_price(item)
+                raw_qty = float(json.loads(item.posawesome_data).get("actual_qty", 0)) if item.posawesome_data else 0.0
+                st_qty = self._get_effective_stock_qty(item.item_code, raw_qty)
                 uom_val = item.uom or item.stock_uom or "Nos"
 
                 # Apply Settings Filters
@@ -709,6 +730,8 @@ class ItemBrowser(QWidget):
                     
                     item_name_widget = QTableWidgetItem(item.item_name)
                     item_name_widget.setData(Qt.ItemDataRole.UserRole, item.item_code)
+                    item_name_widget.setData(Qt.ItemDataRole.UserRole + 1, float(p))
+                    item_name_widget.setData(Qt.ItemDataRole.UserRole + 2, cur)
                     
                     qty_widget = QTableWidgetItem(f"{st_qty:g}")
                     
@@ -737,4 +760,3 @@ class ItemBrowser(QWidget):
 
     def filter_items(self, t):
         self.load_items(t)
-

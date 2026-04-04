@@ -41,13 +41,16 @@ class OpeningWorker(QThread):
             name = shift_data.get("name", "")
             self._save_local_shift(name)
             self.finished.emit(True, "Kassa muvaffaqiyatli ochildi!", name)
-        elif isinstance(response, str) and ("Server xatosi" in response or "417" in response or "403" in response):
-            # Server javob berdi lekin xato qaytardi — lokal saqlash KERAK EMAS
-            self.finished.emit(False, f"Server xatosi: {response}", "")
         else:
-            # Server bilan umuman aloqa yo'q — oflayn rejimda lokal saqlash
-            self._save_local_shift(None)
-            self.finished.emit(False, "Server bilan aloqa yo'q. Kassa lokal ochildi.", "")
+            response_text = str(response or "")
+            if "Server bilan aloqa" in response_text or "timeout" in response_text.lower():
+                # Faqat real network xatoda oflayn ochishga ruxsat beramiz.
+                self._save_local_shift(None)
+                self.finished.emit(False, "Server bilan aloqa yo'q. Kassa lokal ochildi.", "")
+                return
+
+            # Server javob qaytardi, demak lokal ochish mumkin emas.
+            self.finished.emit(False, f"Server xatosi: {response_text}", "")
 
     def _save_local_shift(self, opening_entry):
         try:
@@ -81,13 +84,26 @@ class PosOpeningDialog(QDialog):
         self.config = load_config()
         self.payment_inputs = {}
         self.active_input = None
-        
-        # Olingan ma'lumotlarni parslash
+        self.profile_style_active = (
+            "padding: 10px 14px; font-size: 18px; font-weight: 700; "
+            "border: 2px solid #3b82f6; border-radius: 10px; background: #eff6ff; color: #1e293b;"
+        )
+        self.profile_style_idle = (
+            "padding: 10px 14px; font-size: 18px; font-weight: 700; "
+            "border: 1.5px solid #e2e8f0; border-radius: 10px; background: white; color: #1e293b;"
+        )
+
+        if not self.dialog_data:
+            success, response = self.api.call_method("posawesome.posawesome.api.shifts.get_opening_dialog_data")
+            if success and isinstance(response, dict):
+                self.dialog_data = response
+
         self.profiles = self.dialog_data.get("pos_profiles_data", [])
         self.companies = self.dialog_data.get("companies", [])
         self.payment_methods = self.dialog_data.get("payments_method", [])
-        
+
         self.init_ui()
+        self._populate_company_and_profile()
         QTimer.singleShot(50, self._center_on_parent)
 
     def _center_on_parent(self):
@@ -127,15 +143,21 @@ class PosOpeningDialog(QDialog):
         title.setStyleSheet("color: #93c5fd; font-size: 11px; font-weight: 700; letter-spacing: 2px;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h_layout.addWidget(title)
-        
+
+        self.company_combo = QComboBox()
+        self.company_combo.setStyleSheet("""
+            QComboBox { background: white; color: #1e293b; border-radius: 5px; padding: 5px; font-weight: bold; font-size: 13px; }
+            QComboBox::drop-down { border: none; }
+        """)
+        self.company_combo.currentIndexChanged.connect(self._on_company_changed)
+        h_layout.addWidget(self.company_combo)
+
         self.profile_combo = QComboBox()
         self.profile_combo.setStyleSheet("""
             QComboBox { background: white; color: #1e293b; border-radius: 5px; padding: 5px; font-weight: bold; font-size: 14px; }
             QComboBox::drop-down { border: none; }
         """)
-        for p in self.profiles:
-            self.profile_combo.addItem(p.get("name"), p)
-            
+        self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         h_layout.addWidget(self.profile_combo)
 
         left_layout.addWidget(header)
@@ -150,53 +172,10 @@ class PosOpeningDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("border: none; background: transparent;")
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(8)
-
-        # Extract payment modes
-        if self.payment_methods:
-            modes = list(set([m.get("mode_of_payment") for m in self.payment_methods if m.get("mode_of_payment")]))
-        else:
-            modes = self.config.get("payment_methods", ["Cash"])
-
-        for idx, mode in enumerate(modes):
-            row = QHBoxLayout()
-            lbl = QLabel(mode)
-            lbl.setStyleSheet("font-size: 14px; font-weight: 600; color: #334155;")
-
-            inp = ClickableLineEdit()
-            inp.setValidator(QDoubleValidator(0.0, 999999999.0, 2))
-            inp.setPlaceholderText("0")
-            inp.setText("0")
-            inp.setMinimumWidth(140)
-            inp.setMaximumWidth(220)
-            inp.setMinimumHeight(44)
-            inp.setAlignment(Qt.AlignmentFlag.AlignRight)
-
-            if idx == 0:
-                self.active_input = inp
-                inp.setFocus()
-                inp.setStyleSheet(
-                    "padding: 10px 14px; font-size: 18px; font-weight: 700; "
-                    "border: 2px solid #3b82f6; border-radius: 10px; background: #eff6ff; color: #1e293b;"
-                )
-            else:
-                inp.setStyleSheet(
-                    "padding: 10px 14px; font-size: 18px; font-weight: 700; "
-                    "border: 1.5px solid #e2e8f0; border-radius: 10px; background: white; color: #1e293b;"
-                )
-
-            inp.clicked.connect(self._set_active_input)
-            row.addWidget(lbl)
-            row.addStretch()
-            row.addWidget(inp)
-
-            self.payment_inputs[mode] = inp
-            scroll_layout.addLayout(row)
-
-        scroll_layout.addStretch()
-        scroll.setWidget(scroll_content)
+        self.scroll_content = QWidget()
+        self.scroll_layout = QVBoxLayout(self.scroll_content)
+        self.scroll_layout.setSpacing(8)
+        scroll.setWidget(self.scroll_content)
         left_layout.addWidget(scroll)
 
         # Buttons
@@ -260,6 +239,130 @@ class PosOpeningDialog(QDialog):
 
         main_h.addWidget(right, 1)
 
+    def _populate_company_and_profile(self):
+        self.company_combo.blockSignals(True)
+        self.company_combo.clear()
+
+        seen_companies = set()
+        company_names = []
+        for company in self.companies:
+            if isinstance(company, dict):
+                name = (company.get("name") or "").strip()
+            else:
+                name = str(company or "").strip()
+            if name and name not in seen_companies:
+                seen_companies.add(name)
+                company_names.append(name)
+
+        if not company_names:
+            config_company = (self.config.get("company") or "").strip()
+            if config_company:
+                company_names.append(config_company)
+
+        for name in company_names:
+            self.company_combo.addItem(name, name)
+
+        preferred_company = (self.config.get("company") or "").strip()
+        idx = self.company_combo.findData(preferred_company)
+        if idx < 0 and self.company_combo.count():
+            idx = 0
+        if idx >= 0:
+            self.company_combo.setCurrentIndex(idx)
+        self.company_combo.blockSignals(False)
+
+        self._on_company_changed(self.company_combo.currentIndex())
+
+    def _on_company_changed(self, _index: int):
+        company = self.company_combo.currentData() or self.company_combo.currentText().strip()
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+
+        available_profiles = [p for p in self.profiles if (p.get("company") or "").strip() == company] if company else list(self.profiles)
+        if not available_profiles and self.config.get("pos_profile"):
+            available_profiles = [{"name": self.config.get("pos_profile"), "company": company or self.config.get("company", "")}]
+
+        for profile in available_profiles:
+            self.profile_combo.addItem(profile.get("name", ""), profile)
+
+        preferred_profile = (self.config.get("pos_profile") or "").strip()
+        idx = self.profile_combo.findText(preferred_profile)
+        if idx < 0 and self.profile_combo.count():
+            idx = 0
+        if idx >= 0:
+            self.profile_combo.setCurrentIndex(idx)
+        self.profile_combo.blockSignals(False)
+
+        self._on_profile_changed(self.profile_combo.currentIndex())
+
+    def _clear_payment_rows(self):
+        while self.scroll_layout.count():
+            item = self.scroll_layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif child_layout is not None:
+                while child_layout.count():
+                    child_item = child_layout.takeAt(0)
+                    child_widget = child_item.widget()
+                    if child_widget is not None:
+                        child_widget.deleteLater()
+        self.payment_inputs = {}
+        self.active_input = None
+
+    def _on_profile_changed(self, _index: int):
+        self._rebuild_payment_inputs()
+
+    def _rebuild_payment_inputs(self):
+        self._clear_payment_rows()
+        selected_profile = self.profile_combo.currentData() or {}
+        selected_profile_name = (selected_profile.get("name") or self.profile_combo.currentText() or "").strip()
+
+        methods = []
+        if selected_profile_name:
+            methods = [
+                row for row in self.payment_methods
+                if (row.get("parent") or "").strip() == selected_profile_name and row.get("mode_of_payment")
+            ]
+
+        if not methods:
+            methods = [
+                {"mode_of_payment": mop}
+                for mop in (self.config.get("payment_methods") or ["Cash"])
+            ]
+
+        for idx, method in enumerate(methods):
+            mode = (method.get("mode_of_payment") or "").strip()
+            if not mode:
+                continue
+
+            row = QHBoxLayout()
+            lbl = QLabel(mode)
+            lbl.setStyleSheet("font-size: 14px; font-weight: 600; color: #334155;")
+
+            inp = ClickableLineEdit()
+            inp.setValidator(QDoubleValidator(0.0, 999999999.0, 2))
+            inp.setPlaceholderText("0")
+            inp.setText("0")
+            inp.setMinimumWidth(140)
+            inp.setMaximumWidth(220)
+            inp.setMinimumHeight(44)
+            inp.setAlignment(Qt.AlignmentFlag.AlignRight)
+            inp.clicked.connect(self._set_active_input)
+            inp.setStyleSheet(self.profile_style_active if idx == 0 else self.profile_style_idle)
+
+            row.addWidget(lbl)
+            row.addStretch()
+            row.addWidget(inp)
+            self.payment_inputs[mode] = inp
+            self.scroll_layout.addLayout(row)
+
+            if idx == 0:
+                self.active_input = inp
+                inp.setFocus()
+
+        self.scroll_layout.addStretch()
+
     def _on_exit(self):
         self.exit_requested.emit()
         self.reject()
@@ -271,15 +374,9 @@ class PosOpeningDialog(QDialog):
     def _set_active_input(self, inp):
         # Reset previous
         if self.active_input:
-            self.active_input.setStyleSheet(
-                "padding: 10px 14px; font-size: 18px; font-weight: 700; "
-                "border: 1.5px solid #e2e8f0; border-radius: 10px; background: white; color: #1e293b;"
-            )
+            self.active_input.setStyleSheet(self.profile_style_idle)
         self.active_input = inp
-        inp.setStyleSheet(
-            "padding: 10px 14px; font-size: 18px; font-weight: 700; "
-            "border: 2px solid #3b82f6; border-radius: 10px; background: #eff6ff; color: #1e293b;"
-        )
+        inp.setStyleSheet(self.profile_style_active)
         inp.setFocus()
 
     def _on_numpad_clicked(self, action: str):
@@ -316,16 +413,9 @@ class PosOpeningDialog(QDialog):
             })
 
         # Kassa ochish processiga profilni jo'natish
-        selected_profile = ""
-        company = ""
-        
-        provider = self.profile_combo.currentData()
-        if provider:
-            selected_profile = provider.get("name")
-            company = provider.get("company", self.config.get("company", ""))
-        else:
-            selected_profile = self.config.get("pos_profile", "")
-            company = self.config.get("company", "")
+        provider = self.profile_combo.currentData() or {}
+        selected_profile = provider.get("name") or self.profile_combo.currentText().strip() or self.config.get("pos_profile", "")
+        company = provider.get("company") or self.company_combo.currentData() or self.company_combo.currentText().strip() or self.config.get("company", "")
 
         self.worker = OpeningWorker(self.api, selected_profile, company, balance_details)
         self.worker.finished.connect(self._on_opening_finished)
@@ -338,8 +428,7 @@ class PosOpeningDialog(QDialog):
         if success:
             self.opening_completed.emit(opening_entry)
             self.accept()
-        elif opening_entry == "" and "Server xatosi" in message:
-            # Server javob berdi lekin xato — foydalanuvchiga xabar, dialog ochiq qoladi
+        elif "Server xatosi" in message:
             from ui.components.dialogs import InfoDialog
             InfoDialog(self, "Xatolik", message, kind="error").exec()
         else:

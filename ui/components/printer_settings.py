@@ -1,4 +1,3 @@
-import glob
 import platform
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -7,7 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.api import FrappeAPI
 from core.config import load_config, save_config
-from core.printer import send_test_print
+from core.printer import send_test_print, get_printer_issue, list_linux_printers
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,12 +22,11 @@ def detect_printers() -> list[dict]:
         try:
             import win32print
             for flags, desc, name, comment in win32print.EnumPrinters(2):
-                printers.append({"label": name, "device": "", "win_name": name})
+                printers.append({"label": name, "device": "", "win_name": name, "cups_name": ""})
         except ImportError:
             pass
     else:
-        for dev in sorted(glob.glob("/dev/usb/lp*")):
-            printers.append({"label": dev, "device": dev, "win_name": ""})
+        return list_linux_printers()
     return printers
 
 
@@ -58,7 +56,8 @@ class ProductionUnitSyncWorker(QThread):
             })
 
             if not success or not isinstance(units, list):
-                self.finished.emit(False, "Serverdan ma'lumot olib bo'lmadi")
+                existing_units = config.get("production_units", [])
+                self.finished.emit(False, self._format_sync_error(units, existing_units))
                 return
 
             # Mavjud printer sozlamalarini saqlash
@@ -67,6 +66,8 @@ class ProductionUnitSyncWorker(QThread):
                 u.get("name", ""): {
                     "printer_device": u.get("printer_device", ""),
                     "printer_win_name": u.get("printer_win_name", ""),
+                    "printer_cups_name": u.get("printer_cups_name", ""),
+                    "printer_mode": u.get("printer_mode", "auto"),
                 }
                 for u in existing
             }
@@ -93,6 +94,8 @@ class ProductionUnitSyncWorker(QThread):
                     "item_groups": item_groups,
                     "printer_device": ep.get("printer_device", ""),
                     "printer_win_name": ep.get("printer_win_name", ""),
+                    "printer_cups_name": ep.get("printer_cups_name", ""),
+                    "printer_mode": ep.get("printer_mode", "auto"),
                 })
 
             save_config({"production_units": production_units})
@@ -101,6 +104,43 @@ class ProductionUnitSyncWorker(QThread):
         except Exception as e:
             logger.error("Production unit sync xatosi: %s", e)
             self.finished.emit(False, str(e))
+
+    @staticmethod
+    def _format_sync_error(error, existing_units: list) -> str:
+        error_text = str(error or "").strip()
+        existing_count = len(existing_units or [])
+
+        if "403" in error_text:
+            message = (
+                "Production unitlarni serverdan o'qib bo'lmadi.\n"
+                "Sabab: 'URY Production Unit' uchun List ruxsati yo'q (403)."
+            )
+            if existing_count:
+                return (
+                    f"{message}\n\n"
+                    f"Mavjud {existing_count} ta lokal production unit sozlamasi saqlab qolindi."
+                )
+            return (
+                f"{message}\n\n"
+                "Administrator shu doctype uchun o'qish/List ruxsatini berishi kerak."
+            )
+
+        if error_text:
+            if existing_count:
+                return (
+                    "Production unitlarni serverdan yangilab bo'lmadi.\n"
+                    f"Xabar: {error_text}\n\n"
+                    f"Mavjud {existing_count} ta lokal production unit sozlamasi saqlab qolindi."
+                )
+            return f"Production unitlarni serverdan olib bo'lmadi.\nXabar: {error_text}"
+
+        if existing_count:
+            return (
+                "Production unitlarni serverdan olib bo'lmadi.\n"
+                f"Mavjud {existing_count} ta lokal production unit sozlamasi saqlab qolindi."
+            )
+
+        return "Serverdan ma'lumot olib bo'lmadi"
 
 
 # ──────────────────────────────────────────────────
@@ -240,12 +280,14 @@ class PrinterSettingsDialog(QDialog):
         if customer_printers:
             cp = customer_printers[0]
         else:
-            cp = {"name": "Mijoz", "device": "", "type": "customer", "win_name": ""}
+            cp = {"name": "Mijoz", "device": "", "type": "customer", "win_name": "", "mode": "auto"}
 
         self._add_printer_row(
             label="Mijoz cheki",
             current_device=cp.get("device", ""),
             current_win_name=cp.get("win_name", ""),
+            current_cups_name=cp.get("cups_name", ""),
+            current_mode=cp.get("mode", "auto"),
             row_key="customer",
             row_type="customer",
         )
@@ -272,6 +314,8 @@ class PrinterSettingsDialog(QDialog):
                     subtitle=f"Guruhlar: {groups}" if groups else "",
                     current_device=unit.get("printer_device", ""),
                     current_win_name=unit.get("printer_win_name", ""),
+                    current_cups_name=unit.get("printer_cups_name", ""),
+                    current_mode=unit.get("printer_mode", "auto"),
                     row_key=unit.get("name", ""),
                     row_type="production",
                 )
@@ -281,7 +325,7 @@ class PrinterSettingsDialog(QDialog):
             no_units.setStyleSheet("color: #94a3b8; font-size: 13px; font-style: italic;")
             self.content_layout.addWidget(no_units)
 
-    def _add_printer_row(self, label, current_device, current_win_name,
+    def _add_printer_row(self, label, current_device, current_win_name, current_cups_name, current_mode,
                          row_key, row_type, subtitle=""):
         card = QFrame()
         card.setStyleSheet("""
@@ -311,7 +355,7 @@ class PrinterSettingsDialog(QDialog):
             )
             card_layout.addWidget(sub_lbl)
 
-        # Combo + Test print tugmasi
+        # Combo + mode + Test print tugmasi
         row = QHBoxLayout()
         row.setSpacing(8)
 
@@ -342,22 +386,45 @@ class PrinterSettingsDialog(QDialog):
         """)
 
         # Birinchi item — tanlanmagan
-        combo.addItem("Tanlanmagan", {"device": "", "win_name": ""})
+        combo.addItem("Tanlanmagan", {"device": "", "win_name": "", "cups_name": ""})
 
         # Mavjud printerlar
         selected_idx = 0
         is_win = platform.system() == "Windows"
         for i, p in enumerate(self.available_printers):
-            combo.addItem(p["label"], {"device": p["device"], "win_name": p["win_name"]})
+            combo.addItem(p["label"], {
+                "device": p.get("device", ""),
+                "win_name": p.get("win_name", ""),
+                "cups_name": p.get("cups_name", ""),
+            })
             if is_win:
                 if p["win_name"] and p["win_name"] == current_win_name:
                     selected_idx = i + 1
             else:
-                if p["device"] and p["device"] == current_device:
+                if p.get("cups_name") and p.get("cups_name") == current_cups_name:
+                    selected_idx = i + 1
+                elif p["device"] and p["device"] == current_device:
                     selected_idx = i + 1
 
         combo.setCurrentIndex(selected_idx)
         row.addWidget(combo, stretch=1)
+
+        mode_combo = QComboBox()
+        mode_combo.setMinimumHeight(48)
+        mode_combo.setMinimumWidth(120)
+        mode_combo.setStyleSheet(combo.styleSheet())
+        mode_options = [
+            ("Auto", "auto"),
+            ("Thermal", "thermal"),
+            ("Office", "office"),
+        ]
+        selected_mode_idx = 0
+        for idx, (label_text, value) in enumerate(mode_options):
+            mode_combo.addItem(label_text, value)
+            if value == (current_mode or "auto"):
+                selected_mode_idx = idx
+        mode_combo.setCurrentIndex(selected_mode_idx)
+        row.addWidget(mode_combo)
 
         test_btn = QPushButton("Sinov")
         test_btn.setMinimumSize(70, 40)
@@ -370,7 +437,7 @@ class PrinterSettingsDialog(QDialog):
             }
             QPushButton:pressed { background: #16a34a; }
         """)
-        test_btn.clicked.connect(lambda _, c=combo, n=label: self._on_test(c, n))
+        test_btn.clicked.connect(lambda _, c=combo, m=mode_combo, n=label: self._on_test(c, m, n))
         row.addWidget(test_btn)
 
         card_layout.addLayout(row)
@@ -378,16 +445,17 @@ class PrinterSettingsDialog(QDialog):
 
         self.printer_rows.append({
             "combo": combo,
+            "mode_combo": mode_combo,
             "key": row_key,
             "type": row_type,
         })
 
     # ── Actions ──
 
-    def _on_test(self, combo: QComboBox, name: str):
+    def _on_test(self, combo: QComboBox, mode_combo: QComboBox, name: str):
         from ui.components.dialogs import InfoDialog
-        data = combo.currentData()
-        if not data or (not data.get("device") and not data.get("win_name")):
+        data = combo.currentData() or {"device": "", "win_name": "", "cups_name": ""}
+        if not data.get("device") and not data.get("win_name") and not data.get("cups_name"):
             InfoDialog(self, "Xato", "Avval printerni tanlang!", kind="warning").exec()
             return
 
@@ -395,7 +463,14 @@ class PrinterSettingsDialog(QDialog):
             "name": name,
             "device": data.get("device", ""),
             "win_name": data.get("win_name", ""),
+            "cups_name": data.get("cups_name", ""),
+            "mode": mode_combo.currentData() or "auto",
         }
+        issue = get_printer_issue(printer_config)
+        if issue:
+            InfoDialog(self, "Printer muammosi", issue, kind="warning").exec()
+            return
+
         success = send_test_print(printer_config)
         if success:
             InfoDialog(self, "Muvaffaqiyatli", f"{name} — sinov cheki chop etildi!", kind="success").exec()
@@ -414,14 +489,16 @@ class PrinterSettingsDialog(QDialog):
         self.refresh_btn.setText("⟳  Yangilash")
         self.refresh_btn.setEnabled(True)
 
+        # Lokal printer ro'yxati har doim yangilanadi, server sync muvaffaqiyatsiz
+        # bo'lsa ham foydalanuvchi yangi ulanган printerni tanlay olishi kerak.
+        self.available_printers = detect_printers()
+        self._build_printer_rows()
+        self.content_layout.addStretch()
+
         if success:
-            # Printerlarni qayta aniqlash va rowlarni qayta chizish
-            self.available_printers = detect_printers()
-            self._build_printer_rows()
-            self.content_layout.addStretch()
             InfoDialog(self, "Yangilandi", message, kind="success").exec()
         else:
-            InfoDialog(self, "Xato", message, kind="error").exec()
+            InfoDialog(self, "Ogohlantirish", message, kind="warning").exec()
 
     def _on_save(self):
         from ui.components.dialogs import InfoDialog
@@ -430,18 +507,28 @@ class PrinterSettingsDialog(QDialog):
 
         for row in self.printer_rows:
             data = row["combo"].currentData() or {"device": "", "win_name": ""}
+            data = {
+                "device": data.get("device", ""),
+                "win_name": data.get("win_name", ""),
+                "cups_name": data.get("cups_name", ""),
+                "mode": row["mode_combo"].currentData() or "auto",
+            }
 
             if row["type"] == "customer":
                 printers = config.get("printers", [])
                 if printers:
                     printers[0]["device"] = data.get("device", "")
                     printers[0]["win_name"] = data.get("win_name", "")
+                    printers[0]["cups_name"] = data.get("cups_name", "")
+                    printers[0]["mode"] = data.get("mode", "auto")
                 else:
                     printers = [{
                         "name": "Mijoz",
                         "device": data.get("device", ""),
                         "type": "customer",
                         "win_name": data.get("win_name", ""),
+                        "cups_name": data.get("cups_name", ""),
+                        "mode": data.get("mode", "auto"),
                     }]
                 save_config({"printers": printers})
 
@@ -451,6 +538,8 @@ class PrinterSettingsDialog(QDialog):
                     if unit.get("name") == row["key"]:
                         unit["printer_device"] = data.get("device", "")
                         unit["printer_win_name"] = data.get("win_name", "")
+                        unit["printer_cups_name"] = data.get("cups_name", "")
+                        unit["printer_mode"] = data.get("mode", "auto")
                         break
                 save_config({"production_units": prod_units})
 

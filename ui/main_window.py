@@ -19,7 +19,6 @@ from ui.components.history_window import HistoryWindow
 from ui.components.offline_queue_window import OfflineQueueWindow
 from ui.components.pos_opening import PosOpeningDialog
 from ui.components.pos_closing import PosClosingDialog
-from ui.components.pos_shifts_window import PosShiftsWindow
 from ui.components.dialogs import InfoDialog, ConfirmDialog
 from ui.components.keyboard import TouchKeyboard
 
@@ -262,13 +261,6 @@ class MainWindow(QMainWindow):
         self.printer_btn.clicked.connect(self.show_printer_settings)
         top_bar.addWidget(self.printer_btn)
 
-        # Kassa tarixi Button — dark gray
-        self.shifts_btn = _tb_btn(
-            "Kassa tarixi", "#475569", hover="#334155"
-        )
-        self.shifts_btn.clicked.connect(self.show_shifts_history)
-        top_bar.addWidget(self.shifts_btn)
-
         # Kassa ochish Button — green
         self.open_shift_btn = _tb_btn(
             "Kassa ochish", "#10b981", hover="#059669"
@@ -351,18 +343,6 @@ class MainWindow(QMainWindow):
             border-top: 2px solid #e2e8f0;
         """)
         main_layout.addWidget(self.history_panel)
-
-        # ── Inline Shifts Panel (hidden by default) ──
-        self.shifts_panel = PosShiftsWindow(self.api, self)
-        self.shifts_panel.setVisible(False)
-        self.shifts_panel.setMinimumHeight(300)
-        self.shifts_panel.setMaximumHeight(450)
-        self.shifts_panel.setStyleSheet("""
-            background: #111111;
-            border-top: 2px solid #e2e8f0;
-        """)
-        main_layout.addWidget(self.shifts_panel)
-
 
         # Footer
         self.status_label = QLabel("Tayyor.")
@@ -500,16 +480,38 @@ class MainWindow(QMainWindow):
 
     def add_new_sale_tab(self):
         tab_count = self.sales_tabs.count()
-        new_cart = CartWidget()
+        new_cart = CartWidget(self.api)
         new_cart.checkout_requested.connect(self.on_checkout)
         new_cart.price_list_changed.connect(self.item_browser.set_price_list)
+        new_cart.cart_updated.connect(self._sync_item_browser_cart_view)
         tab_index = self.sales_tabs.addTab(new_cart, f"Sotuv {tab_count + 1}")
         self.sales_tabs.setCurrentIndex(tab_index)
+        self._sync_item_browser_cart_view()
 
     def _on_tab_changed(self, index: int):
         cart = self.sales_tabs.widget(index)
         if cart:
             self.item_browser.set_price_list(cart.price_list_combo.currentText())
+        self._sync_item_browser_cart_view()
+
+    def _get_active_cart_reservations(self) -> dict:
+        active_cart = self.sales_tabs.currentWidget()
+        if not active_cart or not hasattr(active_cart, "items"):
+            return {}
+
+        reservations = {}
+        for code, item in active_cart.items.items():
+            try:
+                qty = int(float(item.get("qty", 0)))
+            except (TypeError, ValueError):
+                qty = 0
+            if qty > 0:
+                reservations[code] = qty
+        return reservations
+
+    def _sync_item_browser_cart_view(self, *_args):
+        if hasattr(self, "item_browser"):
+            self.item_browser.set_reserved_quantities(self._get_active_cart_reservations())
 
     def close_sale_tab(self, index: int):
         if self.sales_tabs.count() > 1:
@@ -524,6 +526,7 @@ class MainWindow(QMainWindow):
                 if not dlg.result_accepted:
                     return
             self.sales_tabs.removeTab(index)
+            self._sync_item_browser_cart_view()
         else:
             InfoDialog(self, "Diqqat", "Kamida bitta sotuv oynasi ochiq bo'lishi kerak.", kind="warning").exec()
 
@@ -531,6 +534,7 @@ class MainWindow(QMainWindow):
         active_cart = self.sales_tabs.currentWidget()
         if active_cart:
             active_cart.add_item(item_code, item_name, price, currency)
+            self._sync_item_browser_cart_view()
 
     def on_checkout(self, order_data: dict):
         # CheckoutWindow ham shared API ishlatadi
@@ -542,6 +546,7 @@ class MainWindow(QMainWindow):
         active_cart = self.sales_tabs.currentWidget()
         if active_cart:
             active_cart.clear_cart()
+        self._sync_item_browser_cart_view()
         self._update_offline_queue_count()
 
     def show_printer_settings(self):
@@ -549,19 +554,7 @@ class MainWindow(QMainWindow):
         dlg = PrinterSettingsDialog(self, self.api)
         dlg.exec()
 
-    def show_shifts_history(self):
-        visible = self.shifts_panel.isVisible()
-        if visible:
-            self.shifts_panel.setVisible(False)
-        else:
-            # Tarix panelini yopish (ikkalasi bir vaqtda ochilmasin)
-            self.history_panel.setVisible(False)
-            self.shifts_panel.setVisible(True)
-            self.shifts_panel.load_shifts()
-
     def show_history(self):
-        # Kassa tarixi panelini yopish
-        self.shifts_panel.setVisible(False)
         visible = self.history_panel.isVisible()
         if visible:
             self.history_panel.setVisible(False)
@@ -600,6 +593,8 @@ class MainWindow(QMainWindow):
                 cart = self.sales_tabs.widget(i)
                 if hasattr(cart, 'load_price_lists'):
                     cart.load_price_lists()
+                if hasattr(cart, 'refresh_customer_groups'):
+                    cart.refresh_customer_groups()
         # Avtomatik sinxronizatsiyada dialog ko'rsatmaymiz
         if self._auto_sync:
             self._auto_sync = False
@@ -630,6 +625,10 @@ class MainWindow(QMainWindow):
             self._show_pos_opening_dialog(dialog_data or {})
 
     def _show_pos_opening_dialog(self, dialog_data: dict):
+        if not dialog_data:
+            success, response = self.api.call_method("posawesome.posawesome.api.shifts.get_opening_dialog_data")
+            if success and isinstance(response, dict):
+                dialog_data = response
         dlg = PosOpeningDialog(self, self.api, dialog_data)
         dlg.opening_completed.connect(self._on_pos_opened)
         dlg.exit_requested.connect(self._on_opening_exit)
@@ -701,11 +700,16 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'global_keyboard') and new_widget:
             # Check safely to prevent circular reference or crash
             if isinstance(new_widget, QLineEdit):
+                if new_widget.property("disable_virtual_keyboard"):
+                    self._current_focused_input = None
+                    return
                 if getattr(self.global_keyboard, 'input_field', None) != new_widget:
                     self._current_focused_input = new_widget
 
     def _toggle_global_keyboard(self):
         if getattr(self, 'global_keyboard', None) is None or not self.global_keyboard.isVisible():
+            if not isinstance(self._current_focused_input, QLineEdit):
+                return
             current_text = ""
             if isinstance(self._current_focused_input, QLineEdit):
                 current_text = self._current_focused_input.text()

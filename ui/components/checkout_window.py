@@ -326,6 +326,10 @@ class CheckoutWindow(QDialog):
         customer = self.order_data.get("customer", "").strip()
         if not customer:
             customer = config.get("default_customer") or "Guest Customer"
+
+        selected_price_list = (
+            self.order_data.get("selling_price_list", "").strip() or config.get("price_list")
+        )
         
         invoice_data = {
             "doctype": "Sales Invoice",
@@ -333,7 +337,7 @@ class CheckoutWindow(QDialog):
             "company": config.get("company"),
             "customer": customer,
             "pos_profile": config.get("pos_profile"),
-            "selling_price_list": config.get("price_list"),
+            "selling_price_list": selected_price_list,
             "set_warehouse": config.get("warehouse"),
             "currency": config.get("currency", "UZS"),
             "is_pos": 1,

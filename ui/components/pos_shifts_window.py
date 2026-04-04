@@ -1,4 +1,4 @@
-"""POS Opening Entry ro'yxati — filialga tegishli barcha kassa ochish/yopish tarixi."""
+"""POS Opening Shift ro'yxati — filialga tegishli barcha kassa ochish/yopish tarixi."""
 import json
 from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -28,12 +28,12 @@ class FetchShiftsWorker(QThread):
             return
 
         data = self.api.fetch_data(
-            "POS Opening Entry",
+            "POS Opening Shift",
             fields=json.dumps([
                 "name", "user", "posting_date", "creation",
-                "status", "docstatus",
+                "status", "docstatus", "pos_closing_shift",
             ]),
-            filters=json.dumps([["POS Opening Entry", "pos_profile", "=", pos_profile]]),
+            filters=json.dumps([["POS Opening Shift", "pos_profile", "=", pos_profile]]),
             limit=50,
         )
 
@@ -55,28 +55,18 @@ class FetchShiftDetailWorker(QThread):
     def run(self):
         success, doc = self.api.call_method(
             "frappe.client.get",
-            {"doctype": "POS Opening Entry", "name": self.opening_name},
+            {"doctype": "POS Opening Shift", "name": self.opening_name},
         )
         if not success or not isinstance(doc, dict):
             self.finished.emit(False, {}, [])
             return
 
-        # Closing entry bormi tekshirish
-        closing_data = self.api.fetch_data(
-            "POS Closing Entry",
-            fields=json.dumps(["name", "posting_date"]),
-            filters=json.dumps([
-                ["POS Closing Entry", "pos_opening_entry", "=", self.opening_name],
-                ["POS Closing Entry", "docstatus", "=", 1],
-            ]),
-            limit=1,
-        )
-
         payments = []
-        if closing_data:
+        closing_shift_name = doc.get("pos_closing_shift")
+        if closing_shift_name:
             closing_success, closing_doc = self.api.call_method(
                 "frappe.client.get",
-                {"doctype": "POS Closing Entry", "name": closing_data[0]["name"]},
+                {"doctype": "POS Closing Shift", "name": closing_shift_name},
             )
             if closing_success and isinstance(closing_doc, dict):
                 payments = closing_doc.get("payment_reconciliation", [])
@@ -373,7 +363,7 @@ class ShiftDetailDialog(QDialog):
 
 
 class PosShiftsWindow(QWidget):
-    """Inline panel — filialga tegishli POS Opening Entry lar ro'yxati."""
+    """Inline panel — filialga tegishli POS Opening Shift lar ro'yxati."""
 
     def __init__(self, api: FrappeAPI, parent=None):
         super().__init__(parent)

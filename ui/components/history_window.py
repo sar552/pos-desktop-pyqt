@@ -28,8 +28,18 @@ class FetchHistoryWorker(QThread):
             self.finished.emit(True, [])
             return
 
-        fields = json.dumps(["name", "customer", "grand_total", "posting_date", "posting_time", "status", "docstatus"])
-        filters = json.dumps([["Sales Invoice", "pos_opening_entry", "=", self.opening_entry]])
+        fields = json.dumps([
+            "name",
+            "customer",
+            "grand_total",
+            "posting_date",
+            "posting_time",
+            "status",
+            "docstatus",
+            "creation",
+            "posa_pos_opening_shift",
+        ])
+        filters = json.dumps([["Sales Invoice", "posa_pos_opening_shift", "=", self.opening_entry]])
 
         data = self.api.fetch_data(
             "Sales Invoice", fields=fields, filters=filters, limit=HISTORY_FETCH_LIMIT,
@@ -353,7 +363,7 @@ class HistoryWindow(QWidget):
         # ── Header row ──────────────────────
         hdr_row = QHBoxLayout()
 
-        title = QLabel("So'nggi tranzaksiyalar")
+        title = QLabel("Shift bo'yicha Sales Invoice lar")
         title.setStyleSheet("font-size: 18px; font-weight: 800; color: #1e293b;")
         hdr_row.addWidget(title)
 
@@ -425,6 +435,8 @@ class HistoryWindow(QWidget):
 
     def load_history(self):
         self.table.setRowCount(0)
+        if not self.opening_entry:
+            return
         self.worker = FetchHistoryWorker(self.api, self.opening_entry)
         self.worker.finished.connect(self._on_loaded)
         self.worker.start()

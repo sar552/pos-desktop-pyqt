@@ -4,11 +4,14 @@ from PyQt6.QtWidgets import (
     QComboBox, QLineEdit, QGroupBox, QFrame,
 )
 from PyQt6.QtCore import pyqtSignal, Qt
-from database.models import Customer, db
+from database.models import Customer, PosProfile, db
 from core.logger import get_logger
 from core.constants import TICKET_ORDER_TYPES, ORDER_TYPES
+from core.config import load_config
+from core.api import FrappeAPI
 from ui.components.keyboard import TouchKeyboard
 from ui.components.dialogs import InfoDialog
+import json
 
 logger = get_logger(__name__)
 
@@ -23,10 +26,15 @@ class QtyLabel(QLabel):
 class CartWidget(QWidget):
     checkout_requested = pyqtSignal(dict)
     price_list_changed = pyqtSignal(str)
+    cart_updated = pyqtSignal(dict)
 
-    def __init__(self):
+    def __init__(self, api: FrappeAPI | None = None):
         super().__init__()
+        self.api = api
         self.items = {}
+        self._all_customers = []
+        self._filtered_customers = []
+        self._customer_ui_updating = False
         self.col_settings = {
             "show_qty": {"label": "QTY (Miqdor) ustunini ko'rsatish", "value": True},
             "show_rate": {"label": "RATE (Narx) ustunini ko'rsatish", "value": True},
@@ -62,13 +70,36 @@ class CartWidget(QWidget):
         
         self.customer_combo = QComboBox()
         self.customer_combo.setEditable(True)
+        self.customer_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.customer_combo.setMaxVisibleItems(12)
         self.customer_combo.setFixedHeight(40)
         self.customer_combo.setStyleSheet("""
             QComboBox { background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px; }
             QComboBox QAbstractItemView { background: #1e1e1e; color: white; }
         """)
+        self.customer_combo.lineEdit().setPlaceholderText("Guest Customer")
+        self.customer_combo.lineEdit().textEdited.connect(self._on_customer_search_edited)
+        self.customer_combo.lineEdit().returnPressed.connect(self._commit_customer_search)
+        self.customer_combo.activated.connect(self._on_customer_selected)
+        customer_row = QHBoxLayout()
+        customer_row.setSpacing(6)
+        customer_row.addWidget(self.customer_combo, 1)
+
+        self.customer_clear_btn = QPushButton("✕")
+        self.customer_clear_btn.setFixedSize(36, 36)
+        self.customer_clear_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.customer_clear_btn.setToolTip("Customer tanlovini tozalash")
+        self.customer_clear_btn.setStyleSheet("""
+            QPushButton {
+                background: #2a2a2a; color: #cbd5e1; border: 1px solid #444;
+                border-radius: 6px; font-size: 14px; font-weight: 700;
+            }
+            QPushButton:hover { background: #334155; color: white; }
+        """)
+        self.customer_clear_btn.clicked.connect(self._clear_customer_selection)
+        customer_row.addWidget(self.customer_clear_btn)
         customer_vbox.addWidget(cust_label)
-        customer_vbox.addWidget(self.customer_combo)
+        customer_vbox.addLayout(customer_row)
         
         # Customer Group
         cg_vbox = QVBoxLayout()
@@ -76,9 +107,9 @@ class CartWidget(QWidget):
         cg_label = QLabel("Customer Group")
         cg_label.setStyleSheet("color: #a0a0a0; font-size: 11px;")
         self.cg_mock = QComboBox()
-        self.cg_mock.addItems(["All Groups", "Commercial", "Government", "Individual"])
         self.cg_mock.setFixedHeight(40)
         self.cg_mock.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
+        self.cg_mock.currentIndexChanged.connect(self._on_customer_group_changed)
         cg_vbox.addWidget(cg_label)
         cg_vbox.addWidget(self.cg_mock)
         
@@ -545,7 +576,10 @@ class CartWidget(QWidget):
             pls = [r.price_list for r in ItemPrice.select(ItemPrice.price_list).distinct() if r.price_list]
             if not pls:
                 pls = ["Standard Selling"]
-            
+
+            config = load_config()
+            preferred_price_list = config.get("price_list", "")
+
             # Avoid resetting if items are identically same
             current = [self.price_list_combo.itemText(i) for i in range(self.price_list_combo.count())]
             if set(current) != set(pls):
@@ -555,63 +589,356 @@ class CartWidget(QWidget):
                 self.price_list_combo.addItems(pls)
                 if curr_txt in pls:
                     self.price_list_combo.setCurrentText(curr_txt)
+                elif preferred_price_list in pls:
+                    self.price_list_combo.setCurrentText(preferred_price_list)
                 self.price_list_combo.blockSignals(False)
+            elif not self.price_list_combo.currentText() and preferred_price_list in pls:
+                self.price_list_combo.setCurrentText(preferred_price_list)
         finally:
             if not db.is_closed(): db.close()
 
-    def _on_pl_changed(self, text):
-        from database.models import ItemPrice, db
+    def get_selected_price_list(self) -> str:
+        current = self.price_list_combo.currentText().strip()
+        if current:
+            return current
+        return load_config().get("price_list", "") or "Standard Selling"
+
+    def _resolve_item_price(self, item_code: str, price_list: str) -> tuple[float, str]:
+        from database.models import ItemPrice, Item, db
+
         db.connect(reuse_if_open=True)
         try:
-            for code in list(self.items.keys()):
-                pr = ItemPrice.get_or_none((ItemPrice.item_code == code) & (ItemPrice.price_list == text)) or ItemPrice.get_or_none(ItemPrice.item_code == code)
-                if pr:
-                    self.items[code]["price"] = pr.price_list_rate
-                    self.items[code]["currency"] = pr.currency
-                else:
-                    from database.models import Item
-                    it = Item.get_or_none(Item.item_code == code)
-                    if it:
-                        self.items[code]["price"] = it.standard_rate
-            self.refresh_table()
-        except:
-            pass
+            price_rec = ItemPrice.get_or_none(
+                (ItemPrice.item_code == item_code) & (ItemPrice.price_list == price_list)
+            )
+            if price_rec:
+                return float(price_rec.price_list_rate or 0), price_rec.currency or "UZS"
+
+            item = Item.get_or_none(Item.item_code == item_code)
+            if item:
+                return float(item.standard_rate or 0), "UZS"
+
+            return 0.0, "UZS"
         finally:
-            if not db.is_closed(): db.close()
+            if not db.is_closed():
+                db.close()
+
+    def _on_pl_changed(self, text):
+        try:
+            for code in list(self.items.keys()):
+                price, currency = self._resolve_item_price(code, text)
+                self.items[code]["price"] = price
+                self.items[code]["currency"] = currency
+            self.refresh_table()
+        except Exception as e:
+            logger.debug("Price list update failed: %s", e)
         self.price_list_changed.emit(text)
 
     def load_customers(self):
         """Mijozlarni lokal bazadan yuklash"""
         try:
             db.connect(reuse_if_open=True)
-            
-            # Default customer ni configdan olish
-            from core.config import load_config
+
             config = load_config()
             default_customer = config.get("default_customer", "")
-            
-            customers = []
-            # Default customer birinchi bo'lsin
-            if default_customer:
-                customers.append(default_customer)
-            
-            # Bazadagi mijozlarni qo'shish
-            for c in Customer.select().order_by(Customer.customer_name):
-                if c.name not in customers:
-                    customers.append(c.name)
-            
-            self.customer_combo.clear()
-            self.customer_combo.addItems(customers)
-            
-            # Default customerni tanlash
-            if default_customer and default_customer in customers:
-                self.customer_combo.setCurrentText(default_customer)
-                
+
+            rows = list(
+                Customer.select(
+                    Customer.name,
+                    Customer.customer_name,
+                    Customer.customer_group,
+                    Customer.phone,
+                )
+                .order_by(Customer.customer_name)
+                .dicts()
+            )
+
+            self._all_customers = rows
+            self._load_customer_groups()
+            self._apply_customer_filters(
+                typed_text="",
+                selected_name=default_customer,
+                show_popup=False,
+            )
         except Exception as e:
             logger.debug("Mijozlar yuklanmadi: %s", e)
         finally:
             if not db.is_closed():
                 db.close()
+
+    def refresh_customer_groups(self):
+        current_group = self.cg_mock.currentData()
+        current_search = self.customer_combo.lineEdit().text().strip()
+        current_customer = self.get_selected_customer_name()
+
+        self._load_customer_groups()
+        if current_group:
+            idx = self.cg_mock.findData(current_group)
+            if idx >= 0:
+                self.cg_mock.setCurrentIndex(idx)
+
+        self._apply_customer_filters(
+            typed_text=current_search,
+            selected_name=current_customer,
+            show_popup=False,
+        )
+
+    def _load_customer_groups(self):
+        groups = []
+        seen = set()
+
+        # 1. POS Profile ichidagi customer_groups (agar mavjud bo'lsa)
+        profile_groups = self._get_profile_customer_groups()
+        for group in profile_groups:
+            normalized = (group or "").strip()
+            if normalized and normalized not in seen:
+                groups.append(normalized)
+                seen.add(normalized)
+
+        # 2. Webdagi kabi fallback: serverdan Customer Group ro'yxati
+        if not groups:
+            for group in self._fetch_customer_groups_from_server():
+                normalized = (group or "").strip()
+                if normalized and normalized not in seen:
+                    groups.append(normalized)
+                    seen.add(normalized)
+
+        current_value = self.cg_mock.currentData()
+        self.cg_mock.blockSignals(True)
+        self.cg_mock.clear()
+        self.cg_mock.addItem("All Groups", "all")
+        for group in sorted(groups):
+            self.cg_mock.addItem(group, group)
+
+        if current_value:
+            idx = self.cg_mock.findData(current_value)
+            if idx >= 0:
+                self.cg_mock.setCurrentIndex(idx)
+        self.cg_mock.blockSignals(False)
+        self.cg_mock.setEnabled(bool(groups))
+
+    def _get_profile_customer_groups(self) -> list[str]:
+        try:
+            db.connect(reuse_if_open=True)
+            profile = PosProfile.select().first()
+            if not profile or not profile.profile_data:
+                return []
+
+            payload = json.loads(profile.profile_data)
+            rows = payload.get("customer_groups") or []
+            groups = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                name = (row.get("customer_group") or "").strip()
+                if name:
+                    groups.append(name)
+            return groups
+        except Exception as e:
+            logger.debug("POS Profile customer_groups o'qilmadi: %s", e)
+            return []
+        finally:
+            if not db.is_closed():
+                db.close()
+
+    def _fetch_customer_groups_from_server(self) -> list[str]:
+        if not self.api:
+            return []
+        try:
+            success, response = self.api.call_method(
+                "frappe.client.get_list",
+                {
+                    "doctype": "Customer Group",
+                    "fields": ["name"],
+                    "filters": {"is_group": 0},
+                    "limit_page_length": 0,
+                },
+            )
+            if success and isinstance(response, list):
+                groups = [str(row.get("name") or "").strip() for row in response if row.get("name")]
+                if groups:
+                    return groups
+
+            # Ba'zi holatlarda frappe.client.get_list vaqtincha 403/500 qaytarishi mumkin.
+            # Shunda /api/resource orqali ham urinib ko'ramiz.
+            response = self.api.fetch_data(
+                "Customer Group",
+                fields='["name"]',
+                filters={"is_group": 0},
+                limit=0,
+            )
+            if isinstance(response, list):
+                return [str(row.get("name") or "").strip() for row in response if row.get("name")]
+            return []
+        except Exception as e:
+            logger.debug("Customer Group serverdan olinmadi: %s", e)
+            return []
+
+    def _normalize_customer_search(self, text: str) -> list[str]:
+        return [part for part in (text or "").strip().lower().split() if part]
+
+    def _customer_matches(self, row: dict, parts: list[str]) -> bool:
+        if not parts:
+            return True
+        values = [
+            str(row.get("customer_name") or "").lower(),
+            str(row.get("name") or "").lower(),
+            str(row.get("phone") or "").lower(),
+        ]
+        return all(any(part in value for value in values) for part in parts)
+
+    def _get_selected_customer_group(self) -> str:
+        return self.cg_mock.currentData() or "all"
+
+    def _format_customer_label(self, row: dict) -> str:
+        name = (row.get("name") or "").strip()
+        customer_name = (row.get("customer_name") or name).strip()
+        phone = (row.get("phone") or "").strip()
+
+        label = customer_name
+        if name and name != customer_name:
+            label += f" ({name})"
+        if phone:
+            label += f"  |  {phone}"
+        return label
+
+    def _find_customer_by_text(self, text: str, candidates=None):
+        lookup = (text or "").strip().lower()
+        if not lookup:
+            return None
+
+        rows = candidates if candidates is not None else self._all_customers
+        for row in rows:
+            name = str(row.get("name") or "").strip().lower()
+            customer_name = str(row.get("customer_name") or "").strip().lower()
+            phone = str(row.get("phone") or "").strip().lower()
+            if lookup in {name, customer_name, phone}:
+                return row
+
+        for row in rows:
+            values = [
+                str(row.get("customer_name") or "").lower(),
+                str(row.get("name") or "").lower(),
+                str(row.get("phone") or "").lower(),
+            ]
+            if any(lookup in value for value in values):
+                return row
+        return None
+
+    def _apply_customer_filters(self, typed_text: str | None = None, selected_name: str = "", show_popup: bool = False):
+        line_edit = self.customer_combo.lineEdit()
+        search_text = typed_text if typed_text is not None else line_edit.text()
+        parts = self._normalize_customer_search(search_text)
+        selected_group = self._get_selected_customer_group()
+
+        filtered = []
+        for row in self._all_customers:
+            group = (row.get("customer_group") or "").strip()
+            if selected_group != "all" and group != selected_group:
+                continue
+            if not self._customer_matches(row, parts):
+                continue
+            filtered.append(row)
+
+        self._filtered_customers = filtered
+
+        self._customer_ui_updating = True
+        self.customer_combo.blockSignals(True)
+        line_edit.blockSignals(True)
+        self.customer_combo.clear()
+        for row in filtered:
+            self.customer_combo.addItem(self._format_customer_label(row), row.get("name"))
+
+        target_name = selected_name.strip()
+        if not target_name:
+            matched = self._find_customer_by_text(search_text, filtered)
+            if matched and search_text.strip().lower() in {
+                str(matched.get("name") or "").strip().lower(),
+                str(matched.get("customer_name") or "").strip().lower(),
+            }:
+                target_name = matched.get("name", "")
+
+        if target_name:
+            idx = self.customer_combo.findData(target_name)
+            if idx >= 0:
+                self.customer_combo.setCurrentIndex(idx)
+                line_edit.setText(self.customer_combo.itemText(idx) if not search_text.strip() else search_text)
+            else:
+                self.customer_combo.setCurrentIndex(-1)
+                line_edit.setText(search_text or target_name)
+        else:
+            self.customer_combo.setCurrentIndex(-1)
+            line_edit.setText(search_text)
+
+        line_edit.setCursorPosition(len(line_edit.text()))
+        line_edit.blockSignals(False)
+        self.customer_combo.blockSignals(False)
+        self._customer_ui_updating = False
+
+        if show_popup and filtered:
+            self.customer_combo.showPopup()
+        elif show_popup:
+            self.customer_combo.hidePopup()
+
+    def _on_customer_search_edited(self, text: str):
+        if self._customer_ui_updating:
+            return
+        self._apply_customer_filters(typed_text=text, show_popup=True)
+
+    def _on_customer_group_changed(self, _index: int):
+        if self._customer_ui_updating:
+            return
+        line_edit = self.customer_combo.lineEdit()
+        line_edit.blockSignals(True)
+        line_edit.clear()
+        line_edit.blockSignals(False)
+        self._apply_customer_filters(typed_text="", show_popup=True)
+
+    def _clear_customer_selection(self):
+        line_edit = self.customer_combo.lineEdit()
+        line_edit.blockSignals(True)
+        line_edit.clear()
+        line_edit.blockSignals(False)
+        self._apply_customer_filters(typed_text="", selected_name="", show_popup=True)
+
+    def _on_customer_selected(self, index: int):
+        if index < 0:
+            return
+        name = self.customer_combo.itemData(index)
+        if not name:
+            return
+        self._apply_customer_filters(typed_text="", selected_name=str(name), show_popup=False)
+
+    def _commit_customer_search(self):
+        typed = self.customer_combo.lineEdit().text().strip()
+        matched = self._find_customer_by_text(typed, self._filtered_customers or self._all_customers)
+        if matched:
+            self._apply_customer_filters(
+                typed_text="",
+                selected_name=str(matched.get("name") or ""),
+                show_popup=False,
+            )
+        elif self._filtered_customers:
+            first = self._filtered_customers[0]
+            self._apply_customer_filters(
+                typed_text="",
+                selected_name=str(first.get("name") or ""),
+                show_popup=False,
+            )
+
+    def get_selected_customer_name(self) -> str:
+        current_index = self.customer_combo.currentIndex()
+        if current_index >= 0:
+            customer_name = self.customer_combo.itemData(current_index)
+            if customer_name:
+                return str(customer_name).strip()
+
+        typed = self.customer_combo.lineEdit().text().strip()
+        matched = self._find_customer_by_text(typed, self._filtered_customers or self._all_customers)
+        if matched:
+            return str(matched.get("name") or "").strip()
+
+        return typed
 
     def add_item(self, item_code: str, item_name: str, price: float, currency: str):
         if item_code in self.items:
@@ -619,6 +946,7 @@ class CartWidget(QWidget):
         else:
             self.items[item_code] = {"name": item_name, "price": price, "qty": 1, "currency": currency}
         self.refresh_table()
+        self._emit_cart_updated()
 
     def update_qty(self, item_code: str, change: int):
         if item_code in self.items:
@@ -626,6 +954,7 @@ class CartWidget(QWidget):
             if self.items[item_code]["qty"] <= 0:
                 del self.items[item_code]
             self.refresh_table()
+            self._emit_cart_updated()
 
     def update_qty_absolute(self, item_code: str, new_qty_str: str):
         try:
@@ -635,6 +964,7 @@ class CartWidget(QWidget):
             else:
                 del self.items[item_code]
             self.refresh_table()
+            self._emit_cart_updated()
         except (ValueError, KeyError):
             pass
 
@@ -768,6 +1098,18 @@ class CartWidget(QWidget):
         self.comment_input.clear()
         self._close_panels()
         self.refresh_table()
+        self._emit_cart_updated()
+
+    def _emit_cart_updated(self):
+        snapshot = {}
+        for code, item in self.items.items():
+            try:
+                qty = int(float(item.get("qty", 0)))
+            except (TypeError, ValueError):
+                qty = 0
+            if qty > 0:
+                snapshot[code] = qty
+        self.cart_updated.emit(snapshot)
 
     def handle_checkout(self):
         if not self.items:
@@ -775,7 +1117,7 @@ class CartWidget(QWidget):
             return
 
         ticket_number = self.ticket_input.text().strip()
-        selected_customer = self.customer_combo.currentText().strip() or "guest"
+        selected_customer = self.get_selected_customer_name() or "guest"
 
         # if self.current_order_type in TICKET_ORDER_TYPES and not ticket_number:
         #    InfoDialog(self, "Xatolik", "Stiker raqamini kiriting!", kind="warning").exec()
@@ -787,6 +1129,7 @@ class CartWidget(QWidget):
             "order_type": self.current_order_type,
             "ticket_number": ticket_number,
             "customer": selected_customer,
+            "selling_price_list": self.get_selected_price_list(),
             "comment": self.comment_input.text().strip(),
         }
         self.checkout_requested.emit(order_data)

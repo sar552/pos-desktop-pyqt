@@ -62,6 +62,9 @@ def process_pending_invoice(api: FrappeAPI, invoice: PendingInvoice) -> tuple[st
     # Currency - POSAwesome uchun majburiy
     if not payload.get("currency"):
         payload["currency"] = config.get("currency", "UZS")
+
+    if not payload.get("selling_price_list"):
+        payload["selling_price_list"] = config.get("price_list")
     
     # Items formatting
     items = payload.get("items", [])

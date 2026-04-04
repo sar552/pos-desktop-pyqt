@@ -1,7 +1,13 @@
 import os
 import platform
+import shutil
+import subprocess
 import threading
+from html import escape
 from datetime import datetime
+from PyQt6.QtGui import QTextDocument, QPageLayout, QPageSize
+from PyQt6.QtCore import QSizeF, QMarginsF
+from PyQt6.QtPrintSupport import QPrinter, QPrinterInfo
 from core.logger import get_logger
 from core.config import load_config
 from database.models import Item, db
@@ -47,13 +53,76 @@ def get_printers() -> list[dict]:
     if not printers:
         device = config.get("printer_device", "/dev/usb/lp0")
         win_name = config.get("printer_name", "XP-365B")
-        return [{"name": "Mijoz", "device": device, "type": "customer", "win_name": win_name}]
+        return [{"name": "Mijoz", "device": device, "type": "customer", "win_name": win_name, "mode": "auto"}]
 
     return printers
 
 
 def get_printers_by_type(printer_type: str) -> list[dict]:
     return [p for p in get_printers() if p.get("type") == printer_type]
+
+
+def _get_named_printer(printer_config: dict) -> str:
+    if platform.system() == "Windows":
+        return (printer_config.get("win_name") or printer_config.get("name") or "").strip()
+    return (printer_config.get("cups_name") or "").strip()
+
+
+def _get_printer_mode(printer_config: dict) -> str:
+    mode = (printer_config.get("mode") or "auto").strip().lower()
+    if mode not in {"auto", "thermal", "office"}:
+        return "auto"
+    return mode
+
+
+def list_linux_printers() -> list[dict]:
+    """Linux'da CUPS queue'lari va raw USB device'larni qaytaradi."""
+    printers = []
+    seen = set()
+
+    if platform.system() != "Linux":
+        return printers
+
+    if shutil.which("lpstat"):
+        try:
+            result = subprocess.run(
+                ["lpstat", "-p"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if not line.startswith("printer "):
+                    continue
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                printer_name = parts[1].strip()
+                if printer_name and printer_name not in seen:
+                    printers.append({
+                        "label": f"{printer_name} (CUPS)",
+                        "device": "",
+                        "win_name": "",
+                        "cups_name": printer_name,
+                    })
+                    seen.add(printer_name)
+        except Exception as e:
+            logger.warning("CUPS printerlarni o'qib bo'lmadi: %s", e)
+
+    for index in range(10):
+        device = f"/dev/usb/lp{index}"
+        if os.path.exists(device) and device not in seen:
+            printers.append({
+                "label": device,
+                "device": device,
+                "win_name": "",
+                "cups_name": "",
+            })
+            seen.add(device)
+
+    return printers
 
 
 def is_printer_available(device: str) -> bool:
@@ -66,6 +135,37 @@ def is_printer_available(device: str) -> bool:
             return False
     else:
         return os.path.exists(device)
+
+
+def get_printer_issue(printer_config: dict) -> str:
+    """Printer yuborishdan oldin aniq muammoni aniqlash."""
+    printer_name = _get_named_printer(printer_config)
+    if printer_name:
+        available = {info.printerName() for info in QPrinterInfo.availablePrinters()}
+        if available and printer_name not in available:
+            return f"Printer topilmadi: {printer_name}"
+        return ""
+
+    if platform.system() == "Windows":
+        printer_name = printer_config.get("win_name", printer_config.get("name", "")).strip()
+        if not printer_name:
+            return "Printer tanlanmagan."
+        if not is_printer_available(printer_name):
+            return f"Windows printer topilmadi: {printer_name}"
+        return ""
+
+    device = printer_config.get("device", "").strip()
+    if not device:
+        return "Printer qurilmasi tanlanmagan."
+    if not os.path.exists(device):
+        return f"Printer qurilmasi topilmadi: {device}"
+    if not os.access(device, os.W_OK):
+        return (
+            f"Printerga yozish ruxsati yo'q: {device}\n"
+            "Linux'da foydalanuvchini 'lp' guruhiga qo'shing va sessiyani qayta oching:\n"
+            "sudo usermod -aG lp $USER"
+        )
+    return ""
 
 
 # ──────────────────────────────────────────────────
@@ -359,14 +459,230 @@ def _send_win32(data: bytes, printer_name: str) -> bool:
         return False
 
 
+def _looks_like_thermal(printer_name: str) -> bool:
+    name = (printer_name or "").lower()
+    keywords = ("xp-", "xprinter", "thermal", "receipt", "pos", "80mm", "58mm")
+    return any(word in name for word in keywords)
+
+
+def _is_thermal_printer(printer_config: dict) -> bool:
+    mode = _get_printer_mode(printer_config)
+    if mode == "thermal":
+        return True
+    if mode == "office":
+        return False
+
+    named = _get_named_printer(printer_config)
+    if named:
+        return _looks_like_thermal(named)
+
+    device = (printer_config.get("device") or "").strip()
+    return bool(device)
+
+
+def _build_customer_receipt_html(order_data: dict, payments_list: list, config: dict) -> str:
+    items_list = order_data.get("items", [])
+    total_amount = float(order_data.get("total_amount", 0.0) or 0)
+    order_type = order_data.get("order_type", "")
+    ticket_number = order_data.get("ticket_number", "")
+    comment = order_data.get("comment", "")
+    customer = order_data.get("customer", "")
+    company = config.get("company", "POKIZA POS")
+    date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    total_paid = sum(float(p.get("amount", 0) or 0) for p in payments_list)
+    change = max(0, total_paid - total_amount)
+
+    rows = []
+    for item in items_list:
+        name = escape(str(item.get("name", item.get("item_name", ""))))
+        qty = float(item.get("qty", 0) or 0)
+        price = float(item.get("price", item.get("rate", 0)) or 0)
+        amount = float(item.get("amount", qty * price) or 0)
+        rows.append(
+            f"<tr><td>{name}</td><td class='num'>{qty:,.0f}</td>"
+            f"<td class='num'>{_format_amount(price)}</td><td class='num'>{_format_amount(amount)}</td></tr>"
+        )
+
+    payment_rows = []
+    for payment in payments_list:
+        amount = float(payment.get("amount", 0) or 0)
+        if amount <= 0:
+            continue
+        payment_rows.append(
+            f"<tr><td>{escape(str(payment.get('mode_of_payment', '')))}</td>"
+            f"<td class='num'>{_format_amount(amount)}</td></tr>"
+        )
+
+    meta_rows = [
+        f"<div><strong>Sana:</strong> {escape(date_str)}</div>",
+        f"<div><strong>Turi:</strong> {escape(_order_type_label(order_type))}</div>",
+    ]
+    if ticket_number:
+        meta_rows.append(f"<div><strong>Stiker:</strong> {escape(str(ticket_number))}</div>")
+    if customer and customer != "guest":
+        meta_rows.append(f"<div><strong>Mijoz:</strong> {escape(str(customer))}</div>")
+    if comment:
+        meta_rows.append(f"<div><strong>Izoh:</strong> {escape(str(comment))}</div>")
+
+    return f"""
+    <html>
+    <head>
+      <style>
+        body {{ font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 10pt; color: #000; margin: 0; }}
+        .wrap {{ width: 100%; }}
+        .center {{ text-align: center; }}
+        .title {{ font-size: 16pt; font-weight: 700; margin-bottom: 4px; }}
+        .subtitle {{ font-size: 11pt; margin-bottom: 8px; }}
+        .meta {{ margin: 12px 0; line-height: 1.5; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
+        th, td {{ border-bottom: 1px solid #ddd; padding: 6px 4px; }}
+        th {{ text-align: left; font-weight: 700; }}
+        .num {{ text-align: right; white-space: nowrap; }}
+        .totals {{ margin-top: 14px; width: 100%; }}
+        .totals div {{ display: block; margin: 4px 0; text-align: right; }}
+        .grand {{ font-size: 12pt; font-weight: 700; }}
+        .note {{ margin-top: 18px; text-align: center; font-weight: 600; }}
+      </style>
+    </head>
+    <body>
+      <div class="wrap">
+        <div class="center">
+          <div class="title">{escape(str(company))}</div>
+          <div class="subtitle">{escape(_order_type_label(order_type))}</div>
+        </div>
+        <div class="meta">{''.join(meta_rows)}</div>
+        <table>
+          <thead>
+            <tr><th>Nomi</th><th class="num">Soni</th><th class="num">Narx</th><th class="num">Summa</th></tr>
+          </thead>
+          <tbody>{''.join(rows) or '<tr><td colspan="4">Item yo&apos;q</td></tr>'}</tbody>
+        </table>
+        <table>
+          <thead><tr><th>To&apos;lov</th><th class="num">Summa</th></tr></thead>
+          <tbody>{''.join(payment_rows) or '<tr><td colspan="2">To&apos;lov ma&apos;lumoti yo&apos;q</td></tr>'}</tbody>
+        </table>
+        <div class="totals">
+          <div class="grand">Jami: {_format_amount(total_amount)} UZS</div>
+          <div>To&apos;langan: {_format_amount(total_paid)} UZS</div>
+          <div>Qaytim: {_format_amount(change)} UZS</div>
+        </div>
+        <div class="note">Xaridingiz uchun rahmat!</div>
+      </div>
+    </body>
+    </html>
+    """
+
+
+def _build_production_receipt_html(order_data: dict, unit_items: list, unit_name: str) -> str:
+    order_type = order_data.get("order_type", "")
+    ticket_number = order_data.get("ticket_number", "")
+    comment = order_data.get("comment", "")
+    customer = order_data.get("customer", "")
+    date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    rows = []
+    for item in unit_items:
+        name = escape(str(item.get("name", item.get("item_name", ""))))
+        qty = float(item.get("qty", 0) or 0)
+        rows.append(f"<tr><td>{name}</td><td class='num'>{qty:,.0f}</td></tr>")
+
+    meta_rows = [
+        f"<div><strong>Sana:</strong> {escape(date_str)}</div>",
+        f"<div><strong>Turi:</strong> {escape(str(order_type))}</div>",
+    ]
+    if ticket_number:
+        meta_rows.append(f"<div><strong>Stiker:</strong> {escape(str(ticket_number))}</div>")
+    if customer and customer != "guest":
+        meta_rows.append(f"<div><strong>Mijoz:</strong> {escape(str(customer))}</div>")
+    if comment:
+        meta_rows.append(f"<div><strong>Izoh:</strong> {escape(str(comment))}</div>")
+
+    return f"""
+    <html>
+    <head>
+      <style>
+        body {{ font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 10pt; color: #000; margin: 0; }}
+        .center {{ text-align: center; }}
+        .title {{ font-size: 16pt; font-weight: 700; margin-bottom: 8px; }}
+        .meta {{ margin: 12px 0; line-height: 1.5; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
+        th, td {{ border-bottom: 1px solid #ddd; padding: 6px 4px; }}
+        th {{ text-align: left; font-weight: 700; }}
+        .num {{ text-align: right; white-space: nowrap; }}
+      </style>
+    </head>
+    <body>
+      <div class="center"><div class="title">{escape(str(unit_name))}</div></div>
+      <div class="meta">{''.join(meta_rows)}</div>
+      <table>
+        <thead><tr><th>Nomi</th><th class="num">Soni</th></tr></thead>
+        <tbody>{''.join(rows) or '<tr><td colspan="2">Item yo&apos;q</td></tr>'}</tbody>
+      </table>
+    </body>
+    </html>
+    """
+
+
+def _send_native_printer_html(html: str, printer_name: str) -> bool:
+    try:
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setPrinterName(printer_name)
+        if not printer.isValid():
+            logger.error("Native printer topilmadi: %s", printer_name)
+            return False
+
+        if _looks_like_thermal(printer_name):
+            printer.setPageSize(QPageSize(QSizeF(80, 200), QPageSize.Unit.Millimeter, "POS80"))
+            printer.setPageMargins(QMarginsF(2, 4, 2, 4), QPageLayout.Unit.Millimeter)
+        else:
+            printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+            printer.setPageMargins(QMarginsF(8, 10, 8, 10), QPageLayout.Unit.Millimeter)
+
+        document = QTextDocument()
+        document.setHtml(html)
+        page_rect = printer.pageRect(QPrinter.Unit.Point)
+        document.setPageSize(page_rect.size())
+        document.print(printer)
+        logger.info("Native printerga yuborildi: %s", printer_name)
+        return True
+    except Exception as e:
+        logger.error("Native print xatosi (%s): %s", printer_name, e)
+        return False
+
+
+def _send_cups(data: bytes, cups_name: str) -> bool:
+    """Linux'da CUPS queue orqali RAW yuborish."""
+    try:
+        result = subprocess.run(
+            ["lp", "-d", cups_name, "-o", "raw"],
+            input=data,
+            capture_output=True,
+            timeout=max(PRINTER_TIMEOUT, 10),
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+            logger.error("CUPS print xatosi (%s): %s", cups_name, stderr or result.returncode)
+            return False
+        return True
+    except Exception as e:
+        logger.error("CUPS print xatosi (%s): %s", cups_name, e)
+        return False
+
+
 def _send_data(data: bytes, printer_config: dict) -> bool:
     """Platformaga mos tarzda printerga yuborish"""
-    if platform.system() == "Windows":
-        name = printer_config.get("win_name", printer_config.get("name", "XP-365B"))
-        return _send_win32(data, name)
-    else:
-        device = printer_config.get("device", "/dev/usb/lp0")
-        return _send_to_device(data, device)
+    printer_name = _get_named_printer(printer_config)
+    if printer_name:
+        html = printer_config.get("_html")
+        if html and not _is_thermal_printer(printer_config):
+            return _send_native_printer_html(html, printer_name)
+        if platform.system() == "Windows":
+            return _send_win32(data, printer_name)
+        return _send_cups(data, printer_name)
+
+    device = printer_config.get("device", "/dev/usb/lp0")
+    return _send_to_device(data, device)
 
 
 # ──────────────────────────────────────────────────
@@ -388,7 +704,10 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
     if customer_printers:
         try:
             receipt_data = _build_customer_receipt(order_data, payments_list, config)
-            success = _send_data(receipt_data, customer_printers[0])
+            printer_config = dict(customer_printers[0])
+            if _get_named_printer(printer_config) and not _is_thermal_printer(printer_config):
+                printer_config["_html"] = _build_customer_receipt_html(order_data, payments_list, config)
+            success = _send_data(receipt_data, printer_config)
             results["customer"] = success
             if success:
                 logger.info("Mijoz cheki chop etildi")
@@ -413,13 +732,13 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
         unit_name = unit.get("name", "")
         device = unit.get("printer_device", "")
         win_name = unit.get("printer_win_name", "")
+        cups_name = unit.get("printer_cups_name", "")
 
         # Platformaga qarab printer sozlanganligini tekshirish
-        if platform.system() == "Windows":
-            if not win_name:
-                logger.info("'%s' uchun printer_win_name sozlanmagan, o'tkazib yuborildi", unit_name)
-                continue
-        else:
+        if not win_name and not cups_name and not device:
+            logger.info("'%s' uchun printer sozlanmagan, o'tkazib yuborildi", unit_name)
+            continue
+        if not win_name and not cups_name and platform.system() != "Windows":
             if not device:
                 logger.info("'%s' uchun printer_device sozlanmagan, o'tkazib yuborildi", unit_name)
                 continue
@@ -438,7 +757,14 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
 
         try:
             receipt_data = _build_production_receipt(order_data, unit_items, unit_name)
-            printer_config = {"device": device, "win_name": win_name}
+            printer_config = {
+                "device": device,
+                "win_name": win_name,
+                "cups_name": cups_name,
+                "mode": unit.get("printer_mode", "auto"),
+            }
+            if _get_named_printer(printer_config) and not _is_thermal_printer(printer_config):
+                printer_config["_html"] = _build_production_receipt_html(order_data, unit_items, unit_name)
             success = _send_data(receipt_data, printer_config)
             results[unit_name] = success
 
@@ -461,12 +787,20 @@ def open_cash_drawer() -> bool:
         return False
 
     p = customer_printers[0]
+    if not _is_thermal_printer(p):
+        logger.warning("Cash drawer faqat thermal printer bilan ishlaydi")
+        return False
     data = CMD_INIT + CMD_OPEN_DRAWER
     return _send_data(data, p)
 
 
 def send_test_print(printer_config: dict) -> bool:
     """Sinov cheki — printer ishlayotganligini tekshirish."""
+    issue = get_printer_issue(printer_config)
+    if issue:
+        logger.warning("Sinov chop etish bloklandi: %s", issue.replace("\n", " | "))
+        return False
+
     data = bytearray()
     data += CMD_INIT
     data += CMD_ALIGN_CENTER
@@ -479,7 +813,29 @@ def send_test_print(printer_config: dict) -> bool:
     data += _center_text("Printer ishlayapti!")
     data += CMD_FEED
     data += CMD_CUT
-    return _send_data(bytes(data), printer_config)
+    printer_payload = dict(printer_config)
+    if _get_named_printer(printer_payload) and not _is_thermal_printer(printer_payload):
+        printer_payload["_html"] = f"""
+        <html>
+        <head>
+          <style>
+            body {{ font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 12pt; color: #000; }}
+            .wrap {{ text-align: center; margin-top: 40px; }}
+            .title {{ font-size: 20pt; font-weight: 700; margin-bottom: 12px; }}
+            .line {{ margin: 8px 0; }}
+          </style>
+        </head>
+        <body>
+          <div class="wrap">
+            <div class="title">SINOV CHEKI</div>
+            <div class="line">Printer: {escape(str(printer_config.get('name', 'Test')))}</div>
+            <div class="line">{escape(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}</div>
+            <div class="line">Printer ishlayapti!</div>
+          </div>
+        </body>
+        </html>
+        """
+    return _send_data(bytes(data), printer_payload)
 
 
 def reprint_receipt(order_data: dict, payments_list: list) -> bool:
@@ -491,4 +847,7 @@ def reprint_receipt(order_data: dict, payments_list: list) -> bool:
 
     config = load_config()
     receipt_data = _build_customer_receipt(order_data, payments_list, config)
-    return _send_data(receipt_data, customer_printers[0])
+    printer_config = dict(customer_printers[0])
+    if _get_named_printer(printer_config) and not _is_thermal_printer(printer_config):
+        printer_config["_html"] = _build_customer_receipt_html(order_data, payments_list, config)
+    return _send_data(receipt_data, printer_config)
