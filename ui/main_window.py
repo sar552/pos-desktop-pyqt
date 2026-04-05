@@ -413,11 +413,9 @@ class MainWindow(QMainWindow):
 
 
         # Workers - Shared API beriladi
-        self.sync_worker = SyncWorker(self.api)
-        self.sync_worker.progress_update.connect(self.update_status)
-        self.sync_worker.sync_finished.connect(self.on_sync_finished)
+        self.sync_worker = None
         self._auto_sync = True  # birinchi sinxronizatsiya dialog ko'rsatmasin
-        self.sync_worker.start()  # Login dan keyin avtomatik sinxronizatsiya
+        self._start_sync_worker()  # Login dan keyin avtomatik sinxronizatsiya
 
         self.offline_sync_worker = OfflineSyncWorker(self.api)
         self.offline_sync_worker.sync_status.connect(self.update_status)
@@ -684,6 +682,14 @@ class MainWindow(QMainWindow):
         self.sync_btn.setEnabled(False)
         self._auto_sync = False  # qo'lda bosdi — dialog ko'rsatilsin
         self.status_label.setText("Sinxronizatsiya boshlandi...")
+        self._start_sync_worker()
+
+    def _start_sync_worker(self):
+        if self.sync_worker and self.sync_worker.isRunning():
+            return
+        self.sync_worker = SyncWorker(self.api)
+        self.sync_worker.progress_update.connect(self.update_status)
+        self.sync_worker.sync_finished.connect(self.on_sync_finished)
         self.sync_worker.start()
 
     def update_status(self, message: str):
@@ -702,6 +708,8 @@ class MainWindow(QMainWindow):
                 cart = self.sales_tabs.widget(i)
                 if hasattr(cart, 'load_price_lists'):
                     cart.load_price_lists()
+                if hasattr(cart, 'load_customers'):
+                    cart.load_customers()
                 if hasattr(cart, 'refresh_customer_groups'):
                     cart.refresh_customer_groups()
         # Avtomatik sinxronizatsiyada dialog ko'rsatmaymiz

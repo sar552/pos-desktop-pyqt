@@ -39,16 +39,24 @@ def get_component_styles():
                 color: {colors['text_primary']};
                 border: 1px solid {colors['border']};
                 border-radius: 6px;
-                padding: 8px 12px;
+                padding: 4px 12px;
                 font-size: 13px;
+                font-weight: 600;
+                min-height: 22px;
             }}
             QComboBox:focus {{ border: 2px solid {colors['accent']}; }}
             QComboBox::drop-down {{ border: none; }}
+            QComboBox::down-arrow {{
+                width: 12px;
+                height: 12px;
+                margin-right: 6px;
+            }}
             QComboBox QAbstractItemView {{
                 background: {colors['bg_secondary']};
                 color: {colors['text_primary']};
                 selection-background-color: {colors['selection_bg']};
                 selection-color: {colors['text_primary']};
+                padding: 4px;
             }}
         """,
         
@@ -473,4 +481,3 @@ def get_themed_dialog_style():
     """Get complete dialog stylesheet"""
     styles = get_component_styles()
     return styles["dialog_bg"]
-

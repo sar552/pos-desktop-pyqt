@@ -164,6 +164,7 @@ class SyncWorker(QThread):
             params = {
                 "pos_profile": profile_json,
                 "limit": limit,
+                "include_image": 1,
             }
             if start_after:
                 params["start_after"] = start_after

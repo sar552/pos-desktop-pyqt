@@ -135,7 +135,7 @@ class CartWidget(QWidget):
         cg_label.setStyleSheet(styles["cart_label"])
         self.cg_mock = QComboBox()
         self.cg_mock.setFixedHeight(40)
-        self.cg_mock.setStyleSheet(styles["cart_input"])
+        self.cg_mock.setStyleSheet(styles["cart_combo"])
         self.cg_mock.currentIndexChanged.connect(self._on_customer_group_changed)
         cg_vbox.addWidget(cg_label)
         cg_vbox.addWidget(self.cg_mock)
@@ -157,9 +157,8 @@ class CartWidget(QWidget):
         pl_label = QLabel("Price List")
         pl_label.setStyleSheet(styles["cart_label"])
         self.price_list_combo = QComboBox()
-        
-        self.price_list_combo.setFixedHeight(35)
-        self.price_list_combo.setStyleSheet(styles["cart_input"])
+        self.price_list_combo.setFixedHeight(40)
+        self.price_list_combo.setStyleSheet(styles["cart_combo"])
         pl_vbox.addWidget(pl_label)
         pl_vbox.addWidget(self.price_list_combo)
         self.price_list_combo.currentTextChanged.connect(self._on_pl_changed)
@@ -584,11 +583,11 @@ class CartWidget(QWidget):
         if hasattr(self, "customer_results"):
             self.customer_results.setStyleSheet(styles["cart_list"])
         if hasattr(self, "cg_mock"):
-            self.cg_mock.setStyleSheet(styles["cart_input"])
+            self.cg_mock.setStyleSheet(styles["cart_combo"])
         if hasattr(self, "search_item_input"):
             self.search_item_input.setStyleSheet(styles["cart_input"])
         if hasattr(self, "price_list_combo"):
-            self.price_list_combo.setStyleSheet(styles["cart_input"])
+            self.price_list_combo.setStyleSheet(styles["cart_combo"])
         if hasattr(self, "customer_clear_btn"):
             self.customer_clear_btn.setStyleSheet(styles["cart_button"])
         if hasattr(self, "customer_add_btn"):
