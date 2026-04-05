@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
+from core.printer import print_payment_receipt
 from database.models import Customer, PosProfile, db
 from ui.components.dialogs import ClickableLineEdit
 
@@ -1118,6 +1119,41 @@ class PaymentsWindow(QDialog):
         self.process_worker.finished.connect(self._on_payment_processed)
         self.process_worker.start()
 
+    def _build_payment_receipt_payload(self, new_entries: list[dict]) -> dict:
+        references = []
+        total_paid = 0.0
+        posting_date = ""
+        payment_entries = []
+
+        for entry in new_entries or []:
+            entry_dict = dict(entry or {})
+            payment_entries.append(entry_dict)
+            total_paid += float(entry_dict.get("paid_amount") or entry_dict.get("received_amount") or entry_dict.get("amount") or 0.0)
+            if not posting_date:
+                posting_date = str(entry_dict.get("posting_date") or "")
+            for ref in entry_dict.get("references") or []:
+                ref_dict = dict(ref or {})
+                allocated_amount = float(ref_dict.get("allocated_amount") or 0.0)
+                if allocated_amount <= 0:
+                    continue
+                references.append(
+                    {
+                        "reference_name": ref_dict.get("reference_name"),
+                        "reference_doctype": ref_dict.get("reference_doctype"),
+                        "allocated_amount": allocated_amount,
+                    }
+                )
+
+        return {
+            "company": self.company,
+            "customer": self._selected_customer_name(),
+            "currency": self.currency,
+            "posting_date": posting_date or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "entries": payment_entries,
+            "references": references,
+            "total_paid": total_paid,
+        }
+
     def _on_payment_processed(self, success: bool, payload: dict, error: str):
         self.process_btn.setEnabled(True)
         self.process_btn.setText("Payment Qilish")
@@ -1136,6 +1172,19 @@ class PaymentsWindow(QDialog):
         if errors:
             message_lines.append("Xatolar:")
             message_lines.extend(str(err) for err in errors[:5])
+
+        print_issue = ""
+        if new_entries:
+            try:
+                receipt_payload = self._build_payment_receipt_payload(new_entries)
+                if not print_payment_receipt(receipt_payload):
+                    print_issue = "Payment receipt printerdan chiqmadi."
+            except Exception as print_error:
+                logger.error("Payment receipt print xatosi: %s", print_error)
+                print_issue = f"Payment receipt xatosi: {print_error}"
+        if print_issue:
+            message_lines.append(print_issue)
+
         QMessageBox.information(
             self,
             "Payment",

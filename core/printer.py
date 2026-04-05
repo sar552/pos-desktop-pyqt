@@ -637,6 +637,142 @@ def _build_production_receipt_html(order_data: dict, unit_items: list, unit_name
     """
 
 
+def _build_payment_receipt(payment_data: dict) -> bytes:
+    company = payment_data.get("company") or "POKIZA POS"
+    customer = payment_data.get("customer") or "Customer"
+    currency = payment_data.get("currency") or "UZS"
+    entries = payment_data.get("entries") or []
+    references = payment_data.get("references") or []
+    total_paid = float(payment_data.get("total_paid") or 0.0)
+    created_at = payment_data.get("posting_date") or datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+
+    data = bytearray()
+    data += CMD_INIT
+    data += CMD_ALIGN_CENTER
+    data += CMD_BOLD_ON + CMD_DOUBLE_ON
+    data += _encode(company + "\n")
+    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
+    data += _encode("QARZ TO'LOV CHEKI\n")
+    data += _encode(created_at + "\n")
+    data += CMD_ALIGN_LEFT
+    data += _separator()
+    data += _line("Customer:", str(customer))
+
+    if entries:
+        data += _separator()
+        data += CMD_BOLD_ON
+        data += _encode("PAYMENT ENTRY:\n")
+        data += CMD_BOLD_OFF
+        for entry in entries:
+            name = str(entry.get("name") or "")
+            mode = str(entry.get("mode_of_payment") or "")
+            amount = float(entry.get("paid_amount") or entry.get("received_amount") or entry.get("amount") or 0.0)
+            title = name if not mode else f"{name} ({mode})"
+            if title:
+                data += _encode(title[:CHARS_PER_LINE] + "\n")
+            data += _line("  Summa:", f"{_format_amount(amount)} {currency}")
+
+    if references:
+        data += _separator()
+        data += CMD_BOLD_ON
+        data += _encode("YOPILGAN HUJJATLAR:\n")
+        data += CMD_BOLD_OFF
+        for ref in references:
+            ref_name = str(ref.get("reference_name") or ref.get("voucher_no") or "")
+            if ref_name:
+                data += _encode(ref_name[:CHARS_PER_LINE] + "\n")
+            allocated = float(ref.get("allocated_amount") or 0.0)
+            if allocated > 0:
+                data += _line("  Yopildi:", f"{_format_amount(allocated)} {currency}")
+
+    data += _separator("=")
+    data += CMD_BOLD_ON + CMD_DOUBLE_ON
+    data += _line("JAMI:", f"{_format_amount(total_paid)} {currency}", width=CHARS_DOUBLE)
+    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
+    data += _separator("=")
+    data += _center_text("To'lov qabul qilindi")
+    data += CMD_FEED
+    data += CMD_CUT
+    return bytes(data)
+
+
+def _build_payment_receipt_html(payment_data: dict) -> str:
+    company = escape(str(payment_data.get("company") or "POKIZA POS"))
+    customer = escape(str(payment_data.get("customer") or "Customer"))
+    currency = escape(str(payment_data.get("currency") or "UZS"))
+    entries = payment_data.get("entries") or []
+    references = payment_data.get("references") or []
+    total_paid = float(payment_data.get("total_paid") or 0.0)
+    created_at = escape(str(payment_data.get("posting_date") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+
+    entry_rows = []
+    for entry in entries:
+        name = escape(str(entry.get("name") or ""))
+        mode = escape(str(entry.get("mode_of_payment") or ""))
+        amount = float(entry.get("paid_amount") or entry.get("received_amount") or entry.get("amount") or 0.0)
+        title = name if not mode else f"{name} ({mode})"
+        entry_rows.append(
+            f"<tr><td>{title}</td><td class='num'>{_format_amount(amount)} {currency}</td></tr>"
+        )
+
+    reference_rows = []
+    for ref in references:
+        ref_name = escape(str(ref.get("reference_name") or ref.get("voucher_no") or ""))
+        allocated = float(ref.get("allocated_amount") or 0.0)
+        reference_rows.append(
+            f"<tr><td>{ref_name}</td><td class='num'>{_format_amount(allocated)} {currency}</td></tr>"
+        )
+
+    entries_table = ""
+    if entry_rows:
+        entries_table = (
+            "<div class='section-title'>Payment Entry</div>"
+            "<table><tbody>"
+            + "".join(entry_rows)
+            + "</tbody></table>"
+        )
+
+    references_table = ""
+    if reference_rows:
+        references_table = (
+            "<div class='section-title'>Yopilgan hujjatlar</div>"
+            "<table><tbody>"
+            + "".join(reference_rows)
+            + "</tbody></table>"
+        )
+
+    return f"""
+    <html>
+    <head>
+      <style>
+        body {{ font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 11pt; color: #000; }}
+        .wrap {{ padding: 10px 4px; }}
+        .center {{ text-align: center; }}
+        .company {{ font-size: 18pt; font-weight: 700; }}
+        .title {{ font-size: 15pt; font-weight: 700; margin-top: 4px; }}
+        .line {{ margin-top: 6px; }}
+        .section-title {{ margin-top: 14px; font-size: 11pt; font-weight: 700; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 6px; }}
+        td {{ padding: 4px 0; vertical-align: top; }}
+        td.num {{ text-align: right; white-space: nowrap; font-weight: 600; }}
+        .total {{ margin-top: 14px; padding-top: 10px; border-top: 1px solid #000; font-size: 15pt; font-weight: 800; }}
+      </style>
+    </head>
+    <body>
+      <div class="wrap">
+        <div class="center company">{company}</div>
+        <div class="center title">QARZ TO'LOV CHEKI</div>
+        <div class="center line">{created_at}</div>
+        <div class="line"><strong>Customer:</strong> {customer}</div>
+        {entries_table}
+        {references_table}
+        <div class="total">Jami: {_format_amount(total_paid)} {currency}</div>
+      </div>
+    </body>
+    </html>
+    """
+
+
 def _send_native_printer_html(html: str, printer_name: str) -> bool:
     try:
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
@@ -865,6 +1001,25 @@ def reprint_receipt(order_data: dict, payments_list: list) -> bool:
     if _get_named_printer(printer_config) and not _is_thermal_printer(printer_config):
         printer_config["_html"] = _build_customer_receipt_html(order_data, payments_list, config)
     return _send_data(receipt_data, printer_config)
+
+
+def print_payment_receipt(payment_data: dict) -> bool:
+    """Qarz to'lovi uchun Payment Entry receipt chop etish."""
+    customer_printers = get_printers_by_type("customer")
+    if not customer_printers:
+        logger.warning("Mijoz printeri topilmadi — payment receipt chop etib bo'lmaydi")
+        return False
+
+    printer_config = dict(customer_printers[0])
+    receipt_data = _build_payment_receipt(payment_data)
+    if _get_named_printer(printer_config) and not _is_thermal_printer(printer_config):
+        printer_config["_html"] = _build_payment_receipt_html(payment_data)
+    success = _send_data(receipt_data, printer_config)
+    if success:
+        logger.info("Payment receipt chop etildi")
+    else:
+        logger.warning("Payment receipt chop etilmadi")
+    return success
 
 
 def print_closing_shift_receipt(closing_data: dict) -> bool:
