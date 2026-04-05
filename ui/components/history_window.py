@@ -8,6 +8,8 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.api import FrappeAPI
 from core.logger import get_logger
 from core.constants import HISTORY_FETCH_LIMIT
+from ui.component_styles import get_component_styles
+from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
 
@@ -191,7 +193,11 @@ class TransactionDetailDialog(QDialog):
         self.setWindowTitle(f"Chek: {invoice_id}")
         self.setMinimumSize(420, 450)
         self.resize(520, 560)
-        self.setStyleSheet("background: white;")
+        
+        # Apply theme
+        styles = get_component_styles()
+        self.setStyleSheet(styles["list_container"])
+        
         self._init_ui()
         self._load()
 
@@ -199,20 +205,25 @@ class TransactionDetailDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
+        
+        styles = get_component_styles()
+        colors = ThemeManager.get_theme_colors()
 
         # Header
         hdr = QLabel(f"Chek  #{self.invoice_id}")
-        hdr.setStyleSheet("font-size: 18px; font-weight: 800; color: #1e293b;")
+        hdr.setStyleSheet(styles["dialog_title"])
         layout.addWidget(hdr)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #e2e8f0;")
+        sep.setStyleSheet(f"color: {colors['border']};")
         layout.addWidget(sep)
 
         # Items table
         lbl = QLabel("MAHSULOTLAR")
-        lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;")
+        lbl.setStyleSheet(
+            f"font-size: 10px; font-weight: 700; color: {colors['text_tertiary']}; letter-spacing: 1px;"
+        )
         layout.addWidget(lbl)
 
         self.table = QTableWidget(0, 3)
@@ -221,27 +232,29 @@ class TransactionDetailDialog(QDialog):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setShowGrid(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.setStyleSheet("""
-            QTableWidget { border: none; font-size: 13px; background: white; }
-            QTableWidget::item { padding: 6px; }
-            QTableWidget::item:selected { background: #dbeafe; color: #1e40af; }
-            QHeaderView::section {
-                background: #f8fafc; color: #94a3b8;
+        self.table.setStyleSheet(f"""
+            QTableWidget {{ border: none; font-size: 13px; background: {colors['bg_secondary']}; color: {colors['text_primary']}; }}
+            QTableWidget::item {{ padding: 6px; }}
+            QTableWidget::item:selected {{ background: {colors['selection_bg']}; color: {colors['selection_text']}; }}
+            QHeaderView::section {{
+                background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
                 font-size: 11px; font-weight: 700;
                 padding: 6px; border: none;
-                border-bottom: 1px solid #e2e8f0;
-            }
+                border-bottom: 1px solid {colors['border']};
+            }}
         """)
         layout.addWidget(self.table)
 
         # Payments
         pay_lbl = QLabel("TO'LOV TURLARI")
-        pay_lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;")
+        pay_lbl.setStyleSheet(
+            f"font-size: 10px; font-weight: 700; color: {colors['text_tertiary']}; letter-spacing: 1px;"
+        )
         layout.addWidget(pay_lbl)
 
         self.payments_frame = QFrame()
         self.payments_frame.setStyleSheet(
-            "background: #f8fafc; border-radius: 10px; padding: 2px;"
+            f"background: {colors['bg_secondary']}; border-radius: 10px; padding: 2px; border: 1px solid {colors['border']};"
         )
         self.payments_layout = QVBoxLayout(self.payments_frame)
         self.payments_layout.setContentsMargins(12, 8, 12, 8)
@@ -251,10 +264,10 @@ class TransactionDetailDialog(QDialog):
 
         close_btn = QPushButton("Yopish")
         close_btn.setMinimumHeight(40)
-        close_btn.setStyleSheet("""
-            QPushButton { background: #f1f5f9; color: #475569;
-                font-weight: 700; border-radius: 10px; border: none; }
-            QPushButton:hover { background: #e2e8f0; }
+        close_btn.setStyleSheet(f"""
+            QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
+                font-weight: 700; border-radius: 10px; border: none; }}
+            QPushButton:hover {{ background: {colors['border']}; }}
         """)
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
@@ -287,21 +300,23 @@ class TransactionDetailDialog(QDialog):
 
         payments = [p for p in doc.get("payments", []) if float(p.get("amount", 0)) > 0]
         if payments:
+            colors = ThemeManager.get_theme_colors()
             for p in payments:
                 row_w = QWidget()
                 row_l = QHBoxLayout(row_w)
                 row_l.setContentsMargins(0, 2, 0, 2)
                 mode = QLabel(p.get("mode_of_payment", ""))
-                mode.setStyleSheet("font-weight: 600; color: #374151; font-size: 13px;")
+                mode.setStyleSheet(f"font-weight: 600; color: {colors['text_secondary']}; font-size: 13px;")
                 amt = QLabel(f"{float(p.get('amount', 0)):,.0f} UZS".replace(",", " "))
-                amt.setStyleSheet("color: #16a34a; font-weight: 700; font-size: 13px;")
+                amt.setStyleSheet(f"color: {colors['success']}; font-weight: 700; font-size: 13px;")
                 row_l.addWidget(mode)
                 row_l.addStretch()
                 row_l.addWidget(amt)
                 self.payments_layout.addWidget(row_w)
         else:
             no = QLabel("To'lov ma'lumotlari mavjud emas.")
-            no.setStyleSheet("color: #94a3b8; font-size: 12px;")
+            colors = ThemeManager.get_theme_colors()
+            no.setStyleSheet(f"color: {colors['text_tertiary']}; font-size: 12px;")
             self.payments_layout.addWidget(no)
 
 
@@ -315,30 +330,32 @@ class CancelReasonDialog(QDialog):
         self.setWindowTitle("Bekor qilish sababi")
         self.setMinimumSize(460, 220)
         self.resize(520, 240)
-        self.setStyleSheet("background: white;")
+        styles = get_component_styles()
+        self.setStyleSheet(styles["dialog_bg"])
         self._init_ui()
 
     def _init_ui(self):
+        colors = ThemeManager.get_theme_colors()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(10)
 
         # Title
         title = QLabel(f"#{self.invoice_id}  —  Bekor qilish sababi")
-        title.setStyleSheet("font-size: 16px; font-weight: 800; color: #1e293b;")
+        title.setStyleSheet(f"font-size: 16px; font-weight: 800; color: {colors['text_primary']};")
         layout.addWidget(title)
 
         # Input display
         self.input = QLineEdit()
         self.input.setPlaceholderText("Sabab yozing...")
         self.input.setMinimumHeight(40)
-        self.input.setStyleSheet("""
-            QLineEdit {
-                font-size: 15px; color: #1e293b;
-                background: white;
-                border: 2px solid #3b82f6;
+        self.input.setStyleSheet(f"""
+            QLineEdit {{
+                font-size: 15px; color: {colors['text_primary']};
+                background: {colors['input_bg']};
+                border: 2px solid {colors['accent']};
                 border-radius: 10px; padding: 8px 14px;
-            }
+            }}
         """)
         layout.addWidget(self.input)
         self.input.setFocus()
@@ -348,21 +365,21 @@ class CancelReasonDialog(QDialog):
 
         cancel_btn = QPushButton("Bekor")
         cancel_btn.setMinimumHeight(40)
-        cancel_btn.setStyleSheet("""
-            QPushButton { background: #f1f5f9; color: #64748b;
-                font-weight: 700; border-radius: 10px; border: none; }
-            QPushButton:hover { background: #e2e8f0; }
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
+                font-weight: 700; border-radius: 10px; border: none; }}
+            QPushButton:hover {{ background: {colors['border']}; }}
         """)
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
 
         confirm_btn = QPushButton("✓  Tasdiqlash")
         confirm_btn.setMinimumHeight(40)
-        confirm_btn.setStyleSheet("""
-            QPushButton { background: #ef4444; color: white;
+        confirm_btn.setStyleSheet(f"""
+            QPushButton {{ background: {colors['error']}; color: white;
                 font-weight: 700; font-size: 14px;
-                border-radius: 10px; border: none; }
-            QPushButton:hover { background: #dc2626; }
+                border-radius: 10px; border: none; }}
+            QPushButton:hover {{ background: {colors['accent_hover']}; }}
         """)
         confirm_btn.clicked.connect(self._on_confirm)
         btn_row.addWidget(confirm_btn)
@@ -373,13 +390,14 @@ class CancelReasonDialog(QDialog):
         if self.input.text().strip():
             self.accept()
         else:
-            self.input.setStyleSheet("""
-                QLineEdit {
-                    font-size: 15px; color: #1e293b;
-                    background: #fff5f5;
-                    border: 2px solid #ef4444;
+            colors = ThemeManager.get_theme_colors()
+            self.input.setStyleSheet(f"""
+                QLineEdit {{
+                    font-size: 15px; color: {colors['text_primary']};
+                    background: {colors['bg_tertiary']};
+                    border: 2px solid {colors['error']};
                     border-radius: 10px; padding: 8px 14px;
-                }
+                }}
             """)
 
     def get_reason(self) -> str:
@@ -398,8 +416,26 @@ class HistoryWindow(QWidget):
         self.opening_entry = ""
         self._init_ui()
 
+    @staticmethod
+    def _table_style(colors: dict) -> str:
+        return f"""
+            QTableWidget {{
+                border: none; background: {colors['bg_secondary']}; color: {colors['text_primary']}; font-size: 13px;
+            }}
+            QTableWidget::item {{ padding: 5px 8px; border-bottom: 1px solid {colors['border_light']}; }}
+            QTableWidget::item:selected {{ background: {colors['selection_bg']}; color: {colors['selection_text']}; }}
+            QHeaderView::section {{
+                background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
+                font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+                padding: 8px 8px; border: none;
+                border-bottom: 1px solid {colors['border']};
+            }}
+        """
+
     def _init_ui(self):
-        self.setStyleSheet("background: white;")
+        styles = get_component_styles()
+        colors = ThemeManager.get_theme_colors()
+        self.setStyleSheet(styles["list_container"])
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
@@ -408,46 +444,46 @@ class HistoryWindow(QWidget):
         # ── Header row ──────────────────────
         hdr_row = QHBoxLayout()
 
-        title = QLabel("Shift bo'yicha Sales Invoice lar")
-        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #1e293b;")
-        hdr_row.addWidget(title)
+        self.title_label = QLabel("Shift bo'yicha Sales Invoice lar")
+        self.title_label.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
+        hdr_row.addWidget(self.title_label)
 
-        hint = QLabel("(2× bosing — tafsilot)")
-        hint.setStyleSheet("font-size: 11px; color: #94a3b8; font-style: italic;")
-        hdr_row.addWidget(hint)
+        self.hint_label = QLabel("(2× bosing — tafsilot)")
+        self.hint_label.setStyleSheet(f"font-size: 11px; color: {colors['text_tertiary']}; font-style: italic;")
+        hdr_row.addWidget(self.hint_label)
         hdr_row.addStretch()
 
-        refresh_btn = QPushButton("⟳  Yangilash")
-        refresh_btn.setMinimumHeight(38)
-        refresh_btn.setMaximumHeight(48)
-        refresh_btn.setStyleSheet("""
-            QPushButton {
-                padding: 0 16px; background: #f1f5f9; color: #475569;
+        self.refresh_btn = QPushButton("⟳  Yangilash")
+        self.refresh_btn.setMinimumHeight(38)
+        self.refresh_btn.setMaximumHeight(48)
+        self.refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                padding: 0 16px; background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
                 font-weight: 600; font-size: 13px;
                 border-radius: 8px; border: none;
-            }
-            QPushButton:hover { background: #e2e8f0; }
+            }}
+            QPushButton:hover {{ background: {colors['border']}; }}
         """)
-        refresh_btn.clicked.connect(self.load_history)
-        hdr_row.addWidget(refresh_btn)
+        self.refresh_btn.clicked.connect(self.load_history)
+        hdr_row.addWidget(self.refresh_btn)
 
-        close_btn = QPushButton("✕")
-        close_btn.setMinimumSize(38, 38)
-        close_btn.setMaximumSize(48, 48)
-        close_btn.setStyleSheet("""
-            QPushButton { background: #fee2e2; color: #b91c1c;
-                font-weight: 700; font-size: 14px; border-radius: 8px; border: none; }
-            QPushButton:hover { background: #fecaca; }
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setMinimumSize(38, 38)
+        self.close_btn.setMaximumSize(48, 48)
+        self.close_btn.setStyleSheet(f"""
+            QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['error']};
+                font-weight: 700; font-size: 14px; border-radius: 8px; border: none; }}
+            QPushButton:hover {{ background: {colors['border']}; }}
         """)
-        close_btn.clicked.connect(self.hide)
-        hdr_row.addWidget(close_btn)
+        self.close_btn.clicked.connect(self.hide)
+        hdr_row.addWidget(self.close_btn)
 
         layout.addLayout(hdr_row)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background: #e2e8f0; max-height: 1px;")
-        layout.addWidget(sep)
+        self.sep_line = QFrame()
+        self.sep_line.setFrameShape(QFrame.Shape.HLine)
+        self.sep_line.setStyleSheet(f"background: {colors['border']}; max-height: 1px;")
+        layout.addWidget(self.sep_line)
 
         # ── Table ────────────────────────────
         self.table = QTableWidget(0, 7)
@@ -456,19 +492,7 @@ class HistoryWindow(QWidget):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                border: none; background: white; font-size: 13px;
-            }
-            QTableWidget::item { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; }
-            QTableWidget::item:selected { background: #dbeafe; color: #1e40af; }
-            QHeaderView::section {
-                background: #f8fafc; color: #94a3b8;
-                font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
-                padding: 8px 8px; border: none;
-                border-bottom: 1px solid #e2e8f0;
-            }
-        """)
+        self.table.setStyleSheet(self._table_style(colors))
         self.table.itemDoubleClicked.connect(self._show_details)
 
         hdr = self.table.horizontalHeader()
@@ -481,6 +505,36 @@ class HistoryWindow(QWidget):
         self.table.setColumnWidth(6, 130)
         layout.addWidget(self.table)
 
+    def apply_theme(self):
+        styles = get_component_styles()
+        colors = ThemeManager.get_theme_colors()
+        self.setStyleSheet(styles["list_container"])
+        if hasattr(self, "title_label"):
+            self.title_label.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
+        if hasattr(self, "hint_label"):
+            self.hint_label.setStyleSheet(f"font-size: 11px; color: {colors['text_tertiary']}; font-style: italic;")
+        if hasattr(self, "refresh_btn"):
+            self.refresh_btn.setStyleSheet(f"""
+                QPushButton {{
+                    padding: 0 16px; background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
+                    font-weight: 600; font-size: 13px;
+                    border-radius: 8px; border: none;
+                }}
+                QPushButton:hover {{ background: {colors['border']}; }}
+            """)
+        if hasattr(self, "close_btn"):
+            self.close_btn.setStyleSheet(f"""
+                QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['error']};
+                    font-weight: 700; font-size: 14px; border-radius: 8px; border: none; }}
+                QPushButton:hover {{ background: {colors['border']}; }}
+            """)
+        if hasattr(self, "sep_line"):
+            self.sep_line.setStyleSheet(f"background: {colors['border']}; max-height: 1px;")
+        if hasattr(self, "table"):
+            self.table.setStyleSheet(self._table_style(colors))
+        if self.isVisible() and self.opening_entry:
+            self.load_history()
+
     def load_history(self):
         self.table.setRowCount(0)
         if not self.opening_entry:
@@ -492,6 +546,7 @@ class HistoryWindow(QWidget):
     def _on_loaded(self, success: bool, data: list):
         if not success:
             return
+        colors = ThemeManager.get_theme_colors()
         self.table.setRowCount(0)
         for i, item in enumerate(data):
             self.table.insertRow(i)
@@ -511,19 +566,19 @@ class HistoryWindow(QWidget):
             if status_tone == "cancelled":
                 lbl = QLabel("Bekor qilingan")
                 lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                lbl.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 11px;")
+                lbl.setStyleSheet(f"color: {colors['error']}; font-weight: 600; font-size: 11px;")
                 self.table.setCellWidget(i, 6, lbl)
             else:
                 action_text = "O'chirish" if status_tone == "draft" else "Bekor qilish"
                 btn = QPushButton(action_text)
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background: #fff7ed; color: #ea580c;
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {colors['bg_tertiary']}; color: {colors['accent_action']};
                         font-weight: 600; font-size: 12px;
-                        border-radius: 6px; border: 1px solid #fed7aa;
+                        border-radius: 6px; border: 1px solid {colors['border']};
                         padding: 4px 10px;
-                    }
-                    QPushButton:hover { background: #ffedd5; }
+                    }}
+                    QPushButton:hover {{ background: {colors['border_light']}; }}
                 """)
                 btn.clicked.connect(
                     lambda _, inv=inv_name, tone=status_tone: self._confirm_cancel(inv, tone)
@@ -556,12 +611,13 @@ class HistoryWindow(QWidget):
 
     def _build_status_badge(self, item: dict) -> QLabel:
         text, tone = self._derive_payment_status(item)
+        colors = ThemeManager.get_theme_colors()
         styles = {
-            "paid": ("#dcfce7", "#166534", "#86efac"),
-            "partial": ("#fef3c7", "#92400e", "#fcd34d"),
-            "unpaid": ("#fee2e2", "#b91c1c", "#fca5a5"),
-            "draft": ("#fce7f3", "#be185d", "#f9a8d4"),
-            "cancelled": ("#e5e7eb", "#4b5563", "#d1d5db"),
+            "paid": (colors["bg_tertiary"], colors["success"], colors["border"]),
+            "partial": (colors["bg_tertiary"], colors["warning"], colors["border"]),
+            "unpaid": (colors["bg_tertiary"], colors["error"], colors["border"]),
+            "draft": (colors["bg_tertiary"], colors["accent"], colors["border"]),
+            "cancelled": (colors["bg_tertiary"], colors["text_tertiary"], colors["border"]),
         }
         bg, fg, border = styles.get(tone, styles["unpaid"])
         badge = QLabel(text)

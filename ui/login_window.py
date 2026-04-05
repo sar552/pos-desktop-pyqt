@@ -8,6 +8,7 @@ from core.api import FrappeAPI
 from core.config import save_credentials, load_config
 from core.logger import get_logger
 from ui.components.dialogs import ClickableLineEdit
+from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
 
@@ -28,15 +29,11 @@ class LoginWindow(QWidget):
         self.setMinimumSize(480, 600)
         self.showMaximized()
 
+        # Get theme-aware styles
+        theme_styles = ThemeManager.get_login_styles()
+
         # ——— Asosiy fon ———
-        self.setStyleSheet("""
-            QWidget#loginBg {
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #0f172a, stop:0.5 #1e293b, stop:1 #0f172a
-                );
-            }
-        """)
+        self.setStyleSheet(theme_styles["background"])
         self.setObjectName("loginBg")
 
         # ——— Asosiy tuzilma: yuqori (karta) + pastki (keyboard) ———
@@ -54,13 +51,7 @@ class LoginWindow(QWidget):
         card.setObjectName("loginCard")
         card.setMinimumWidth(340)
         card.setMaximumWidth(460)
-        card.setStyleSheet("""
-            QFrame#loginCard {
-                background: white;
-                border-radius: 20px;
-                border: 1px solid #e2e8f0;
-            }
-        """)
+        card.setStyleSheet(theme_styles["card"])
 
         # Soya effekti
         shadow = QGraphicsDropShadowEffect(self)
@@ -81,70 +72,37 @@ class LoginWindow(QWidget):
 
         title = QLabel("POKIZA POS")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("""
-            font-size: 26px; font-weight: 900; color: #0f172a;
+        title.setStyleSheet(f"""
+            font-size: 26px; font-weight: 900; color: {theme_styles['title_color']};
             letter-spacing: 2px; margin-bottom: 2px; background: transparent;
         """)
         layout.addWidget(title)
 
         subtitle = QLabel("Kassir tizimiga kirish")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("""
-            font-size: 13px; color: #94a3b8; margin-bottom: 20px; background: transparent;
+        subtitle.setStyleSheet(f"""
+            font-size: 13px; color: {theme_styles['subtitle_color']}; margin-bottom: 20px; background: transparent;
         """)
         layout.addWidget(subtitle)
 
         # ——— Separator ———
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background: #f1f5f9; max-height: 1px; margin-bottom: 16px;")
+        colors = ThemeManager.get_theme_colors()
+        sep.setStyleSheet(f"background: {colors['border_light']}; max-height: 1px; margin-bottom: 16px;")
         layout.addWidget(sep)
 
         # ——— Formalar ———
         config = load_config()
         default_url = config.get("url", "")
 
-        INPUT_STYLE = """
-            QLineEdit {
-                padding: 12px 14px;
-                font-size: 14px;
-                border: 1.5px solid #e2e8f0;
-                border-radius: 10px;
-                background: #f8fafc;
-                color: #1e293b;
-            }
-            QLineEdit:focus {
-                border: 1.5px solid #3b82f6;
-                background: #ffffff;
-            }
-            QLineEdit:disabled {
-                background: #f1f5f9;
-                color: #94a3b8;
-            }
-        """
-
-        INPUT_ACTIVE_STYLE = """
-            QLineEdit {
-                padding: 12px 14px;
-                font-size: 14px;
-                border: 2px solid #3b82f6;
-                border-radius: 10px;
-                background: #ffffff;
-                color: #1e293b;
-            }
-            QLineEdit:disabled {
-                background: #f1f5f9;
-                color: #94a3b8;
-            }
-        """
+        INPUT_STYLE = theme_styles["input_style"]
+        INPUT_ACTIVE_STYLE = theme_styles["input_active_style"]
 
         self._input_style = INPUT_STYLE
         self._input_active_style = INPUT_ACTIVE_STYLE
 
-        LABEL_STYLE = """
-            font-size: 12px; font-weight: 700; color: #64748b;
-            margin-bottom: 4px; margin-top: 10px; background: transparent;
-        """
+        LABEL_STYLE = theme_styles["label_style"]
 
         # Server URL
         layout.addWidget(self._label("Server manzili", LABEL_STYLE))
@@ -290,13 +248,11 @@ class LoginWindow(QWidget):
 
     # ─── Inline Keyboard ──────────────────────────────────
     def _build_keyboard_panel(self):
+        theme_styles = ThemeManager.get_login_styles()
+        colors = ThemeManager.get_theme_colors()
+        
         panel = QFrame()
-        panel.setStyleSheet("""
-            QFrame {
-                background: #f1f5f9;
-                border-top: 2px solid #cbd5e1;
-            }
-        """)
+        panel.setStyleSheet(theme_styles["keyboard_panel"])
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(16, 10, 16, 12)
         panel_layout.setSpacing(6)
@@ -305,17 +261,13 @@ class LoginWindow(QWidget):
         top_row = QHBoxLayout()
 
         self.kb_field_label = QLabel("")
-        self.kb_field_label.setStyleSheet("""
-            font-size: 12px; font-weight: 700; color: #3b82f6;
+        self.kb_field_label.setStyleSheet(f"""
+            font-size: 12px; font-weight: 700; color: {colors['accent']};
             background: transparent; padding: 0 4px;
         """)
 
         self.kb_display = QLabel("")
-        self.kb_display.setStyleSheet("""
-            font-size: 16px; font-weight: 600; color: #334155;
-            background: white; border: 1.5px solid #3b82f6;
-            border-radius: 8px; padding: 6px 12px;
-        """)
+        self.kb_display.setStyleSheet(theme_styles["kb_display"])
         self.kb_display.setFixedHeight(40)
 
         close_btn = QPushButton("✕")

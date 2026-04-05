@@ -1,4 +1,6 @@
 from ui.components.dialogs import InfoDialog
+from ui.component_styles import get_component_styles
+from ui.theme_manager import ThemeManager
 import json
 from PyQt6.QtWidgets import QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 import requests
@@ -48,6 +50,7 @@ class ItemButton(QFrame):
         self.item_name = item_name
         self.price = price
         self.currency = currency
+        self.colors = ThemeManager.get_theme_colors()
         self.api = api
         self.loader = None  # ImageLoader reference
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -63,8 +66,8 @@ class ItemButton(QFrame):
         self.image_container = QWidget()
         self.image_container.setMinimumHeight(100)
         self.image_container.setMaximumHeight(150)
-        self.image_container.setStyleSheet("""
-            background: #222222;
+        self.image_container.setStyleSheet(f"""
+            background: {self.colors['bg_tertiary']};
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         """)
@@ -76,10 +79,10 @@ class ItemButton(QFrame):
         self.image_label.setMinimumSize(70, 70)
         self.image_label.setMaximumSize(100, 100)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_label.setStyleSheet("""
-            background: rgba(0,0,0,0.3);
+        self.image_label.setStyleSheet(f"""
+            background: {self.colors['bg_secondary']};
             border-radius: 10px;
-            color: #94a3b8;
+            color: {self.colors['text_tertiary']};
             font-size: 28px;
         """)
         self.image_label.setText("📦")
@@ -95,8 +98,8 @@ class ItemButton(QFrame):
 
         # --- Ma'lumot qismi (karta pastki qismi) ---
         info_container = QWidget()
-        info_container.setStyleSheet("""
-            background: #1e1e1e;
+        info_container.setStyleSheet(f"""
+            background: {self.colors['bg_secondary']};
             border-bottom-left-radius: 14px;
             border-bottom-right-radius: 14px;
         """)
@@ -111,10 +114,10 @@ class ItemButton(QFrame):
         name_label.setWordWrap(True)
         name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         name_label.setToolTip(item_name)
-        name_label.setStyleSheet("""
+        name_label.setStyleSheet(f"""
             font-size: 13px;
             font-weight: 700;
-            color: #ffffff;
+            color: {self.colors['text_primary']};
             background: transparent;
             border: none;
             line-height: 1.3;
@@ -126,12 +129,12 @@ class ItemButton(QFrame):
         price_str = f"{price:,.0f}".replace(",", " ") + f" {currency}"
         price_label = QLabel(price_str)
         price_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        price_label.setStyleSheet("""
+        price_label.setStyleSheet(f"""
             font-size: 13px;
             font-weight: 800;
             color: white;
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #3b82f6, stop:1 #6366f1);
+                stop:0 {self.colors['accent']}, stop:1 {self.colors['accent_hover']});
             border-radius: 8px;
             padding: 4px 8px;
             border: none;
@@ -143,7 +146,9 @@ class ItemButton(QFrame):
         # Stock Info
         stock_label = QLabel(f"{stock_qty:g} {uom}")
         stock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        stock_label.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: bold; background: transparent; border: none;")
+        stock_label.setStyleSheet(
+            f"color: {self.colors['text_tertiary']}; font-size: 11px; font-weight: bold; background: transparent; border: none;"
+        )
         
         info_layout.addWidget(name_label)
         info_layout.addWidget(price_label)
@@ -153,30 +158,30 @@ class ItemButton(QFrame):
 
 
     def _apply_normal_style(self):
-        self.setStyleSheet("""
-            QFrame {
-                background: #1e1e1e;
-                border: 1px solid #333;
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: {self.colors['bg_secondary']};
+                border: 1px solid {self.colors['border']};
                 border-radius: 8px;
-            }
+            }}
         """)
 
     def _apply_hover_style(self):
-        self.setStyleSheet("""
-            QFrame {
-                background: #2a2a2a;
-                border: 1px solid #3b82f6;
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: {self.colors['bg_tertiary']};
+                border: 1px solid {self.colors['accent']};
                 border-radius: 8px;
-            }
+            }}
         """)
 
     def _apply_pressed_style(self):
-        self.setStyleSheet("""
-            QFrame {
-                background: #333333;
-                border: 1px solid #2563eb;
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: {self.colors['selection_bg']};
+                border: 1px solid {self.colors['accent_hover']};
                 border-radius: 8px;
-            }
+            }}
         """)
 
     def _on_loader_finished(self):
@@ -228,7 +233,11 @@ class ItemBrowser(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(12, 10, 12, 10)
         main_layout.setSpacing(10)
-        self.setStyleSheet("background: #111111;")
+        
+        styles = get_component_styles()
+        self.colors = ThemeManager.get_theme_colors()
+        colors = self.colors
+        self.setStyleSheet(styles["item_browser_bg"])
         self.view_mode = "card"
 
         # Top row: Search input
@@ -237,38 +246,32 @@ class ItemBrowser(QWidget):
         self.search_input.setMinimumHeight(38)
         self.search_input.setMaximumHeight(52)
         self.search_input.setProperty("disable_virtual_keyboard", True)
-        self.search_input.setStyleSheet("""
-            QLineEdit {
-                padding: 10px 16px;
-                font-size: 14px;
-                border: 1px solid #333;
-                border-radius: 4px;
-                background: #1e1e1e;
-                color: white;
-            }
-            QLineEdit:focus { border: 1px solid #3b82f6; }
-        """)
+        self.search_input.setStyleSheet(styles["item_search"])
         self.search_input.textChanged.connect(self.filter_items)
         main_layout.addWidget(self.search_input)
         
         # Top Settings Header (optional visible mostly in List View context in UI, but we can show always)
         header_row = QHBoxLayout()
-        s_lbl = QPushButton("SETTINGS")
-        s_lbl.setStyleSheet("color: #0ea5e9; font-weight: bold; font-size: 11px; background: transparent; border: none; text-align: left;")
-        s_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-        s_lbl.clicked.connect(self.open_settings)
-        sync_lbl = QLabel("Last sync: 00:00:00 PM")
-        sync_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
-        sync_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        r_lbl = QPushButton("RELOAD ITEMS")
-        r_lbl.setStyleSheet("color: #0ea5e9; font-weight: bold; font-size: 11px; background: transparent; border: none; text-align: right;")
-        r_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-        r_lbl.clicked.connect(lambda: self.load_items(self.search_input.text()))
+        self.settings_btn = QPushButton("SETTINGS")
+        self.settings_btn.setStyleSheet(
+            f"color: {colors['accent']}; font-weight: bold; font-size: 11px; background: transparent; border: none; text-align: left;"
+        )
+        self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_btn.clicked.connect(self.open_settings)
+        self.sync_label = QLabel("Last sync: 00:00:00 PM")
+        self.sync_label.setStyleSheet(f"color: {colors['text_tertiary']}; font-size: 11px;")
+        self.sync_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.reload_btn = QPushButton("RELOAD ITEMS")
+        self.reload_btn.setStyleSheet(
+            f"color: {colors['accent']}; font-weight: bold; font-size: 11px; background: transparent; border: none; text-align: right;"
+        )
+        self.reload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reload_btn.clicked.connect(lambda: self.load_items(self.search_input.text()))
         
         
-        header_row.addWidget(s_lbl)
-        header_row.addWidget(sync_lbl, 1)
-        header_row.addWidget(r_lbl)
+        header_row.addWidget(self.settings_btn)
+        header_row.addWidget(self.sync_label, 1)
+        header_row.addWidget(self.reload_btn)
         main_layout.addLayout(header_row)
 
         self.items_stack = QStackedWidget()
@@ -297,12 +300,7 @@ class ItemBrowser(QWidget):
         self.items_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.items_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.items_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.items_table.setStyleSheet("""
-            QTableWidget { background: #1e1e1e; color: #ffffff; border: 1px solid #333; border-radius: 6px; font-size: 13px; }
-            QHeaderView::section { background-color: #2a2a2a; color: #60a5fa; font-weight: 700; font-size: 11px; border: none; border-bottom: 2px solid #444; padding: 10px; }
-            QTableWidget::item { border-bottom: 1px solid #333; padding: 10px; color: white; font-weight: bold; }
-            QTableWidget::item:selected { background-color: #334155; }
-        """)
+        self.items_table.setStyleSheet(self._items_table_style())
         header = self.items_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -349,17 +347,17 @@ class ItemBrowser(QWidget):
         
         self._update_toggle_styles()
         
-        l_offers = QLabel("0 OFFERS")
-        l_offers.setStyleSheet("color: #f59e0b; font-weight: bold; font-size: 11px;")
-        l_coupons = QLabel("0 COUPONS")
-        l_coupons.setStyleSheet("color: #0ea5e9; font-weight: bold; font-size: 11px;")
+        self.offers_label = QLabel("0 OFFERS")
+        self.offers_label.setStyleSheet(f"color: {colors['warning']}; font-weight: bold; font-size: 11px;")
+        self.coupons_label = QLabel("0 COUPONS")
+        self.coupons_label.setStyleSheet(f"color: {colors['accent']}; font-weight: bold; font-size: 11px;")
         
         bottom_bar.addWidget(self.btn_list_view)
         bottom_bar.addWidget(self.btn_card_view)
         bottom_bar.addStretch()
-        bottom_bar.addWidget(l_offers)
+        bottom_bar.addWidget(self.offers_label)
         bottom_bar.addSpacing(30)
-        bottom_bar.addWidget(l_coupons)
+        bottom_bar.addWidget(self.coupons_label)
         bottom_bar.addSpacing(10)
 
         main_layout.addLayout(bottom_bar)
@@ -372,19 +370,89 @@ class ItemBrowser(QWidget):
             self.items_stack.setCurrentIndex(0)
         self._update_toggle_styles()
 
-    def _update_toggle_styles(self):
-        active_style = """
-            QPushButton {
-                background: #0ea5e9; color: white; font-weight: bold; font-size: 11px;
-                border-radius: 4px; padding: 0 15px; border: none;
-            }
+    def _items_table_style(self) -> str:
+        colors = ThemeManager.get_theme_colors()
+        return f"""
+            QTableWidget {{ background: {colors['bg_secondary']}; color: {colors['text_primary']}; border: 1px solid {colors['border']}; border-radius: 6px; font-size: 13px; }}
+            QHeaderView::section {{ background-color: {colors['bg_tertiary']}; color: {colors['text_secondary']}; font-weight: 700; font-size: 11px; border: none; border-bottom: 2px solid {colors['border']}; padding: 10px; }}
+            QTableWidget::item {{ border-bottom: 1px solid {colors['border_light']}; padding: 10px; color: {colors['text_primary']}; font-weight: bold; }}
+            QTableWidget::item:selected {{ background-color: {colors['selection_bg']}; color: {colors['selection_text']}; }}
         """
-        inactive_style = """
-            QPushButton {
-                background: #2a2a2a; color: white; font-weight: bold; font-size: 11px;
-                border-radius: 4px; padding: 0 15px; border: 1px solid #333;
-            }
-            QPushButton:hover { background: #333; }
+
+    def _category_button_style(self) -> str:
+        colors = ThemeManager.get_theme_colors()
+        return f"""
+            QPushButton {{
+                font-size: 13px;
+                font-weight: 600;
+                text-align: center;
+                padding: 0 16px;
+                border-radius: 4px;
+                background: {colors['bg_secondary']};
+                color: {colors['text_secondary']};
+                border: 1px solid {colors['border']};
+            }}
+            QPushButton:checked {{
+                background: {colors['accent']};
+                color: white;
+                border: 1px solid {colors['accent']};
+            }}
+            QPushButton:hover:!checked {{
+                background: {colors['bg_tertiary']};
+                color: {colors['text_primary']};
+            }}
+        """
+
+    def apply_theme(self):
+        """Re-apply theme styles for runtime light/dark switching."""
+        styles = get_component_styles()
+        colors = ThemeManager.get_theme_colors()
+        self.colors = colors
+
+        self.setStyleSheet(styles["item_browser_bg"])
+        if hasattr(self, "search_input"):
+            self.search_input.setStyleSheet(styles["item_search"])
+        if hasattr(self, "settings_btn"):
+            self.settings_btn.setStyleSheet(
+                f"color: {colors['accent']}; font-weight: bold; font-size: 11px; background: transparent; border: none; text-align: left;"
+            )
+        if hasattr(self, "sync_label"):
+            self.sync_label.setStyleSheet(f"color: {colors['text_tertiary']}; font-size: 11px;")
+        if hasattr(self, "reload_btn"):
+            self.reload_btn.setStyleSheet(
+                f"color: {colors['accent']}; font-weight: bold; font-size: 11px; background: transparent; border: none; text-align: right;"
+            )
+        if hasattr(self, "items_table"):
+            self.items_table.setStyleSheet(self._items_table_style())
+        if hasattr(self, "offers_label"):
+            self.offers_label.setStyleSheet(f"color: {colors['warning']}; font-weight: bold; font-size: 11px;")
+        if hasattr(self, "coupons_label"):
+            self.coupons_label.setStyleSheet(f"color: {colors['accent']}; font-weight: bold; font-size: 11px;")
+
+        self._update_toggle_styles()
+
+        if hasattr(self, "category_layout"):
+            for i in range(self.category_layout.count()):
+                btn = self.category_layout.itemAt(i).widget()
+                if isinstance(btn, QPushButton):
+                    btn.setStyleSheet(self._category_button_style())
+
+        self.load_items(self.search_input.text())
+
+    def _update_toggle_styles(self):
+        colors = ThemeManager.get_theme_colors()
+        active_style = f"""
+            QPushButton {{
+                background: {colors['accent']}; color: white; font-weight: bold; font-size: 11px;
+                border-radius: 4px; padding: 0 15px; border: none;
+            }}
+        """
+        inactive_style = f"""
+            QPushButton {{
+                background: {colors['bg_secondary']}; color: {colors['text_primary']}; font-weight: bold; font-size: 11px;
+                border-radius: 4px; padding: 0 15px; border: 1px solid {colors['border']};
+            }}
+            QPushButton:hover {{ background: {colors['bg_tertiary']}; }}
         """
         if self.view_mode == "list":
             self.btn_list_view.setStyleSheet(active_style)
@@ -449,13 +517,14 @@ class ItemBrowser(QWidget):
 
     def _build_keyboard_panel(self):
         """Pastdan chiqadigan inline klaviatura paneli"""
+        colors = ThemeManager.get_theme_colors()
         panel = QFrame()
-        panel.setStyleSheet("""
-            QFrame {
-                background: #222222;
-                border-top: 2px solid #e2e8f0;
+        panel.setStyleSheet(f"""
+            QFrame {{
+                background: {colors['bg_secondary']};
+                border-top: 2px solid {colors['border']};
                 border-radius: 0px;
-            }
+            }}
         """)
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(10, 8, 10, 10)
@@ -465,12 +534,12 @@ class ItemBrowser(QWidget):
         top_row = QHBoxLayout()
 
         self.kb_display = QLabel("Qidiruv...")
-        self.kb_display.setStyleSheet("""
+        self.kb_display.setStyleSheet(f"""
             font-size: 16px;
             font-weight: 600;
-            color: #ffffff;
-            background: #1e1e1e;
-            border: 1.5px solid #3b82f6;
+            color: {colors['text_primary']};
+            background: {colors['input_bg']};
+            border: 1.5px solid {colors['accent']};
             border-radius: 8px;
             padding: 6px 12px;
         """)
@@ -479,16 +548,16 @@ class ItemBrowser(QWidget):
         close_btn = QPushButton("✕")
         close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         close_btn.setFixedSize(40, 40)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: #ef4444;
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {colors['error']};
                 color: white;
                 font-weight: bold;
                 font-size: 16px;
                 border-radius: 8px;
                 border: none;
-            }
-            QPushButton:hover { background: #dc2626; }
+            }}
+            QPushButton:hover {{ background: {colors['accent_action']}; }}
         """)
         close_btn.clicked.connect(self._close_keyboard)
 
@@ -515,6 +584,7 @@ class ItemBrowser(QWidget):
         return panel
 
     def _make_key(self, key):
+        colors = ThemeManager.get_theme_colors()
         label = key.strip()
         if label == 'SPACE': label = '␣'
         elif label == 'CLR': label = 'TOZALASH'
@@ -525,26 +595,26 @@ class ItemBrowser(QWidget):
         btn.setFixedHeight(44)
 
         if key.strip() == '⌫':
-            style = "background:#fee2e2; color:#ef4444; font-size:18px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['error']}; font-size:18px; font-weight:bold;"
         elif key.strip() == 'CLR':
-            style = "background:#fff7ed; color:#ea580c; font-size:11px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['accent_action']}; font-size:11px; font-weight:bold;"
         elif key.strip() == 'CAPS':
-            style = "background:#e0e7ff; color:#4338ca; font-size:13px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['accent_hover']}; font-size:13px; font-weight:bold;"
         elif 'SPACE' in key:
-            style = "background:#eff6ff; color:#3b82f6; font-size:14px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['accent']}; font-size:14px; font-weight:bold;"
             btn.setMinimumWidth(120)
         elif key.strip().isdigit():
-            style = "background:#e0e7ff; color:#3730a3; font-size:16px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['text_secondary']}; font-size:16px; font-weight:bold;"
         else:
-            style = "background:white; color:#1e293b; font-size:15px; font-weight:600;"
+            style = f"background:{colors['input_bg']}; color:{colors['text_primary']}; font-size:15px; font-weight:600;"
 
         btn.setStyleSheet(f"""
             QPushButton {{
                 {style}
-                border: 1px solid #333;
+                border: 1px solid {colors['border']};
                 border-radius: 7px;
             }}
-            QPushButton:pressed {{ background: #dbeafe; }}
+            QPushButton:pressed {{ background: {colors['selection_bg']}; }}
         """)
         btn.clicked.connect(lambda _, k=key.strip(): self._on_key(k))
 
@@ -600,27 +670,7 @@ class ItemBrowser(QWidget):
         btn.setChecked(is_all)
 
         btn.setFixedHeight(40)
-        btn.setStyleSheet("""
-            QPushButton {
-                font-size: 13px;
-                font-weight: 600;
-                text-align: center;
-                padding: 0 16px;
-                border-radius: 4px;
-                background: #1e1e1e;
-                color: #a0a0a0;
-                border: 1px solid #3b82f6;
-            }
-            QPushButton:checked {
-                background: #3b82f6;
-                color: white;
-                border: 1px solid #3b82f6;
-            }
-            QPushButton:hover:!checked {
-                background: #222222;
-                color: #ffffff;
-            }
-        """)
+        btn.setStyleSheet(self._category_button_style())
         btn.clicked.connect(lambda: self._on_cat_click(btn, name, is_all))
         self.category_layout.addWidget(btn)
 

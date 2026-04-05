@@ -19,6 +19,8 @@ from core.printer import print_closing_shift_receipt
 from database.models import PosShift, db
 from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit, InfoDialog
+from ui.component_styles import get_component_styles
+from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
 
@@ -382,15 +384,16 @@ class PosClosingDialog(QDialog):
         self.overview = {}
         self.closing_inputs = {}
         self.active_input = None
+        self.colors = ThemeManager.get_theme_colors()
         self.input_style_active = (
-            "padding: 10px 14px; font-size: 15px; font-weight: 500; "
-            "border: 1px solid #22C55E; border-radius: 6px; "
-            "background: rgba(15, 23, 42, 0.8); color: #F8FAFC;"
+            f"padding: 10px 14px; font-size: 15px; font-weight: 500; "
+            f"border: 2px solid {self.colors['accent']}; border-radius: 8px; "
+            f"background: {self.colors['input_bg']}; color: {self.colors['text_primary']};"
         )
         self.input_style_idle = (
-            "padding: 10px 14px; font-size: 15px; font-weight: 500; "
-            "border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; "
-            "background: rgba(15, 23, 42, 0.6); color: #F8FAFC;"
+            f"padding: 10px 14px; font-size: 15px; font-weight: 500; "
+            f"border: 1px solid {self.colors['border']}; border-radius: 8px; "
+            f"background: {self.colors['bg_secondary']}; color: {self.colors['text_primary']};"
         )
         self.init_ui()
         QTimer.singleShot(50, self._center_on_parent)
@@ -409,11 +412,12 @@ class PosClosingDialog(QDialog):
         self.resize(1040, 760)
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
-        self.setStyleSheet("""
-            QDialog {
-                background: #0F172A;
-            }
-        """)
+        
+        # Apply theme
+        styles = get_component_styles()
+        self.colors = ThemeManager.get_theme_colors()
+        colors = self.colors
+        self.setStyleSheet(styles["closing_container"])
 
         main_v = QVBoxLayout(self)
         main_v.setContentsMargins(0, 0, 0, 0)
@@ -423,11 +427,7 @@ class PosClosingDialog(QDialog):
         # MINIMAL HEADER
         # ══════════════════════════════════════════════════
         header_frame = QFrame()
-        header_frame.setStyleSheet("""
-            QFrame {
-                background: transparent;
-            }
-        """)
+        header_frame.setStyleSheet("background: transparent;")
         header_layout = QHBoxLayout(header_frame)
         header_layout.setContentsMargins(40, 30, 40, 20)
         header_layout.setSpacing(20)
@@ -437,24 +437,24 @@ class PosClosingDialog(QDialog):
         title_section.setSpacing(6)
         
         title = QLabel("Close Shift")
-        title.setStyleSheet("""
+        title.setStyleSheet(f"""
             font-size: 24px; 
             font-weight: 600; 
-            color: #F8FAFC; 
+            color: {colors['text_primary']}; 
             background: transparent;
         """)
         
         self.info_label = QLabel("Loading data...")
-        self.info_label.setStyleSheet("""
+        self.info_label.setStyleSheet(f"""
             font-size: 13px; 
-            color: #64748B; 
+            color: {colors['text_tertiary']}; 
             background: transparent;
         """)
         
         self.meta_label = QLabel("")
-        self.meta_label.setStyleSheet("""
+        self.meta_label.setStyleSheet(f"""
             font-size: 12px; 
-            color: #22C55E; 
+            color: {colors['accent']}; 
             background: transparent;
             font-weight: 500;
         """)
@@ -484,9 +484,9 @@ class PosClosingDialog(QDialog):
         self.left_layout.setSpacing(32)
 
         self.loading_label = QLabel("Loading shift data...")
-        self.loading_label.setStyleSheet("""
+        self.loading_label.setStyleSheet(f"""
             font-size: 14px; 
-            color: #64748B; 
+            color: {colors['text_tertiary']}; 
             padding: 60px;
             background: transparent;
         """)
@@ -495,28 +495,28 @@ class PosClosingDialog(QDialog):
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("""
-            QScrollArea {
+        self.scroll.setStyleSheet(f"""
+            QScrollArea {{
                 border: none; 
                 background: transparent;
-            }
-            QScrollBar:vertical {
-                background: rgba(51, 65, 85, 0.2);
+            }}
+            QScrollBar:vertical {{
+                background: {colors['bg_tertiary']};
                 width: 8px;
                 border-radius: 4px;
                 margin: 0;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(100, 116, 139, 0.5);
+            }}
+            QScrollBar::handle:vertical {{
+                background: {colors['scrollbar_handle']};
                 border-radius: 4px;
                 min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: rgba(100, 116, 139, 0.7);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {colors['accent_hover']};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0px;
-            }
+            }}
         """)
         self.scroll.setVisible(False)
         self.left_layout.addWidget(self.scroll)
@@ -533,20 +533,20 @@ class PosClosingDialog(QDialog):
         btn_cancel.setMinimumHeight(44)
         btn_cancel.setMaximumHeight(44)
         btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_cancel.setStyleSheet("""
-            QPushButton { 
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{ 
                 background: transparent;
-                color: #94A3B8;
+                color: {colors['text_tertiary']};
                 font-weight: 500; 
                 font-size: 14px; 
                 border-radius: 6px; 
                 border: none;
                 padding: 0 20px;
-            }
-            QPushButton:hover { 
-                background: rgba(71, 85, 105, 0.3); 
-                color: #E2E8F0;
-            }
+            }}
+            QPushButton:hover {{ 
+                background: {colors['bg_tertiary']}; 
+                color: {colors['text_primary']};
+            }}
         """)
         btn_cancel.clicked.connect(self.reject)
 
@@ -555,23 +555,23 @@ class PosClosingDialog(QDialog):
         self.btn_close.setMaximumHeight(44)
         self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_close.setEnabled(False)
-        self.btn_close.setStyleSheet("""
-            QPushButton { 
-                background: #22C55E;
-                color: #0F172A; 
+        self.btn_close.setStyleSheet(f"""
+            QPushButton {{ 
+                background: {colors['success']};
+                color: white; 
                 font-weight: 600; 
                 font-size: 14px;
                 border-radius: 6px; 
                 border: none;
                 padding: 0 28px;
-            }
-            QPushButton:hover { 
-                background: #16A34A;
-            }
-            QPushButton:disabled { 
-                background: rgba(34, 197, 94, 0.2); 
-                color: rgba(34, 197, 94, 0.5);
-            }
+            }}
+            QPushButton:hover {{ 
+                background: {colors['accent_hover']};
+            }}
+            QPushButton:disabled {{ 
+                background: {colors['bg_tertiary']}; 
+                color: {colors['text_tertiary']};
+            }}
         """)
         self.btn_close.clicked.connect(self._process_closing)
 
@@ -586,21 +586,21 @@ class PosClosingDialog(QDialog):
 
         # Right Panel - Numpad
         right = QWidget()
-        right.setStyleSheet("""
-            QWidget {
-                background: rgba(15, 23, 42, 0.4);
+        right.setStyleSheet(f"""
+            QWidget {{
+                background: {colors['bg_secondary']};
                 border-radius: 8px;
-            }
+            }}
         """)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(20, 20, 20, 20)
         right_layout.setSpacing(16)
 
         numpad_lbl = QLabel("NUMPAD")
-        numpad_lbl.setStyleSheet("""
+        numpad_lbl.setStyleSheet(f"""
             font-size: 10px; 
             font-weight: 600; 
-            color: #64748B; 
+            color: {colors['text_tertiary']}; 
             letter-spacing: 1px;
             background: transparent;
         """)
@@ -655,33 +655,35 @@ class PosClosingDialog(QDialog):
                 self.active_input.setText(current + action)
 
     def _build_stat_card(self, title: str, value: str, subtitle: str = "") -> QWidget:
+        colors = self.colors
         card = QFrame()
-        card.setStyleSheet("""
-            QFrame {
-                background: rgba(15, 23, 42, 0.4);
+        card.setStyleSheet(f"""
+            QFrame {{
+                background: {colors['bg_secondary']};
                 border-radius: 8px;
-            }
-            QFrame:hover {
-                background: rgba(15, 23, 42, 0.6);
-            }
+                border: 1px solid {colors['border']};
+            }}
+            QFrame:hover {{
+                background: {colors['bg_tertiary']};
+            }}
         """)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(8)
 
         title_lbl = QLabel(title.upper())
-        title_lbl.setStyleSheet("""
+        title_lbl.setStyleSheet(f"""
             font-size: 10px; 
             font-weight: 600; 
-            color: #64748B;
+            color: {colors['text_tertiary']};
             letter-spacing: 0.8px;
         """)
         
         value_lbl = QLabel(value)
-        value_lbl.setStyleSheet("""
+        value_lbl.setStyleSheet(f"""
             font-size: 22px; 
             font-weight: 700; 
-            color: #F8FAFC;
+            color: {colors['text_primary']};
             font-family: 'IBM Plex Sans', 'Segoe UI', monospace;
         """)
         
@@ -691,9 +693,9 @@ class PosClosingDialog(QDialog):
         if subtitle:
             sub_lbl = QLabel(subtitle)
             sub_lbl.setWordWrap(True)
-            sub_lbl.setStyleSheet("""
+            sub_lbl.setStyleSheet(f"""
                 font-size: 11px; 
-                color: #22C55E;
+                color: {colors['accent']};
                 font-weight: 500;
             """)
             layout.addWidget(sub_lbl)
@@ -701,6 +703,7 @@ class PosClosingDialog(QDialog):
         return card
 
     def _build_overview_section(self, content_layout: QVBoxLayout):
+        colors = self.colors
         company_currency = self.overview.get("company_currency") or self.opening_doc.get("currency") or "UZS"
         summary_grid = QGridLayout()
         summary_grid.setHorizontalSpacing(16)
@@ -753,10 +756,10 @@ class PosClosingDialog(QDialog):
             layout.setSpacing(16)
 
             title = QLabel("💳 TO'LOVLAR KESIMI")
-            title.setStyleSheet("""
+            title.setStyleSheet(f"""
                 font-size: 11px; 
                 font-weight: 600; 
-                color: #64748B;
+                color: {colors['text_tertiary']};
                 letter-spacing: 1px;
             """)
             layout.addWidget(title)
@@ -770,18 +773,18 @@ class PosClosingDialog(QDialog):
                 base_amount = self._fmt(row.get("company_currency_total", 0), company_currency)
 
                 left = QLabel(mop)
-                left.setStyleSheet("""
+                left.setStyleSheet(f"""
                     font-size: 14px; 
                     font-weight: 500; 
-                    color: #E2E8F0;
+                    color: {colors['text_secondary']};
                 """)
                 
                 right = QLabel(f"{amount}")
                 right.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                right.setStyleSheet("""
+                right.setStyleSheet(f"""
                     font-size: 14px; 
                     font-weight: 600;
-                    color: #F8FAFC;
+                    color: {colors['text_primary']};
                     font-family: 'IBM Plex Sans', monospace;
                 """)
                 
@@ -793,6 +796,7 @@ class PosClosingDialog(QDialog):
             content_layout.addWidget(section)
 
     def _build_reconciliation_section(self, content_layout: QVBoxLayout):
+        colors = self.colors
         section = QFrame()
         section.setStyleSheet("""
             QFrame { 
@@ -804,10 +808,10 @@ class PosClosingDialog(QDialog):
         layout.setSpacing(20)
 
         title = QLabel("📊 PAYMENT RECONCILIATION")
-        title.setStyleSheet("""
+        title.setStyleSheet(f"""
             font-size: 11px; 
             font-weight: 600; 
-            color: #64748B;
+            color: {colors['text_tertiary']};
             letter-spacing: 1px;
         """)
         layout.addWidget(title)
@@ -817,10 +821,10 @@ class PosClosingDialog(QDialog):
         for text, width in [("Payment Method", 180), ("Opening", 120), ("Expected", 120), ("Closing Amount", 160)]:
             lbl = QLabel(text)
             lbl.setMinimumWidth(width)
-            lbl.setStyleSheet("""
+            lbl.setStyleSheet(f"""
                 font-size: 11px; 
                 font-weight: 700; 
-                color: #fff; 
+                color: {colors['text_primary']}; 
                 letter-spacing: 0.5px;
             """)
             header_row.addWidget(lbl)
@@ -845,29 +849,29 @@ class PosClosingDialog(QDialog):
 
             mode_lbl = QLabel(mode)
             mode_lbl.setMinimumWidth(180)
-            mode_lbl.setStyleSheet("""
+            mode_lbl.setStyleSheet(f"""
                 font-size: 14px; 
                 font-weight: 600; 
-                color: #fff;
+                color: {colors['text_primary']};
             """)
             row.addWidget(mode_lbl)
 
             open_lbl = QLabel(self._fmt(opening_amount, company_currency))
             open_lbl.setMinimumWidth(120)
-            open_lbl.setStyleSheet("""
+            open_lbl.setStyleSheet(f"""
                 font-size: 14px; 
                 font-weight: 700;
-                color: #fff;
+                color: {colors['text_primary']};
                 font-family: 'IBM Plex Sans', monospace;
             """)
             row.addWidget(open_lbl)
 
             exp_lbl = QLabel(self._fmt(expected_amount, company_currency))
             exp_lbl.setMinimumWidth(120)
-            exp_lbl.setStyleSheet("""
+            exp_lbl.setStyleSheet(f"""
                 font-size: 14px; 
                 font-weight: 700; 
-                color: #fff;
+                color: {colors['text_primary']};
                 font-family: 'IBM Plex Sans', monospace;
             """)
             row.addWidget(exp_lbl)
@@ -933,6 +937,7 @@ class PosClosingDialog(QDialog):
     def _update_difference(self):
         total_diff = 0.0
         company_currency = self.overview.get("company_currency") or self.opening_doc.get("currency") or "UZS"
+        colors = self.colors
 
         for data in self.closing_inputs.values():
             try:
@@ -944,22 +949,24 @@ class PosClosingDialog(QDialog):
 
         if total_diff == 0:
             self.diff_label.setText("✓  No difference — reconciliation matches")
-            self.diff_label.setStyleSheet("""
+            self.diff_label.setStyleSheet(f"""
                 font-size: 13px;
                 font-weight: 500;
-                color: #22C55E;
+                color: {colors['success']};
                 padding: 12px 16px;
-                background: rgba(34, 197, 94, 0.08);
+                background: {colors['bg_tertiary']};
+                border: 1px solid {colors['border']};
                 border-radius: 6px;
             """)
         else:
             self.diff_label.setText(f"Total difference: {self._fmt(total_diff, company_currency)}")
-            self.diff_label.setStyleSheet("""
+            self.diff_label.setStyleSheet(f"""
                 font-size: 13px;
                 font-weight: 500;
-                color: #F59E0B;
+                color: {colors['warning']};
                 padding: 12px 16px;
-                background: rgba(245, 158, 11, 0.08);
+                background: {colors['bg_tertiary']};
+                border: 1px solid {colors['border']};
                 border-radius: 6px;
             """)
 

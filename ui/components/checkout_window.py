@@ -15,6 +15,8 @@ from database.models import PendingInvoice, PosShift, PosProfile, db
 from core.printer import print_receipt
 from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit
+from ui.component_styles import get_component_styles
+from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
 
@@ -138,6 +140,7 @@ class CheckoutWindow(QDialog):
         self._is_calculating = False
         self.offline_id = str(uuid.uuid4())
         self._submitted_payments = []
+        self.colors = ThemeManager.get_theme_colors()
         
         self.init_ui()
         QTimer.singleShot(50, self._center_on_parent)
@@ -155,94 +158,91 @@ class CheckoutWindow(QDialog):
         self.setMinimumSize(980, 720)
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
-        self.setStyleSheet("background: #f3f6fb;")
+        styles = get_component_styles()
+        self.colors = ThemeManager.get_theme_colors()
+        colors = self.colors
+        self.setStyleSheet(styles["payment_container"])
         
         main_h_layout = QHBoxLayout(self)
         main_h_layout.setContentsMargins(22, 22, 22, 22)
         main_h_layout.setSpacing(20)
 
         left_panel = QFrame()
-        left_panel.setStyleSheet("""
-            background: #ffffff;
-            border: 1px solid #dbe4f0;
-            border-radius: 20px;
-        """)
+        left_panel.setStyleSheet(
+            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 20px;"
+        )
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(18, 18, 18, 18)
         left_layout.setSpacing(16)
 
         right_panel = QFrame()
-        right_panel.setStyleSheet("""
-            background: #ffffff;
-            border: 1px solid #dbe4f0;
-            border-radius: 20px;
-        """)
+        right_panel.setStyleSheet(
+            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 20px;"
+        )
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(18, 18, 18, 18)
         right_layout.setSpacing(16)
 
         left_header = QLabel("To'lov xulosasi")
-        left_header.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
+        left_header.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
         left_layout.addWidget(left_header)
 
         left_subtitle = QLabel("Summalar va qarzga sotish shu yerda boshqariladi.")
-        left_subtitle.setStyleSheet("font-size: 12px; color: #64748b;")
+        left_subtitle.setStyleSheet(f"font-size: 12px; color: {colors['text_tertiary']};")
         left_layout.addWidget(left_subtitle)
         
         # Jami summa ko'rsatkichi
         summary_frame = QFrame()
-        summary_frame.setStyleSheet("""
-            background: #f8fbff;
-            border: 1px solid #dbe4f0;
-            border-radius: 16px;
-        """)
+        summary_frame.setStyleSheet(
+            f"background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+        )
         summary_layout = QVBoxLayout(summary_frame)
         summary_layout.setContentsMargins(18, 18, 18, 18)
         summary_layout.setSpacing(10)
 
         summary_title = QLabel("Payment Summary")
-        summary_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #64748b;")
+        summary_title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {colors['text_tertiary']};")
         summary_title.setAlignment(Qt.AlignmentFlag.AlignLeft)
         summary_layout.addWidget(summary_title)
         
         self.lbl_total = QLabel()
         self.lbl_total.setMinimumHeight(34)
-        self.lbl_total.setStyleSheet("""
-            font-size: 15px; font-weight: 600; color: #334155;
-            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 12px;
-        """)
+        self.lbl_total.setStyleSheet(
+            f"font-size: 15px; font-weight: 600; color: {colors['text_secondary']}; "
+            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 10px; padding: 8px 12px;"
+        )
         self.lbl_total.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         self.lbl_discount = QLabel()
         self.lbl_discount.setMinimumHeight(34)
-        self.lbl_discount.setStyleSheet("""
-            font-size: 15px; font-weight: 700; color: #d97706;
-            background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; padding: 8px 12px;
-        """)
+        self.lbl_discount.setStyleSheet(
+            f"font-size: 15px; font-weight: 700; color: {colors['warning']}; "
+            f"background: {colors['bg_tertiary']}; border: 1px solid {colors['border']}; border-radius: 10px; padding: 8px 12px;"
+        )
         self.lbl_discount.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         self.lbl_payable = QLabel()
         self.lbl_payable.setMinimumHeight(46)
-        self.lbl_payable.setStyleSheet("""
-            font-size: 19px; font-weight: 800; color: #0f766e;
-            background: #ecfeff; border: 1px solid #a5f3fc; border-radius: 12px; padding: 10px 12px;
-        """)
+        self.lbl_payable.setStyleSheet(
+            f"font-size: 19px; font-weight: 800; color: {colors['accent']}; "
+            f"background: {colors['bg_tertiary']}; border: 1px solid {colors['border']}; border-radius: 12px; padding: 10px 12px;"
+        )
         self.lbl_payable.setAlignment(Qt.AlignmentFlag.AlignLeft)
         
         self.lbl_balance = QLabel()
         self.lbl_balance.setMinimumHeight(40)
-        self.lbl_balance.setStyleSheet("""
-            font-size: 15px; font-weight: 700; color: #b91c1c;
-            background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 10px 12px;
-        """)
+        self.lbl_balance.setStyleSheet(
+            f"font-size: 15px; font-weight: 700; color: {colors['error']}; "
+            f"background: {colors['bg_tertiary']}; border: 1px solid {colors['border']}; border-radius: 10px; padding: 10px 12px;"
+        )
         self.lbl_balance.setAlignment(Qt.AlignmentFlag.AlignLeft)
         
         self.lbl_change = QLabel("Qaytim: 0 UZS")
         self.lbl_change.setMinimumHeight(40)
-        self.lbl_change.setStyleSheet("""
-            font-size: 15px; font-weight: 700; color: #15803d;
-            background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 10px 12px;
-        """)
+        self.lbl_change.setStyleSheet(
+            f"font-size: 15px; font-weight: 700; color: {colors['success']}; "
+            f"background: {colors['bg_tertiary']}; border: 1px solid {colors['border']}; border-radius: 10px; padding: 10px 12px;"
+        )
         self.lbl_change.setAlignment(Qt.AlignmentFlag.AlignLeft)
         
         summary_layout.addWidget(self.lbl_total)
@@ -254,50 +254,48 @@ class CheckoutWindow(QDialog):
         left_layout.addWidget(summary_frame)
 
         credit_frame = QFrame()
-        credit_frame.setStyleSheet("""
-            background: #ffffff;
-            border: 1px solid #dbe4f0;
-            border-radius: 16px;
-        """)
+        credit_frame.setStyleSheet(
+            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+        )
         credit_layout = QVBoxLayout(credit_frame)
         credit_layout.setContentsMargins(16, 14, 16, 14)
         credit_layout.setSpacing(10)
 
         self.credit_sale_checkbox = QCheckBox("Qarzga sotish")
-        self.credit_sale_checkbox.setStyleSheet("""
-            QCheckBox {
+        self.credit_sale_checkbox.setStyleSheet(f"""
+            QCheckBox {{
                 font-size: 14px;
                 font-weight: 700;
-                color: #0f172a;
-            }
-            QCheckBox::indicator {
+                color: {colors['text_primary']};
+            }}
+            QCheckBox::indicator {{
                 width: 18px;
                 height: 18px;
-            }
+            }}
         """)
         self.credit_sale_checkbox.stateChanged.connect(self._on_credit_sale_toggled)
         credit_layout.addWidget(self.credit_sale_checkbox)
 
         self.credit_hint_label = QLabel()
         self.credit_hint_label.setWordWrap(True)
-        self.credit_hint_label.setStyleSheet("font-size: 12px; color: #64748b;")
+        self.credit_hint_label.setStyleSheet(f"font-size: 12px; color: {colors['text_tertiary']};")
         credit_layout.addWidget(self.credit_hint_label)
 
         due_row = QHBoxLayout()
         due_row.setSpacing(10)
         due_label = QLabel("Muddat")
-        due_label.setStyleSheet("font-size: 12px; font-weight: 700; color: #64748b;")
+        due_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {colors['text_tertiary']};")
         self.credit_due_date = QDateEdit()
         self.credit_due_date.setCalendarPopup(True)
         self.credit_due_date.setDisplayFormat("yyyy-MM-dd")
         self.credit_due_date.setDate(QDate.currentDate().addDays(7))
         self.credit_due_date.setMinimumDate(QDate.currentDate())
         self.credit_due_date.setFixedHeight(36)
-        self.credit_due_date.setStyleSheet("""
-            QDateEdit {
-                background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1;
+        self.credit_due_date.setStyleSheet(f"""
+            QDateEdit {{
+                background: {colors['input_bg']}; color: {colors['text_primary']}; border: 1px solid {colors['border']};
                 border-radius: 10px; padding: 0 10px; font-size: 13px; font-weight: 600;
-            }
+            }}
         """)
         due_row.addWidget(due_label)
         due_row.addWidget(self.credit_due_date, 1)
@@ -307,23 +305,21 @@ class CheckoutWindow(QDialog):
         left_layout.addStretch()
 
         right_header = QLabel("Payment qilish")
-        right_header.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
+        right_header.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
         right_layout.addWidget(right_header)
 
         right_subtitle = QLabel("Summani payment methodlar bo'yicha shu tomonda taqsimlaysiz.")
-        right_subtitle.setStyleSheet("font-size: 12px; color: #64748b;")
+        right_subtitle.setStyleSheet(f"font-size: 12px; color: {colors['text_tertiary']};")
         right_layout.addWidget(right_subtitle)
         
         methods_title = QLabel("Payment Methods")
-        methods_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #64748b;")
+        methods_title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {colors['text_tertiary']};")
         right_layout.addWidget(methods_title)
 
         payment_widget = QFrame()
-        payment_widget.setStyleSheet("""
-            background: #f8fbff;
-            border: 1px solid #dbe4f0;
-            border-radius: 16px;
-        """)
+        payment_widget.setStyleSheet(
+            f"background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+        )
         self.payment_layout = QGridLayout(payment_widget)
         self.payment_layout.setContentsMargins(18, 18, 18, 18)
         self.payment_layout.setHorizontalSpacing(14)
@@ -344,9 +340,9 @@ class CheckoutWindow(QDialog):
             method_header_layout.setSpacing(8)
 
             lbl = QLabel(method)
-            lbl.setStyleSheet("""
-                font-size: 14px; font-weight: 800; color: #334155;
-                background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px;
+            lbl.setStyleSheet(f"""
+                font-size: 14px; font-weight: 800; color: {colors['text_secondary']};
+                background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 12px;
                 padding: 13px 14px;
             """)
             method_header_layout.addWidget(lbl, 1)
@@ -354,12 +350,12 @@ class CheckoutWindow(QDialog):
             fill_btn = QPushButton("Fill")
             fill_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             fill_btn.setMinimumHeight(46)
-            fill_btn.setStyleSheet("""
-                QPushButton {
-                    background: #eff6ff; color: #1d4ed8; font-size: 14px; font-weight: 800;
-                    border-radius: 12px; padding: 0 16px; border: 1px solid #bfdbfe;
-                }
-                QPushButton:hover { background: #dbeafe; color: #1e40af; }
+            fill_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {colors['bg_tertiary']}; color: {colors['accent']}; font-size: 14px; font-weight: 800;
+                    border-radius: 12px; padding: 0 16px; border: 1px solid {colors['border']};
+                }}
+                QPushButton:hover {{ background: {colors['selection_bg']}; color: {colors['accent_hover']}; }}
             """)
             fill_btn.clicked.connect(lambda _, m=method: self._fill_payment_method(m))
             method_header_layout.addWidget(fill_btn)
@@ -367,10 +363,10 @@ class CheckoutWindow(QDialog):
             inp = ClickableLineEdit()
             inp.setPlaceholderText("0")
             inp.setMinimumHeight(50)
-            inp.setStyleSheet("""
-                font-size: 22px; font-weight: 800; color: #0f172a;
-                background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 16px;
-            """)
+            inp.setStyleSheet(
+                f"font-size: 22px; font-weight: 800; color: {colors['text_primary']}; "
+                f"background: {colors['input_bg']}; border: 1px solid {colors['border']}; border-radius: 12px; padding: 10px 16px;"
+            )
             val = QDoubleValidator(0.0, 999999999.0, 2)
             inp.setValidator(val)
             
@@ -389,11 +385,9 @@ class CheckoutWindow(QDialog):
         right_layout.addWidget(payment_widget)
 
         actions_frame = QFrame()
-        actions_frame.setStyleSheet("""
-            background: #f8fbff;
-            border: 1px solid #dbe4f0;
-            border-radius: 16px;
-        """)
+        actions_frame.setStyleSheet(
+            f"background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+        )
         actions_layout = QVBoxLayout(actions_frame)
         actions_layout.setContentsMargins(16, 16, 16, 16)
         actions_layout.setSpacing(12)
@@ -404,10 +398,7 @@ class CheckoutWindow(QDialog):
         btn_clear = QPushButton("Tozalash")
         btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_clear.setMinimumHeight(54)
-        btn_clear.setStyleSheet("""
-            background: #ffffff; color: #dc2626; font-size: 16px; font-weight: 800;
-            border-radius: 12px; padding: 12px 16px; border: 1px solid #fecaca;
-        """)
+        btn_clear.setStyleSheet(styles["payment_button_secondary"])
         btn_clear.clicked.connect(self._clear_amounts)
         
         btn_layout.addWidget(btn_clear)
@@ -416,16 +407,16 @@ class CheckoutWindow(QDialog):
         self.btn_pay = QPushButton("To'lash (Enter)")
         self.btn_pay.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_pay.setMinimumHeight(64)
-        self.btn_pay.setStyleSheet("""
-            background: #22c55e; color: #ffffff; font-size: 22px; font-weight: 900;
-            border-radius: 14px; padding: 16px; border: none;
-        """)
+        self.btn_pay.setStyleSheet(
+            f"background: {colors['success']}; color: white; font-size: 22px; font-weight: 900; "
+            "border-radius: 14px; padding: 16px; border: none;"
+        )
         self.btn_pay.clicked.connect(self._process_payment)
         actions_layout.addWidget(self.btn_pay)
 
         actions_hint = QLabel("Maslahat: kerakli methodga `Fill` bosing yoki summani qo'lda taqsimlang.")
         actions_hint.setWordWrap(True)
-        actions_hint.setStyleSheet("font-size: 12px; color: #64748b;")
+        actions_hint.setStyleSheet(f"font-size: 12px; color: {colors['text_tertiary']};")
         actions_layout.addWidget(actions_hint)
 
         right_layout.addWidget(actions_frame)
@@ -439,16 +430,17 @@ class CheckoutWindow(QDialog):
         self._refresh_summary_labels()
 
     def _set_active_input(self, input_widget):
+        colors = self.colors
         if self.active_input:
-            self.active_input.setStyleSheet("""
-                font-size: 18px; font-weight: 700; color: #0f172a;
-                background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 14px;
-            """)
+            self.active_input.setStyleSheet(
+                f"font-size: 18px; font-weight: 700; color: {colors['text_primary']}; "
+                f"background: {colors['input_bg']}; border: 1px solid {colors['border']}; border-radius: 12px; padding: 10px 14px;"
+            )
         self.active_input = input_widget
-        self.active_input.setStyleSheet("""
-            font-size: 18px; font-weight: 700; color: #0f172a;
-            background: #ffffff; border: 2px solid #3b82f6; border-radius: 12px; padding: 10px 14px;
-        """)
+        self.active_input.setStyleSheet(
+            f"font-size: 18px; font-weight: 700; color: {colors['text_primary']}; "
+            f"background: {colors['input_bg']}; border: 2px solid {colors['accent']}; border-radius: 12px; padding: 10px 14px;"
+        )
         self.active_input.setFocus()
         
     def _on_numpad_key(self, key):
@@ -704,14 +696,15 @@ class CheckoutWindow(QDialog):
         self.lbl_payable.setText(f"To'lanadi: {max(self.net_total_amount - total_discount, 0.0):,.0f} UZS")
 
     def _set_pay_button_enabled(self, enabled: bool):
+        colors = self.colors
         self.btn_pay.setEnabled(enabled)
         if enabled:
             self.btn_pay.setStyleSheet(
-                "background: #22c55e; color: #ffffff; font-size: 20px; font-weight: 800; border-radius: 14px; padding: 16px; border: none;"
+                f"background: {colors['success']}; color: white; font-size: 20px; font-weight: 800; border-radius: 14px; padding: 16px; border: none;"
             )
         else:
             self.btn_pay.setStyleSheet(
-                "background: #cbd5e1; color: #64748b; font-size: 20px; font-weight: 800; border-radius: 14px; padding: 16px; border: none;"
+                f"background: {colors['bg_tertiary']}; color: {colors['text_tertiary']}; font-size: 20px; font-weight: 800; border-radius: 14px; padding: 16px; border: none;"
             )
 
     def _process_payment(self):

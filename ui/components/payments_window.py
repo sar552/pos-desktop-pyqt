@@ -27,6 +27,8 @@ from core.logger import get_logger
 from core.printer import print_payment_receipt
 from database.models import Customer, PosProfile, db
 from ui.components.dialogs import ClickableLineEdit
+from ui.component_styles import get_component_styles
+from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
 
@@ -259,6 +261,7 @@ class PaymentsWindow(QDialog):
         self.sverka_final_balance = 0.0
         self.payment_method_inputs = {}
         self.payment_method_currencies = {}
+        self.colors = ThemeManager.get_theme_colors()
         self._build_ui()
         self._load_customers()
         self._load_payment_method_currencies()
@@ -270,20 +273,25 @@ class PaymentsWindow(QDialog):
         self.setWindowTitle("Klient Sverka va To'lovlar")
         self.resize(1520, 920)
         self.setModal(True)
-        self.setStyleSheet("background: #0f172a; color: white;")
+        
+        # Apply theme
+        styles = get_component_styles()
+        self.colors = ThemeManager.get_theme_colors()
+        colors = self.colors
+        self.setStyleSheet(styles["payment_container"])
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(14)
 
         top_card = QFrame()
-        top_card.setStyleSheet("background: #111827; border: 1px solid #1f2937; border-radius: 16px;")
+        top_card.setStyleSheet(styles["closing_summary_card"])
         top_layout = QVBoxLayout(top_card)
         top_layout.setContentsMargins(16, 16, 16, 16)
         top_layout.setSpacing(12)
 
         header = QLabel("Klient Sverka va Payment")
-        header.setStyleSheet("font-size: 22px; font-weight: 900; color: #f8fafc;")
+        header.setStyleSheet(styles["dialog_title"])
         top_layout.addWidget(header)
 
         controls = QHBoxLayout()
@@ -291,19 +299,11 @@ class PaymentsWindow(QDialog):
 
         customer_box = QVBoxLayout()
         customer_label = QLabel("Customer")
-        customer_label.setStyleSheet("font-size: 12px; color: #94a3b8; font-weight: 700;")
+        customer_label.setStyleSheet(styles["dialog_label"])
         self.customer_input = ClickableLineEdit()
         self.customer_input.setPlaceholderText("Customer tanlang...")
         self.customer_input.setFixedHeight(40)
-        self.customer_input.setStyleSheet("""
-            QLineEdit {
-                background: #0f172a; color: white; border: 1px solid #334155;
-                border-radius: 10px; padding: 8px 10px; min-height: 40px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #3b82f6;
-            }
-        """)
+        self.customer_input.setStyleSheet(styles["payment_input"])
         self.customer_input.textEdited.connect(self._on_customer_search_edited)
         self.customer_input.returnPressed.connect(self._commit_customer_search)
         customer_box.addWidget(customer_label)
@@ -314,51 +314,25 @@ class PaymentsWindow(QDialog):
         self.customer_results.setMaximumHeight(220)
         self.customer_results.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.customer_results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.customer_results.setStyleSheet("""
-            QListWidget {
-                background: #0f172a;
-                color: #e2e8f0;
-                border: 1px solid #334155;
-                border-radius: 10px;
-                padding: 4px;
-                font-size: 13px;
-            }
-            QListWidget::item {
-                padding: 10px 12px;
-                border-radius: 8px;
-            }
-            QListWidget::item:selected {
-                background: #1d4ed8;
-                color: white;
-            }
-            QListWidget::item:hover {
-                background: #1e293b;
-            }
-        """)
+        self.customer_results.setStyleSheet(styles["cart_list"])
         self.customer_results.itemClicked.connect(self._on_customer_item_clicked)
         customer_box.addWidget(self.customer_results)
         controls.addLayout(customer_box, 4)
 
         self.customer_clear_btn = QPushButton("X")
         self.customer_clear_btn.setFixedSize(40, 40)
-        self.customer_clear_btn.setStyleSheet("""
-            QPushButton {
-                background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
-                border-radius: 10px; font-weight: 800;
-            }
-            QPushButton:hover { background: #334155; }
-        """)
+        self.customer_clear_btn.setStyleSheet(styles["payment_button_secondary"])
         self.customer_clear_btn.clicked.connect(self._clear_customer)
         controls.addWidget(self.customer_clear_btn, alignment=Qt.AlignmentFlag.AlignBottom)
 
         self.search_btn = QPushButton("Search")
         self.search_btn.setMinimumHeight(40)
-        self.search_btn.setStyleSheet("""
-            QPushButton {
-                background: #f59e0b; color: white; border-radius: 10px; border: none;
+        self.search_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {colors['accent_action']}; color: white; border-radius: 10px; border: none;
                 font-weight: 800; padding: 0 18px;
-            }
-            QPushButton:hover { background: #d97706; }
+            }}
+            QPushButton:hover {{ background: {colors['accent_hover']}; }}
         """)
         self.search_btn.clicked.connect(self._load_dashboard)
         controls.addWidget(self.search_btn, alignment=Qt.AlignmentFlag.AlignBottom)
@@ -366,12 +340,12 @@ class PaymentsWindow(QDialog):
         self.auto_reconcile_btn = QPushButton("Auto Reconcile")
         self.auto_reconcile_btn.setMinimumHeight(40)
         self.auto_reconcile_btn.setVisible(self.allow_reconcile_payments)
-        self.auto_reconcile_btn.setStyleSheet("""
-            QPushButton {
-                background: #2563eb; color: white; border-radius: 10px; border: none;
+        self.auto_reconcile_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {colors['accent']}; color: white; border-radius: 10px; border: none;
                 font-weight: 800; padding: 0 18px;
-            }
-            QPushButton:hover { background: #1d4ed8; }
+            }}
+            QPushButton:hover {{ background: {colors['accent_hover']}; }}
         """)
         self.auto_reconcile_btn.clicked.connect(self._auto_reconcile)
         controls.addWidget(self.auto_reconcile_btn, alignment=Qt.AlignmentFlag.AlignBottom)
@@ -381,11 +355,11 @@ class PaymentsWindow(QDialog):
 
         summary = QGridLayout()
         summary.setHorizontalSpacing(12)
-        self.final_balance_label = self._make_summary_box("Qoldiq", "#fee2e2", "#b91c1c")
-        self.outstanding_total_label = self._make_summary_box("Qarzdor Invoice", "#fef3c7", "#92400e")
-        self.selected_invoice_total_label = self._make_summary_box("FIFO Yopiladi", "#dbeafe", "#1d4ed8")
-        self.selected_payment_total_label = self._make_summary_box("Qoladi", "#dcfce7", "#166534")
-        self.new_payment_total_label = self._make_summary_box("Kiritilgan To'lov", "#ede9fe", "#6d28d9")
+        self.final_balance_label = self._make_summary_box("Qoldiq", "danger")
+        self.outstanding_total_label = self._make_summary_box("Qarzdor Invoice", "warning")
+        self.selected_invoice_total_label = self._make_summary_box("FIFO Yopiladi", "info")
+        self.selected_payment_total_label = self._make_summary_box("Qoladi", "success")
+        self.new_payment_total_label = self._make_summary_box("Kiritilgan To'lov", "accent")
         summary.addWidget(self.final_balance_label, 0, 0)
         summary.addWidget(self.outstanding_total_label, 0, 1)
         summary.addWidget(self.selected_invoice_total_label, 0, 2)
@@ -398,12 +372,14 @@ class PaymentsWindow(QDialog):
         content.setSpacing(14)
 
         left_card = QFrame()
-        left_card.setStyleSheet("background: #111827; border: 1px solid #1f2937; border-radius: 16px;")
+        left_card.setStyleSheet(
+            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+        )
         left_layout = QVBoxLayout(left_card)
         left_layout.setContentsMargins(14, 14, 14, 14)
         left_layout.setSpacing(10)
         left_title = QLabel("Klient Sverka")
-        left_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #f8fafc;")
+        left_title.setStyleSheet(f"font-size: 16px; font-weight: 800; color: {colors['text_primary']};")
         left_layout.addWidget(left_title)
 
         self.sverka_table = self._build_table(
@@ -414,13 +390,15 @@ class PaymentsWindow(QDialog):
         content.addWidget(left_card, 5)
 
         right_card = QFrame()
-        right_card.setStyleSheet("background: #111827; border: 1px solid #1f2937; border-radius: 16px;")
+        right_card.setStyleSheet(
+            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+        )
         right_layout = QVBoxLayout(right_card)
         right_layout.setContentsMargins(14, 14, 14, 14)
         right_layout.setSpacing(10)
 
         outstanding_title = QLabel("Qarzdor Invoicelar")
-        outstanding_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #f8fafc;")
+        outstanding_title.setStyleSheet(f"font-size: 15px; font-weight: 800; color: {colors['text_primary']};")
         right_layout.addWidget(outstanding_title)
         self.outstanding_table = self._build_table(
             ["Hujjat"],
@@ -429,11 +407,13 @@ class PaymentsWindow(QDialog):
         right_layout.addWidget(self.outstanding_table, 3)
 
         payment_methods_title = QLabel("Yangi Payment")
-        payment_methods_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #f8fafc;")
+        payment_methods_title.setStyleSheet(f"font-size: 15px; font-weight: 800; color: {colors['text_primary']};")
         right_layout.addWidget(payment_methods_title)
 
         payment_methods_card = QFrame()
-        payment_methods_card.setStyleSheet("background: #0f172a; border: 1px solid #1e293b; border-radius: 12px;")
+        payment_methods_card.setStyleSheet(
+            f"background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 12px;"
+        )
         self.payment_methods_layout = QGridLayout(payment_methods_card)
         self.payment_methods_layout.setContentsMargins(12, 12, 12, 12)
         self.payment_methods_layout.setHorizontalSpacing(10)
@@ -444,26 +424,20 @@ class PaymentsWindow(QDialog):
         action_row.setSpacing(10)
         self.process_btn = QPushButton("Payment Qilish")
         self.process_btn.setMinimumHeight(46)
-        self.process_btn.setStyleSheet("""
-            QPushButton {
-                background: #16a34a; color: white; border: none; border-radius: 12px;
+        self.process_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {colors['success']}; color: white; border: none; border-radius: 12px;
                 font-size: 16px; font-weight: 900; padding: 0 16px;
-            }
-            QPushButton:hover { background: #15803d; }
-            QPushButton:disabled { background: #334155; color: #94a3b8; }
+            }}
+            QPushButton:hover {{ background: {colors['accent_hover']}; }}
+            QPushButton:disabled {{ background: {colors['bg_tertiary']}; color: {colors['text_tertiary']}; }}
         """)
         self.process_btn.clicked.connect(self._process_payment)
         action_row.addWidget(self.process_btn)
 
         close_btn = QPushButton("Yopish")
         close_btn.setMinimumHeight(46)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
-                border-radius: 12px; font-size: 14px; font-weight: 800; padding: 0 16px;
-            }
-            QPushButton:hover { background: #334155; }
-        """)
+        close_btn.setStyleSheet(styles["payment_button_secondary"])
         close_btn.clicked.connect(self.reject)
         action_row.addWidget(close_btn)
         right_layout.addLayout(action_row)
@@ -476,13 +450,23 @@ class PaymentsWindow(QDialog):
         self._build_payment_method_inputs()
         self._update_totals()
 
-    def _make_summary_box(self, title: str, bg: str, fg: str) -> QLabel:
+    def _make_summary_box(self, title: str, tone: str) -> QLabel:
+        colors = self.colors
+        palette = {
+            "danger": (colors["bg_tertiary"], colors["error"], colors["border"]),
+            "warning": (colors["bg_tertiary"], colors["warning"], colors["border"]),
+            "info": (colors["bg_tertiary"], colors["accent"], colors["border"]),
+            "success": (colors["bg_tertiary"], colors["success"], colors["border"]),
+            "accent": (colors["bg_tertiary"], colors["text_primary"], colors["border"]),
+        }
+        bg, fg, border = palette.get(tone, palette["accent"])
         label = QLabel(f"{title}\n0 UZS")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setStyleSheet(
             f"""
             background: {bg};
             color: {fg};
+            border: 1px solid {border};
             border-radius: 12px;
             padding: 12px;
             font-size: 14px;
@@ -492,6 +476,7 @@ class PaymentsWindow(QDialog):
         return label
 
     def _build_table(self, headers: list[str], stretch_columns=None) -> QTableWidget:
+        colors = self.colors
         table = QTableWidget(0, len(headers))
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
@@ -500,36 +485,36 @@ class PaymentsWindow(QDialog):
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setShowGrid(False)
         table.setAlternatingRowColors(True)
-        table.setStyleSheet("""
-            QTableWidget {
-                background: #0f172a;
-                alternate-background-color: #14213d;
-                color: #e2e8f0;
-                border: 1px solid #1e293b;
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                background: {colors['bg_primary']};
+                alternate-background-color: {colors['bg_secondary']};
+                color: {colors['text_primary']};
+                border: 1px solid {colors['border']};
                 border-radius: 10px;
                 font-size: 12px;
-                selection-background-color: #1d4ed8;
-                selection-color: #ffffff;
+                selection-background-color: {colors['selection_bg']};
+                selection-color: {colors['selection_text']};
                 outline: 0;
-            }
-            QHeaderView::section {
-                background: #111827;
-                color: #94a3b8;
+            }}
+            QHeaderView::section {{
+                background: {colors['bg_tertiary']};
+                color: {colors['text_secondary']};
                 font-size: 11px;
                 font-weight: 800;
                 border: none;
-                border-bottom: 1px solid #1e293b;
+                border-bottom: 1px solid {colors['border']};
                 padding: 8px;
-            }
-            QTableWidget::item {
+            }}
+            QTableWidget::item {{
                 background: transparent;
                 padding: 8px 10px;
-                border-bottom: 1px solid #1e293b;
-            }
-            QTableWidget::item:selected {
-                background: #1d4ed8;
-                color: #ffffff;
-            }
+                border-bottom: 1px solid {colors['border_light']};
+            }}
+            QTableWidget::item:selected {{
+                background: {colors['selection_bg']};
+                color: {colors['selection_text']};
+            }}
         """)
         table.horizontalHeader().setFixedHeight(34)
         table.verticalHeader().setDefaultSectionSize(42)
@@ -741,6 +726,7 @@ class PaymentsWindow(QDialog):
             self.payment_method_currencies = response
 
     def _build_payment_method_inputs(self):
+        colors = self.colors
         while self.payment_methods_layout.count():
             item = self.payment_methods_layout.takeAt(0)
             widget = item.widget()
@@ -750,7 +736,7 @@ class PaymentsWindow(QDialog):
 
         if not self.allow_make_new_payments:
             note = QLabel("POS Profile'da yangi payment yaratish ruxsati yo'q.")
-            note.setStyleSheet("color: #94a3b8; font-size: 12px;")
+            note.setStyleSheet(f"color: {colors['text_tertiary']}; font-size: 12px;")
             self.payment_methods_layout.addWidget(note, 0, 0, 1, 2)
             return
 
@@ -761,17 +747,21 @@ class PaymentsWindow(QDialog):
             if not mode:
                 continue
             lbl = QLabel(mode)
-            lbl.setStyleSheet("color: #e2e8f0; font-weight: 700; font-size: 13px;")
+            lbl.setStyleSheet(f"color: {colors['text_primary']}; font-weight: 700; font-size: 13px;")
             inp = ClickableLineEdit()
             inp.setPlaceholderText("0")
             inp.setValidator(validator)
             inp.setFixedHeight(36)
             inp.textChanged.connect(self._update_totals)
-            inp.setStyleSheet("""
-                QLineEdit {
-                    background: #111827; color: white; border: 1px solid #334155;
+            inp.setStyleSheet(f"""
+                QLineEdit {{
+                    background: {colors['input_bg']}; color: {colors['text_primary']}; border: 1px solid {colors['border']};
                     border-radius: 10px; padding: 0 10px; font-size: 13px; font-weight: 700;
-                }
+                }}
+                QLineEdit:focus {{
+                    border: 2px solid {colors['accent']};
+                    background: {colors['input_focus_bg']};
+                }}
             """)
             currency = self.payment_method_currencies.get(mode)
             if currency and currency != self.currency:

@@ -5,11 +5,12 @@ import subprocess
 import threading
 from html import escape
 from datetime import datetime
-from PyQt6.QtGui import QTextDocument, QPageLayout, QPageSize
+from PyQt6.QtGui import QTextDocument, QPageLayout, QPageSize, QImage
 from PyQt6.QtCore import QSizeF, QMarginsF
 from PyQt6.QtPrintSupport import QPrinter, QPrinterInfo
 from core.logger import get_logger
 from core.config import load_config
+from core.company_logo import get_cached_company_logo_path, get_company_logo_data_uri
 from database.models import Item, db
 
 logger = get_logger(__name__)
@@ -203,6 +204,59 @@ def _order_type_label(order_type: str) -> str:
     return ORDER_TYPE_LABELS.get(order_type, "Chek")
 
 
+def _build_receipt_logo_html(config: dict, max_width_px: int = 180, max_height_px: int = 90) -> str:
+    data_uri = get_company_logo_data_uri(config)
+    if not data_uri:
+        return ""
+
+    return (
+        "<div class='logo-wrap'>"
+        f"<img src='{data_uri}' style='max-width:{max_width_px}px;max-height:{max_height_px}px;' alt='company-logo'/>"
+        "</div>"
+    )
+
+
+def _build_escpos_logo(config: dict, max_width_px: int = 384, max_height_px: int = 160) -> bytes:
+    logo_path = get_cached_company_logo_path(config)
+    if not logo_path:
+        return b""
+
+    image = QImage(logo_path)
+    if image.isNull():
+        logger.warning("Company logo ochilmadi: %s", logo_path)
+        return b""
+
+    image = image.convertToFormat(QImage.Format.Format_Grayscale8)
+    if image.width() > max_width_px:
+        image = image.scaledToWidth(max_width_px)
+    if image.height() > max_height_px:
+        image = image.scaledToHeight(max_height_px)
+
+    width = image.width()
+    height = image.height()
+    if width <= 0 or height <= 0:
+        return b""
+
+    bytes_per_row = (width + 7) // 8
+    bitmap = bytearray()
+    threshold = 170
+
+    for y in range(height):
+        row = bytearray(bytes_per_row)
+        for x in range(width):
+            if image.pixelColor(x, y).lightness() < threshold:
+                row[x // 8] |= 0x80 >> (x % 8)
+        bitmap.extend(row)
+
+    x_low = bytes_per_row & 0xFF
+    x_high = (bytes_per_row >> 8) & 0xFF
+    y_low = height & 0xFF
+    y_high = (height >> 8) & 0xFF
+
+    command = b"\x1d\x76\x30\x00" + bytes([x_low, x_high, y_low, y_high]) + bytes(bitmap)
+    return CMD_ALIGN_CENTER + command + b"\n" + CMD_ALIGN_LEFT
+
+
 # ──────────────────────────────────────────────────
 #  Chek ma'lumotlarini yaratish
 # ──────────────────────────────────────────────────
@@ -227,6 +281,7 @@ def _build_customer_receipt(order_data: dict, payments_list: list, config: dict)
 
     data = bytearray()
     data += CMD_INIT
+    data += _build_escpos_logo(config)
 
     # Sarlavha — turiga qarab
     data += CMD_ALIGN_CENTER
@@ -315,7 +370,7 @@ def _build_customer_receipt(order_data: dict, payments_list: list, config: dict)
     return bytes(data)
 
 
-def _build_production_receipt(order_data: dict, unit_items: list, unit_name: str) -> bytes:
+def _build_production_receipt(order_data: dict, unit_items: list, unit_name: str, config: dict | None = None) -> bytes:
     """Production unit uchun chek — turiga qarab format o'zgaradi"""
     order_type = order_data.get("order_type", "")
     ticket_number = order_data.get("ticket_number", "")
@@ -325,6 +380,8 @@ def _build_production_receipt(order_data: dict, unit_items: list, unit_name: str
 
     data = bytearray()
     data += CMD_INIT
+    if config:
+        data += _build_escpos_logo(config)
 
     # Sarlavha — unit nomi katta
     data += CMD_ALIGN_CENTER + CMD_BOLD_ON + CMD_DOUBLE_ON
@@ -500,6 +557,7 @@ def _build_customer_receipt_html(order_data: dict, payments_list: list, config: 
     comment = order_data.get("comment", "")
     customer = order_data.get("customer", "")
     company = config.get("company", "POKIZA POS")
+    logo_html = _build_receipt_logo_html(config, max_width_px=210, max_height_px=90)
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     total_paid = sum(float(p.get("amount", 0) or 0) for p in payments_list)
     change = max(0, total_paid - total_amount)
@@ -543,6 +601,8 @@ def _build_customer_receipt_html(order_data: dict, payments_list: list, config: 
         body {{ font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 10pt; color: #000; margin: 0; }}
         .wrap {{ width: 100%; }}
         .center {{ text-align: center; }}
+        .logo-wrap {{ text-align: center; margin-bottom: 8px; }}
+        .logo-wrap img {{ object-fit: contain; }}
         .title {{ font-size: 16pt; font-weight: 700; margin-bottom: 4px; }}
         .subtitle {{ font-size: 11pt; margin-bottom: 8px; }}
         .meta {{ margin: 12px 0; line-height: 1.5; }}
@@ -559,6 +619,7 @@ def _build_customer_receipt_html(order_data: dict, payments_list: list, config: 
     <body>
       <div class="wrap">
         <div class="center">
+          {logo_html}
           <div class="title">{escape(str(company))}</div>
           <div class="subtitle">{escape(_order_type_label(order_type))}</div>
         </div>
@@ -587,12 +648,13 @@ def _build_customer_receipt_html(order_data: dict, payments_list: list, config: 
     """
 
 
-def _build_production_receipt_html(order_data: dict, unit_items: list, unit_name: str) -> str:
+def _build_production_receipt_html(order_data: dict, unit_items: list, unit_name: str, config: dict | None = None) -> str:
     order_type = order_data.get("order_type", "")
     ticket_number = order_data.get("ticket_number", "")
     comment = order_data.get("comment", "")
     customer = order_data.get("customer", "")
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logo_html = _build_receipt_logo_html(config or {}, max_width_px=180, max_height_px=80)
 
     rows = []
     for item in unit_items:
@@ -616,6 +678,8 @@ def _build_production_receipt_html(order_data: dict, unit_items: list, unit_name
     <head>
       <style>
         body {{ font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 10pt; color: #000; margin: 0; }}
+        .logo-wrap {{ text-align: center; margin-bottom: 8px; }}
+        .logo-wrap img {{ object-fit: contain; }}
         .center {{ text-align: center; }}
         .title {{ font-size: 16pt; font-weight: 700; margin-bottom: 8px; }}
         .meta {{ margin: 12px 0; line-height: 1.5; }}
@@ -626,6 +690,7 @@ def _build_production_receipt_html(order_data: dict, unit_items: list, unit_name
       </style>
     </head>
     <body>
+      {logo_html}
       <div class="center"><div class="title">{escape(str(unit_name))}</div></div>
       <div class="meta">{''.join(meta_rows)}</div>
       <table>
@@ -637,7 +702,7 @@ def _build_production_receipt_html(order_data: dict, unit_items: list, unit_name
     """
 
 
-def _build_payment_receipt(payment_data: dict) -> bytes:
+def _build_payment_receipt(payment_data: dict, config: dict | None = None) -> bytes:
     company = payment_data.get("company") or "POKIZA POS"
     customer = payment_data.get("customer") or "Customer"
     currency = payment_data.get("currency") or "UZS"
@@ -648,6 +713,8 @@ def _build_payment_receipt(payment_data: dict) -> bytes:
 
     data = bytearray()
     data += CMD_INIT
+    if config:
+        data += _build_escpos_logo(config)
     data += CMD_ALIGN_CENTER
     data += CMD_BOLD_ON + CMD_DOUBLE_ON
     data += _encode(company + "\n")
@@ -696,8 +763,9 @@ def _build_payment_receipt(payment_data: dict) -> bytes:
     return bytes(data)
 
 
-def _build_payment_receipt_html(payment_data: dict) -> str:
+def _build_payment_receipt_html(payment_data: dict, config: dict | None = None) -> str:
     company = escape(str(payment_data.get("company") or "POKIZA POS"))
+    logo_html = _build_receipt_logo_html(config or {}, max_width_px=210, max_height_px=90)
     customer = escape(str(payment_data.get("customer") or "Customer"))
     currency = escape(str(payment_data.get("currency") or "UZS"))
     entries = payment_data.get("entries") or []
@@ -748,6 +816,8 @@ def _build_payment_receipt_html(payment_data: dict) -> str:
         body {{ font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 11pt; color: #000; }}
         .wrap {{ padding: 10px 4px; }}
         .center {{ text-align: center; }}
+        .logo-wrap {{ text-align: center; margin-bottom: 8px; }}
+        .logo-wrap img {{ object-fit: contain; }}
         .company {{ font-size: 18pt; font-weight: 700; }}
         .title {{ font-size: 15pt; font-weight: 700; margin-top: 4px; }}
         .line {{ margin-top: 6px; }}
@@ -760,6 +830,7 @@ def _build_payment_receipt_html(payment_data: dict) -> str:
     </head>
     <body>
       <div class="wrap">
+        {logo_html}
         <div class="center company">{company}</div>
         <div class="center title">QARZ TO'LOV CHEKI</div>
         <div class="center line">{created_at}</div>
@@ -906,7 +977,7 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
             continue
 
         try:
-            receipt_data = _build_production_receipt(order_data, unit_items, unit_name)
+            receipt_data = _build_production_receipt(order_data, unit_items, unit_name, config)
             printer_config = {
                 "device": device,
                 "win_name": win_name,
@@ -914,7 +985,7 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
                 "mode": unit.get("printer_mode", "auto"),
             }
             if _get_named_printer(printer_config) and not _is_thermal_printer(printer_config):
-                printer_config["_html"] = _build_production_receipt_html(order_data, unit_items, unit_name)
+                printer_config["_html"] = _build_production_receipt_html(order_data, unit_items, unit_name, config)
             success = _send_data(receipt_data, printer_config)
             results[unit_name] = success
 
@@ -1010,10 +1081,11 @@ def print_payment_receipt(payment_data: dict) -> bool:
         logger.warning("Mijoz printeri topilmadi — payment receipt chop etib bo'lmaydi")
         return False
 
+    config = load_config()
     printer_config = dict(customer_printers[0])
-    receipt_data = _build_payment_receipt(payment_data)
+    receipt_data = _build_payment_receipt(payment_data, config)
     if _get_named_printer(printer_config) and not _is_thermal_printer(printer_config):
-        printer_config["_html"] = _build_payment_receipt_html(payment_data)
+        printer_config["_html"] = _build_payment_receipt_html(payment_data, config)
     success = _send_data(receipt_data, printer_config)
     if success:
         logger.info("Payment receipt chop etildi")
@@ -1042,6 +1114,7 @@ def print_closing_shift_receipt(closing_data: dict) -> bool:
     # ESC/POS chek yaratish
     data = bytearray()
     data += CMD_INIT
+    data += _build_escpos_logo(config)
     data += CMD_ALIGN_CENTER
     
     # Sarlavha
@@ -1114,6 +1187,7 @@ def print_closing_shift_receipt(closing_data: dict) -> bool:
 def _build_closing_shift_html(closing_data: dict, config: dict) -> str:
     """Kassa yopish cheki uchun HTML (A4 printer) — sodda"""
     company = escape(config.get("company", "POKIZA POS"))
+    logo_html = _build_receipt_logo_html(config, max_width_px=210, max_height_px=90)
     user = escape(str(closing_data.get("user", "")))
     
     payment_rows = closing_data.get("payment_reconciliation", [])
@@ -1150,6 +1224,8 @@ def _build_closing_shift_html(closing_data: dict, config: dict) -> str:
       <style>
         body {{ font-family: 'DejaVu Sans', Arial, sans-serif; font-size: 12pt; color: #000; padding: 30px; }}
         .header {{ text-align: center; margin-bottom: 25px; }}
+        .logo-wrap {{ text-align: center; margin-bottom: 8px; }}
+        .logo-wrap img {{ object-fit: contain; }}
         .title {{ font-size: 22pt; font-weight: 700; margin-bottom: 8px; }}
         .info {{ color: #666; margin-bottom: 5px; }}
         .payments {{ margin: 20px 0; }}
@@ -1160,6 +1236,7 @@ def _build_closing_shift_html(closing_data: dict, config: dict) -> str:
     </head>
     <body>
       <div class="header">
+        {logo_html}
         <div class="title">KASSA YOPISH</div>
         <div class="info">{company}</div>
         <div class="info">Kassir: {user}</div>

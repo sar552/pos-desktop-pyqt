@@ -4,11 +4,13 @@ from PyQt6.QtWidgets import (
     QPushButton, QSplitter, QTabWidget,
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from database.sync import SyncWorker
 from database.offline_sync import OfflineSyncWorker
 from database.migrations import initialize_db
 from database.models import PendingInvoice, PosShift, db
 from core.api import FrappeAPI
+from core.company_logo import get_cached_company_logo_path
 from core.logger import get_logger
 from core.constants import MONITOR_INTERVAL_MS
 from core.config import load_config
@@ -22,6 +24,7 @@ from ui.components.pos_opening import PosOpeningDialog
 from ui.components.pos_closing import PosClosingDialog
 from ui.components.dialogs import InfoDialog, ConfirmDialog
 from ui.components.keyboard import TouchKeyboard
+from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
 
@@ -138,10 +141,13 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
         initialize_db()
+        
+        # Store UI elements for theme updates
+        self.themed_elements = {}
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        central_widget.setStyleSheet('background: #111111;')
+        self._apply_central_widget_theme(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
         # --- Top Bar ---
@@ -150,6 +156,8 @@ class MainWindow(QMainWindow):
         top_bar.setSpacing(12)
 
         # ── POSAwesome Brand Logo ──────────────────
+        colors = ThemeManager.get_theme_colors()
+        
         logo_widget = QWidget()
         logo_widget.setMinimumWidth(150)
         logo_widget.setMaximumWidth(220)
@@ -164,26 +172,31 @@ class MainWindow(QMainWindow):
         logo_layout.setContentsMargins(10, 2, 0, 2)
         logo_layout.setSpacing(0)
 
-        brand_name = QLabel("POS<font color=\"#3b82f6\">Awesome</font>")
-        brand_name.setStyleSheet("""
+        self.brand_name = QLabel(f"POS<font color=\"{colors['accent']}\">Awesome</font>")
+        self.brand_name.setStyleSheet(f"""
             font-size: 24px;
             font-weight: 900;
-            color: #3b82f6;
+            color: {colors['accent']};
             background: transparent;
         """)
 
-        brand_sub = QLabel("DESKTOP")
-        brand_sub.setStyleSheet("""
+        self.brand_sub = QLabel("DESKTOP")
+        self.brand_sub.setStyleSheet(f"""
             font-size: 9px;
             font-weight: 700;
-            color: #60a5fa;
+            color: {colors['accent_hover']};
             background: transparent;
             letter-spacing: 2px;
         """)
 
-        logo_layout.addWidget(brand_name)
-        logo_layout.addWidget(brand_sub)
+        logo_layout.addWidget(self.brand_name)
+        logo_layout.addWidget(self.brand_sub)
         top_bar.addWidget(logo_widget)
+
+        self.company_logo_label = QLabel()
+        self.company_logo_label.setFixedSize(56, 56)
+        self.company_logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        top_bar.addWidget(self.company_logo_label)
 
         # ── Filial / Company badge ──────────────
         config = load_config()
@@ -192,15 +205,16 @@ class MainWindow(QMainWindow):
 
         self.company_badge = QLabel()
         self._update_company_badge(company_name, pos_profile)
+        self._update_company_logo(config)
         top_bar.addWidget(self.company_badge)
 
         # Connection Status
         self.status_dot = QLabel()
         self.status_dot.setFixedSize(12, 12)
-        self.status_dot.setStyleSheet("background-color: #94a3b8; border-radius: 6px;")
+        self.status_dot.setStyleSheet(f"background-color: {colors['text_tertiary']}; border-radius: 6px;")
 
         self.status_text = QLabel("Checking...")
-        self.status_text.setStyleSheet("font-weight: bold; color: #64748b; font-size: 13px;")
+        self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['text_secondary']}; font-size: 13px;")
 
         top_bar.addWidget(self.status_dot)
         top_bar.addWidget(self.status_text)
@@ -213,6 +227,8 @@ class MainWindow(QMainWindow):
             b.setMinimumHeight(36)
             b.setMaximumHeight(52)
             h = hover or bg
+            disabled_bg = colors['bg_tertiary']
+            disabled_text = colors['text_tertiary']
             b.setStyleSheet(f"""
                 QPushButton {{
                     background: {bg}; color: {color};
@@ -222,63 +238,74 @@ class MainWindow(QMainWindow):
                 }}
                 QPushButton:hover {{ background: {h}; }}
                 QPushButton:pressed {{ opacity: 0.85; }}
-                QPushButton:disabled {{ background: #f1f5f9; color: #94a3b8; }}
+                QPushButton:disabled {{ background: {disabled_bg}; color: {disabled_text}; }}
             """)
             return b
 
-        # Offline Queue Button — white
+        # Offline Queue Button — themed
         self.offline_btn = _tb_btn(
-            "Offline: 0", "#f8fafc", "#0f172a",
-            hover="#f1f5f9", border="1px solid #cbd5e1"
+            "Offline: 0", colors['bg_secondary'], colors['text_primary'],
+            hover=colors['bg_tertiary'], border=f"1px solid {colors['border']}"
         )
         self.offline_btn.clicked.connect(self.show_offline_queue)
         top_bar.addWidget(self.offline_btn)
 
-        # New Sale Button — green
+        # New Sale Button — success color
         self.add_sale_btn = _tb_btn(
-            "+ Yangi sotuv", "#10b981", hover="#059669"
+            "+ Yangi sotuv", colors['success'], "white", 
+            hover="#059669"
         )
         self.add_sale_btn.clicked.connect(self.add_new_sale_tab)
         top_bar.addWidget(self.add_sale_btn)
 
-        # History Button — purple
+        # History Button — accent color
         self.history_btn = _tb_btn(
-            "Tarix", "#8b5cf6", hover="#7c3aed"
+            "Tarix", "#8b5cf6", "white", hover="#7c3aed"
         )
         self.history_btn.clicked.connect(self.show_history)
         top_bar.addWidget(self.history_btn)
 
         self.payments_btn = _tb_btn(
-            "Payments", "#0ea5e9", hover="#0284c7"
+            "Payments", colors['accent'], "white", hover=colors['accent_hover']
         )
         self.payments_btn.clicked.connect(self.show_payments_window)
         top_bar.addWidget(self.payments_btn)
 
-        # Sync Button — blue
+        # Sync Button — accent color
         self.sync_btn = _tb_btn(
-            "Sinxronlash", "#3b82f6", hover="#2563eb"
+            "Sinxronlash", colors['accent'], "white", hover=colors['accent_hover']
         )
         self.sync_btn.clicked.connect(self.start_sync)
         top_bar.addWidget(self.sync_btn)
 
-        # Printer Settings Button — gray
+        # Printer Settings Button — muted
         self.printer_btn = _tb_btn(
-            "Printer", "#64748b", hover="#475569"
+            "Printer", colors['text_secondary'], "white", hover=colors['text_primary']
         )
         self.printer_btn.clicked.connect(self.show_printer_settings)
         top_bar.addWidget(self.printer_btn)
 
-        # Kassa ochish Button — green
+        # Theme Toggle Button — muted
+        current_theme = ThemeManager.get_current_theme()
+        theme_icon = "🌙" if current_theme == "light" else "☀️"
+        self.theme_btn = _tb_btn(
+            theme_icon, colors['text_secondary'], "white", hover=colors['text_primary']
+        )
+        self.theme_btn.setToolTip("Mavzu o'zgartirish (Light/Dark)")
+        self.theme_btn.clicked.connect(self.toggle_theme)
+        top_bar.addWidget(self.theme_btn)
+
+        # Kassa ochish Button — success
         self.open_shift_btn = _tb_btn(
-            "Kassa ochish", "#10b981", hover="#059669"
+            "Kassa ochish", colors['success'], "white", hover="#059669"
         )
         self.open_shift_btn.clicked.connect(lambda: self._show_pos_opening_dialog({}))
         top_bar.addWidget(self.open_shift_btn)
         self.open_shift_btn.hide()  # hidden initially
 
-        # Kassa yopish Button — red
+        # Kassa yopish Button — error/destructive
         self.close_shift_btn = _tb_btn(
-            "Kassa yopish", "#ef4444", hover="#dc2626"
+            "Kassa yopish", colors['error'], "white", hover="#dc2626"
         )
         self.close_shift_btn.clicked.connect(self.show_pos_closing)
         top_bar.addWidget(self.close_shift_btn)
@@ -298,36 +325,33 @@ class MainWindow(QMainWindow):
         self.sales_tabs.setMovable(True)
         self.sales_tabs.tabCloseRequested.connect(self.close_sale_tab)
         self.sales_tabs.currentChanged.connect(self._on_tab_changed)
-        self.sales_tabs.setStyleSheet("""
-            QTabWidget::pane {
+        self.sales_tabs.setStyleSheet(f"""
+            QTabWidget::pane {{
                 border: none;
-                background: #111111;
-            }
-            QTabBar::tab {
-                background: #1e1e1e;
-                color: #a0a0a0;
+                background: {colors['bg_primary']};
+            }}
+            QTabBar::tab {{
+                background: {colors['bg_secondary']};
+                color: {colors['text_tertiary']};
                 padding: 10px 20px;
                 font-weight: 600;
                 font-size: 13px;
                 border-radius: 8px 8px 0 0;
                 margin-right: 4px;
-                border: 1px solid #333;
+                border: 1px solid {colors['border']};
                 border-bottom: none;
                 min-width: 90px;
-            }
-            QTabBar::tab:selected {
-                background: #ffffff;
-                color: #2563eb;
+            }}
+            QTabBar::tab:selected {{
+                background: {colors['bg_tertiary']};
+                color: {colors['accent']};
                 font-weight: 900;
-                border: 1px solid #ffffff;
-            }
-            QTabBar::tab:hover:!selected {
-                background: #2a2a2a;
-                color: #ffffff;
-            }
-            QTabBar::close-button {
-                /* default */
-            }
+                border: 1px solid {colors['accent']};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background: {colors['bg_tertiary']};
+                color: {colors['text_primary']};
+            }}
         """)
 
 
@@ -345,9 +369,9 @@ class MainWindow(QMainWindow):
         self.history_panel.setVisible(False)
         self.history_panel.setMinimumHeight(360)
         self.history_panel.setMaximumHeight(500)
-        self.history_panel.setStyleSheet("""
-            background: #111111;
-            border-top: 2px solid #e2e8f0;
+        self.history_panel.setStyleSheet(f"""
+            background: {colors['bg_primary']};
+            border-top: 2px solid {colors['border']};
         """)
         main_layout.addWidget(self.history_panel)
 
@@ -371,14 +395,14 @@ class MainWindow(QMainWindow):
         self.keyboard_btn.setMinimumHeight(26)
         self.keyboard_btn.setMaximumHeight(36)
         self.keyboard_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.keyboard_btn.setStyleSheet("""
-            QPushButton {
-                background: #e2e8f0; color: #1e293b;
+        self.keyboard_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {colors['bg_tertiary']}; color: {colors['text_primary']};
                 font-weight: bold; font-size: 13px;
                 border-radius: 6px; padding: 0 16px; margin: 2px;
-            }
-            QPushButton:hover { background: #cbd5e1; }
-            QPushButton:pressed { background: #94a3b8; }
+            }}
+            QPushButton:hover {{ background: {colors['border']}; }}
+            QPushButton:pressed {{ background: {colors['text_tertiary']}; }}
         """)
         self.keyboard_btn.clicked.connect(self._toggle_global_keyboard)
         self.statusBar().addPermanentWidget(self.keyboard_btn)
@@ -428,13 +452,53 @@ class MainWindow(QMainWindow):
             self.logout_requested.emit()
 
     def _update_company_badge(self, company: str = "", pos_profile: str = ""):
+        colors = ThemeManager.get_theme_colors()
         display = company or pos_profile or "—"
         self.company_badge.setText(f"🏢  {display}")
-        self.company_badge.setStyleSheet("""
-            font-size: 12px; font-weight: 700; color: #1e40af;
-            background: #eff6ff; border: 1.5px solid #bfdbfe;
-            border-radius: 8px; padding: 4px 12px;
+        self.company_badge.setStyleSheet(f"""
+            font-size: 12px;
+            font-weight: 700;
+            color: {colors['text_primary']};
+            background: {colors['bg_secondary']};
+            border: 1.5px solid {colors['border']};
+            border-radius: 8px;
+            padding: 4px 12px;
         """)
+
+    def _update_company_logo(self, config: dict | None = None):
+        if not hasattr(self, "company_logo_label"):
+            return
+
+        colors = ThemeManager.get_theme_colors()
+        self.company_logo_label.setStyleSheet(f"""
+            QLabel {{
+                background: {colors['bg_secondary']};
+                border: 1.5px solid {colors['border']};
+                border-radius: 10px;
+                color: {colors['text_tertiary']};
+                font-size: 24px;
+                font-weight: 700;
+                padding: 3px;
+            }}
+        """)
+
+        cfg = config if isinstance(config, dict) else load_config()
+        logo_path = get_cached_company_logo_path(cfg)
+        if logo_path:
+            pixmap = QPixmap(logo_path)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(
+                    self.company_logo_label.width() - 8,
+                    self.company_logo_label.height() - 8,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                self.company_logo_label.setPixmap(scaled)
+                self.company_logo_label.setText("")
+                return
+
+        self.company_logo_label.setPixmap(QPixmap())
+        self.company_logo_label.setText("🏢")
 
     def monitor_system(self):
         self._check_server_status()
@@ -573,6 +637,16 @@ class MainWindow(QMainWindow):
         dlg = PrinterSettingsDialog(self, self.api)
         dlg.exec()
 
+    def toggle_theme(self):
+        """Toggle between light and dark theme"""
+        new_theme = ThemeManager.toggle_theme()
+        # Update button icon
+        theme_icon = "🌙" if new_theme == "light" else "☀️"
+        self.theme_btn.setText(theme_icon)
+        # Apply theme to all UI elements
+        self._apply_theme_to_ui()
+        logger.info(f"Theme changed to: {new_theme}")
+
     def show_payments_window(self):
         dlg = PaymentsWindow(
             self,
@@ -588,11 +662,12 @@ class MainWindow(QMainWindow):
             self.history_panel.load_history()
 
     def show_history(self):
+        colors = ThemeManager.get_theme_colors()
         visible = self.history_panel.isVisible()
         if visible:
             self.history_panel.setVisible(False)
             self.history_btn.setStyleSheet(
-                "padding: 12px 20px; background-color: #6366f1; color: white; "
+                f"padding: 12px 20px; background-color: {colors['accent']}; color: white; "
                 "font-weight: bold; border-radius: 8px; margin-left: 10px;"
             )
         else:
@@ -600,9 +675,9 @@ class MainWindow(QMainWindow):
             self.history_panel.setVisible(True)
             self.history_panel.load_history()
             self.history_btn.setStyleSheet(
-                "padding: 12px 20px; background-color: #4338ca; color: white; "
+                f"padding: 12px 20px; background-color: {colors['accent_hover']}; color: white; "
                 "font-weight: bold; border-radius: 8px; margin-left: 10px;"
-                "border: 2px solid #818cf8;"
+                f"border: 2px solid {colors['accent']};"
             )
 
     def start_sync(self):
@@ -619,6 +694,7 @@ class MainWindow(QMainWindow):
         # Filial nomini yangilash
         cfg = load_config()
         self._update_company_badge(cfg.get("company", ""), cfg.get("pos_profile", ""))
+        self._update_company_logo(cfg)
         if success:
             self.item_browser.load_items()
             # Also refresh Cart's price list combo
@@ -759,6 +835,113 @@ class MainWindow(QMainWindow):
     def _on_global_keyboard_text_changed(self, text):
         if isinstance(self._current_focused_input, QLineEdit):
             self._current_focused_input.setText(text)
+    
+    def _apply_central_widget_theme(self, widget):
+        """Apply theme to central widget"""
+        colors = ThemeManager.get_theme_colors()
+        widget.setStyleSheet(f'background: {colors["bg_primary"]};')
+    
+    def _apply_theme_to_ui(self):
+        """Apply current theme to all UI elements"""
+        colors = ThemeManager.get_theme_colors()
+        
+        # Update central widget
+        central = self.centralWidget()
+        if central:
+            central.setStyleSheet(f'background: {colors["bg_primary"]};')
+        
+        # Update brand logo colors
+        if hasattr(self, 'brand_name'):
+            self.brand_name.setText(f"POS<font color=\"{colors['accent']}\">Awesome</font>")
+            self.brand_name.setStyleSheet(f"""
+                font-size: 24px;
+                font-weight: 900;
+                color: {colors['accent']};
+                background: transparent;
+            """)
+        
+        if hasattr(self, 'brand_sub'):
+            self.brand_sub.setStyleSheet(f"""
+                font-size: 9px;
+                font-weight: 700;
+                color: {colors['accent_hover']};
+                background: transparent;
+                letter-spacing: 2px;
+            """)
+
+        if hasattr(self, "company_badge"):
+            cfg = load_config()
+            self._update_company_badge(cfg.get("company", ""), cfg.get("pos_profile", ""))
+            self._update_company_logo(cfg)
+        
+        # Update status indicators
+        if hasattr(self, 'status_dot'):
+            self.status_dot.setStyleSheet(f"background-color: {colors['text_tertiary']}; border-radius: 6px;")
+        
+        if hasattr(self, 'status_text'):
+            self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['text_secondary']}; font-size: 13px;")
+        
+        # Update tabs styling
+        if hasattr(self, 'sales_tabs'):
+            self.sales_tabs.setStyleSheet(f"""
+                QTabWidget::pane {{
+                    border: none;
+                    background: {colors['bg_primary']};
+                }}
+                QTabBar::tab {{
+                    background: {colors['bg_secondary']};
+                    color: {colors['text_tertiary']};
+                    padding: 10px 20px;
+                    font-weight: 600;
+                    font-size: 13px;
+                    border-radius: 8px 8px 0 0;
+                    margin-right: 4px;
+                    border: 1px solid {colors['border']};
+                    border-bottom: none;
+                    min-width: 90px;
+                }}
+                QTabBar::tab:selected {{
+                    background: {colors['bg_tertiary']};
+                    color: {colors['accent']};
+                    font-weight: 900;
+                    border: 1px solid {colors['accent']};
+                }}
+                QTabBar::tab:hover:!selected {{
+                    background: {colors['bg_tertiary']};
+                    color: {colors['text_primary']};
+                }}
+            """)
+        
+        # Update history panel if exists
+        if hasattr(self, 'history_panel'):
+            self.history_panel.setStyleSheet(f"""
+                background: {colors['bg_primary']};
+                border-top: 2px solid {colors['border']};
+            """)
+            if hasattr(self.history_panel, "apply_theme"):
+                self.history_panel.apply_theme()
+
+        if hasattr(self, "item_browser") and hasattr(self.item_browser, "apply_theme"):
+            self.item_browser.apply_theme()
+
+        if hasattr(self, "sales_tabs"):
+            for i in range(self.sales_tabs.count()):
+                cart = self.sales_tabs.widget(i)
+                if hasattr(cart, "apply_theme"):
+                    cart.apply_theme()
+
+        if hasattr(self, "history_btn") and hasattr(self, "history_panel"):
+            if self.history_panel.isVisible():
+                self.history_btn.setStyleSheet(
+                    f"padding: 12px 20px; background-color: {colors['accent_hover']}; color: white; "
+                    "font-weight: bold; border-radius: 8px; margin-left: 10px;"
+                    f"border: 2px solid {colors['accent']};"
+                )
+            else:
+                self.history_btn.setStyleSheet(
+                    f"padding: 12px 20px; background-color: {colors['accent']}; color: white; "
+                    "font-weight: bold; border-radius: 8px; margin-left: 10px;"
+                )
 
     def closeEvent(self, event):
         self.monitor_timer.stop()

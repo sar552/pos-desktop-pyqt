@@ -5,6 +5,7 @@ from peewee import DatabaseError, IntegrityError
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.api import FrappeAPI
 from core.config import load_config, save_config
+from core.company_logo import update_company_logo_config
 from core.logger import get_logger
 from core.constants import CUSTOMER_SYNC_LIMIT
 from database.models import Item, ItemPrice, Customer, PosProfile, PosShift, PendingInvoice, db
@@ -88,6 +89,7 @@ class SyncWorker(QThread):
         pos_profile = shift_data.get("pos_profile", {})
         pos_opening_shift = shift_data.get("pos_opening_shift", {})
         company = shift_data.get("company", {})
+        company_data = company if isinstance(company, dict) else {}
 
         profile_name = pos_profile.get("name")
         if not profile_name:
@@ -96,7 +98,7 @@ class SyncWorker(QThread):
         # Config'ga joriy profilni saqlash
         config = load_config()
         config["pos_profile"] = profile_name
-        config["company"] = company.get("name")
+        config["company"] = company_data.get("name")
         config["warehouse"] = pos_profile.get("warehouse")
         config["currency"] = pos_profile.get("currency")
         
@@ -110,13 +112,19 @@ class SyncWorker(QThread):
         if payments:
             config["payment_methods"] = [p.get("mode_of_payment") for p in payments if p.get("mode_of_payment")]
         
+        update_company_logo_config(
+            self.api,
+            config,
+            company_name=company_data.get("name", ""),
+            company_payload=company_data,
+        )
         save_config(config)
 
         # Bazaga POS Profile'ni seriyali Json sifatida saqlash
         with db.atomic():
             PosProfile.insert(
                 name=profile_name,
-                company=company.get("name"),
+                company=company_data.get("name"),
                 warehouse=pos_profile.get("warehouse"),
                 currency=pos_profile.get("currency"),
                 profile_data=json.dumps(pos_profile),
@@ -132,7 +140,7 @@ class SyncWorker(QThread):
                 PosShift.insert(
                     opening_entry=shift_entry,
                     pos_profile=profile_name,
-                    company=company.get("name"),
+                    company=company_data.get("name"),
                     user=logged_user,
                     status="Open",
                     opened_at=pos_opening_shift.get("period_start_date") or datetime.datetime.now()

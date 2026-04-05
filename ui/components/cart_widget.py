@@ -2,7 +2,7 @@ import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QHBoxLayout,
-    QComboBox, QLineEdit, QGroupBox, QFrame, QListWidget, QListWidgetItem,
+    QComboBox, QLineEdit, QGroupBox, QFrame, QListWidget, QListWidgetItem, QDialog,
 )
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtCore import QEvent, QPoint, QTimer
@@ -14,6 +14,8 @@ from core.config import load_config
 from core.api import FrappeAPI
 from ui.components.keyboard import TouchKeyboard
 from ui.components.dialogs import InfoDialog
+from ui.component_styles import get_component_styles
+from ui.theme_manager import ThemeManager
 import json
 
 logger = get_logger(__name__)
@@ -41,6 +43,7 @@ class CartWidget(QWidget):
         self._selected_customer = ""
         self._customer_info_cache = {}
         self._item_meta_cache = {}
+        self._customer_meta_fields = None
         self._is_repricing = False
         self._current_customer_info = {}
         self._current_profile_data = {}
@@ -72,7 +75,12 @@ class CartWidget(QWidget):
         main_layout = self.layout()
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(8)
-        self.setStyleSheet("background-color: #111111; color: white;")
+        
+        # Apply theme
+        styles = get_component_styles()
+        colors = ThemeManager.get_theme_colors()
+        self._theme_colors = colors
+        self.setStyleSheet(styles["cart_container"])
 
         # --- Top Section ---
         top_bar = QHBoxLayout()
@@ -81,16 +89,13 @@ class CartWidget(QWidget):
         customer_vbox = QVBoxLayout()
         customer_vbox.setSpacing(2)
         cust_label = QLabel("Customer search")
-        cust_label.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+        cust_label.setStyleSheet(styles["cart_label"])
         
         self.customer_input = QLineEdit()
         self.customer_input.setPlaceholderText("Guest Customer")
         self.customer_input.installEventFilter(self)
         self.customer_input.setFixedHeight(40)
-        self.customer_input.setStyleSheet("""
-            QLineEdit { background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px 10px; }
-            QLineEdit:focus { border: 1px solid #3b82f6; }
-        """)
+        self.customer_input.setStyleSheet(styles["cart_input"])
         self.customer_input.textEdited.connect(self._on_customer_search_edited)
         self.customer_input.returnPressed.connect(self._commit_customer_search)
         customer_row = QHBoxLayout()
@@ -101,15 +106,17 @@ class CartWidget(QWidget):
         self.customer_clear_btn.setFixedSize(36, 36)
         self.customer_clear_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.customer_clear_btn.setToolTip("Customer tanlovini tozalash")
-        self.customer_clear_btn.setStyleSheet("""
-            QPushButton {
-                background: #2a2a2a; color: #cbd5e1; border: 1px solid #444;
-                border-radius: 6px; font-size: 14px; font-weight: 700;
-            }
-            QPushButton:hover { background: #334155; color: white; }
-        """)
+        self.customer_clear_btn.setStyleSheet(styles["cart_button"])
         self.customer_clear_btn.clicked.connect(self._clear_customer_selection)
         customer_row.addWidget(self.customer_clear_btn)
+
+        self.customer_add_btn = QPushButton("+")
+        self.customer_add_btn.setFixedSize(36, 36)
+        self.customer_add_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.customer_add_btn.setToolTip("Yangi customer qo'shish")
+        self.customer_add_btn.setStyleSheet(styles["cart_button"])
+        self.customer_add_btn.clicked.connect(self._open_add_customer_form)
+        customer_row.addWidget(self.customer_add_btn)
         customer_vbox.addWidget(cust_label)
         customer_vbox.addLayout(customer_row)
         self.customer_results = QListWidget(self)
@@ -118,33 +125,17 @@ class CartWidget(QWidget):
         self.customer_results.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.customer_results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.customer_results.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.customer_results.setStyleSheet("""
-            QListWidget {
-                background: #1e1e1e; color: white; border: 1px solid #333;
-                border-radius: 6px; padding: 4px;
-            }
-            QListWidget::item {
-                padding: 8px 10px;
-                border-radius: 4px;
-            }
-            QListWidget::item:selected {
-                background: #2563eb;
-                color: white;
-            }
-            QListWidget::item:hover {
-                background: #2a2a2a;
-            }
-        """)
+        self.customer_results.setStyleSheet(styles["cart_list"])
         self.customer_results.itemClicked.connect(self._on_customer_item_clicked)
         
         # Customer Group
         cg_vbox = QVBoxLayout()
         cg_vbox.setSpacing(2)
         cg_label = QLabel("Customer Group")
-        cg_label.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+        cg_label.setStyleSheet(styles["cart_label"])
         self.cg_mock = QComboBox()
         self.cg_mock.setFixedHeight(40)
-        self.cg_mock.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
+        self.cg_mock.setStyleSheet(styles["cart_input"])
         self.cg_mock.currentIndexChanged.connect(self._on_customer_group_changed)
         cg_vbox.addWidget(cg_label)
         cg_vbox.addWidget(self.cg_mock)
@@ -159,28 +150,30 @@ class CartWidget(QWidget):
         self.search_item_input = QLineEdit()
         self.search_item_input.setPlaceholderText("Search items or barcode...")
         self.search_item_input.setFixedHeight(40)
-        self.search_item_input.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
+        self.search_item_input.setStyleSheet(styles["cart_input"])
         
         pl_vbox = QVBoxLayout()
         pl_vbox.setSpacing(2)
         pl_label = QLabel("Price List")
-        pl_label.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+        pl_label.setStyleSheet(styles["cart_label"])
         self.price_list_combo = QComboBox()
         
         self.price_list_combo.setFixedHeight(35)
-        self.price_list_combo.setStyleSheet("background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px;")
+        self.price_list_combo.setStyleSheet(styles["cart_input"])
         pl_vbox.addWidget(pl_label)
         pl_vbox.addWidget(self.price_list_combo)
         self.price_list_combo.currentTextChanged.connect(self._on_pl_changed)
         
-        col_lbl = QPushButton("COLUMNS")
-        col_lbl.setStyleSheet("color: #60a5fa; font-weight: bold; font-size: 12px; margin-top: 15px; margin-left: 10px;")
-        col_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-        col_lbl.clicked.connect(self.open_columns_settings)
+        self.columns_btn = QPushButton("COLUMNS")
+        self.columns_btn.setStyleSheet(
+            f"color: {colors['accent']}; font-weight: bold; font-size: 12px; margin-top: 15px; margin-left: 10px;"
+        )
+        self.columns_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.columns_btn.clicked.connect(self.open_columns_settings)
         
         search_bar.addWidget(self.search_item_input, 3)
         search_bar.addLayout(pl_vbox, 1)
-        search_bar.addWidget(col_lbl)
+        search_bar.addWidget(self.columns_btn)
         main_layout.addLayout(search_bar)
 
         # ── Table ────────────────
@@ -205,49 +198,9 @@ class CartWidget(QWidget):
         # Make row height dynamic based on content
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.setWordWrap(True)
-        self.table.setStyleSheet(
-            """
-            QTableWidget {
-                background: transparent; border: none; font-size: 13px;
-                selection-background-color: transparent; outline: none;
-            }
-            QHeaderView::section {
-                background-color: #1e293b; color: #94a3b8; font-weight: 700;
-                font-size: 11px; padding: 10px 5px; border: none; border-bottom: 1px solid #334155;
-            }
-            QTableWidget::item { padding: 8px 4px; border-bottom: 1px solid #334155; }
-            """
-        )
+        self.table.setStyleSheet(styles["cart_table"])
 
         header.setMinimumHeight(35)
-        
-        self.table.setStyleSheet("""
-            QTableWidget {
-                background: #1e1e1e;
-                color: #ffffff;
-                border: 1px solid #333;
-                border-radius: 6px;
-                font-size: 13px;
-            }
-            QHeaderView::section {
-                background-color: #2a2a2a;
-                color: #ffffff;
-                font-weight: 700;
-                font-size: 11px;
-                border: none;
-                border-bottom: 2px solid #444;
-                padding-left: 10px;
-            }
-            QTableWidget::item {
-                border-bottom: 1px solid #2a2a2a;
-                padding: 4px;
-                background-color: transparent;
-            }
-            QTableWidget::item:selected {
-                background-color: transparent;
-                outline: none;
-            }
-        """)
         main_layout.addWidget(self.table)
 
         # ── Bottom Totals & Buttons (POSAwesome style) ────────────────
@@ -262,13 +215,21 @@ class CartWidget(QWidget):
             vbox = QVBoxLayout()
             vbox.setSpacing(4)
             lbl = QLabel(title)
-            lbl.setStyleSheet("color: #9ca3af; font-size: 12px; font-weight: 600; letter-spacing: 0.5px;")
+            lbl.setStyleSheet(
+                f"color: {colors['text_tertiary']}; font-size: 12px; font-weight: 600; letter-spacing: 0.5px;"
+            )
             val = QLabel("0")
             val.setFixedHeight(44)
             if highlight:
-                val.setStyleSheet("color: #10b981; font-size: 20px; font-weight: 900; background: #1f2937; padding: 0 12px; border-radius: 8px;")
+                val.setStyleSheet(
+                    f"color: {colors['success']}; font-size: 20px; font-weight: 900; "
+                    f"background: {colors['bg_tertiary']}; padding: 0 12px; border-radius: 8px;"
+                )
             else:
-                val.setStyleSheet("color: white; font-size: 16px; font-weight: 800; background: #1f2937; padding: 0 12px; border-radius: 8px;")
+                val.setStyleSheet(
+                    f"color: {colors['text_primary']}; font-size: 16px; font-weight: 800; "
+                    f"background: {colors['bg_tertiary']}; padding: 0 12px; border-radius: 8px;"
+                )
             val.setAlignment(Qt.AlignmentFlag.AlignVCenter)
             setattr(self, val_id, val)
             vbox.addWidget(lbl)
@@ -278,10 +239,15 @@ class CartWidget(QWidget):
         t_vbox = QVBoxLayout()
         t_vbox.setSpacing(4)
         t_lbl = QLabel("Total")
-        t_lbl.setStyleSheet("color: #9ca3af; font-size: 12px; font-weight: 600; letter-spacing: 0.5px;")
+        t_lbl.setStyleSheet(
+            f"color: {colors['text_tertiary']}; font-size: 12px; font-weight: 600; letter-spacing: 0.5px;"
+        )
         self.total_label = QLabel("UZS 0")
         self.total_label.setFixedHeight(52)
-        self.total_label.setStyleSheet("color: #10b981; font-size: 22px; font-weight: 900; background: #1f2937; padding: 0 14px; border-radius: 8px;")
+        self.total_label.setStyleSheet(
+            f"color: {colors['success']}; font-size: 22px; font-weight: 900; "
+            f"background: {colors['bg_tertiary']}; padding: 0 14px; border-radius: 8px;"
+        )
         self.total_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         t_vbox.addWidget(t_lbl)
         t_vbox.addWidget(self.total_label)
@@ -289,18 +255,18 @@ class CartWidget(QWidget):
         self.checkout_btn = QPushButton("PAY")
         self.checkout_btn.setFixedHeight(56)
         self.checkout_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.checkout_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #10b981, stop:1 #059669);
+        self.checkout_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {colors['success']}, stop:1 {colors['accent_hover']});
                 color: white;
                 font-weight: 900; 
                 font-size: 18px;
                 border-radius: 8px;
                 margin-top: 12px;
                 border: none;
-            }
-            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #047857); }
-            QPushButton:pressed { background: #047857; }
+            }}
+            QPushButton:hover {{ background: {colors['accent_hover']}; }}
+            QPushButton:pressed {{ background: {colors['accent_pressed']}; }}
         """)
         self.checkout_btn.clicked.connect(self.handle_checkout)
         
@@ -317,26 +283,26 @@ class CartWidget(QWidget):
         row2.addLayout(_stat_box("Total Qty", "total_qty_label"))
         row2.addLayout(_stat_box("Items Discounts", "discounts_label"))
         
-        cancel_btn = QPushButton("CANCEL SALE")
-        cancel_btn.setFixedHeight(44)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ec4899, stop:1 #db2777);
+        self.cancel_btn = QPushButton("CANCEL SALE")
+        self.cancel_btn.setFixedHeight(44)
+        self.cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {colors['error']}, stop:1 {colors['accent_action']});
                 color: white; 
                 font-weight: 800; 
                 border-radius: 8px; 
                 font-size: 13px;
                 border: none;
                 letter-spacing: 0.5px;
-            }
-            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #db2777, stop:1 #be185d); }
-            QPushButton:pressed { background: #be185d; }
+            }}
+            QPushButton:hover {{ background: {colors['accent_action']}; }}
+            QPushButton:pressed {{ background: {colors['error']}; }}
         """)
-        cancel_btn.clicked.connect(self.clear_cart)
+        self.cancel_btn.clicked.connect(self.clear_cart)
         
         btn_vbox = QVBoxLayout()
         btn_vbox.addSpacing(16)
-        btn_vbox.addWidget(cancel_btn)
+        btn_vbox.addWidget(self.cancel_btn)
         
         row2.addLayout(btn_vbox)
         row2.setStretch(0, 1)
@@ -361,10 +327,11 @@ class CartWidget(QWidget):
         main_layout.addWidget(self.keyboard_panel)
 
     def _build_numpad_panel(self):
+        colors = ThemeManager.get_theme_colors()
         panel = QFrame()
-        panel.setStyleSheet("""
-            QFrame { background: #1e1e1e; border-top: 1px solid #333; }
-        """)
+        panel.setStyleSheet(
+            f"QFrame {{ background: {colors['bg_secondary']}; border-top: 1px solid {colors['border']}; }}"
+        )
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(10, 8, 10, 10)
         layout.setSpacing(6)
@@ -374,18 +341,18 @@ class CartWidget(QWidget):
         self.numpad_display = QLabel("—")
         self.numpad_display.setFixedHeight(42)
         self.numpad_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.numpad_display.setStyleSheet("""
-            font-size: 22px; font-weight: 700; color: #1e293b;
-            background: white; border: 1.5px solid #3b82f6;
+        self.numpad_display.setStyleSheet(f"""
+            font-size: 22px; font-weight: 700; color: {colors['text_primary']};
+            background: {colors['input_bg']}; border: 1.5px solid {colors['accent']};
             border-radius: 8px; padding: 4px 12px;
         """)
         np_close = QPushButton("✕")
         np_close.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         np_close.setFixedSize(42, 42)
-        np_close.setStyleSheet("""
-            QPushButton { background:#ef4444; color:white; font-weight:bold;
-                font-size:16px; border-radius:8px; border:none; }
-            QPushButton:hover { background:#dc2626; }
+        np_close.setStyleSheet(f"""
+            QPushButton {{ background:{colors['error']}; color:white; font-weight:bold;
+                font-size:16px; border-radius:8px; border:none; }}
+            QPushButton:hover {{ background:{colors['accent_action']}; }}
         """)
         np_close.clicked.connect(self._close_panels)
         top.addWidget(self.numpad_display, stretch=1)
@@ -404,19 +371,20 @@ class CartWidget(QWidget):
         return panel
 
     def _make_numpad_key(self, key):
+        colors = ThemeManager.get_theme_colors()
         label = 'TOZALASH' if key == 'CLR' else key
         btn = QPushButton(label)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn.setFixedHeight(52)
         if key == '⌫':
-            style = "background:#fee2e2; color:#ef4444; font-size:20px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['error']}; font-size:20px; font-weight:bold;"
         elif key == 'CLR':
-            style = "background:#fff7ed; color:#ea580c; font-size:11px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['accent_action']}; font-size:11px; font-weight:bold;"
         else:
-            style = "background:white; color:#1e293b; font-size:20px; font-weight:700;"
+            style = f"background:{colors['input_bg']}; color:{colors['text_primary']}; font-size:20px; font-weight:700;"
         btn.setStyleSheet(f"""
-            QPushButton {{ {style} border:1px solid #e2e8f0; border-radius:8px; }}
-            QPushButton:pressed {{ background:#dbeafe; }}
+            QPushButton {{ {style} border:1px solid {colors['border']}; border-radius:8px; }}
+            QPushButton:pressed {{ background:{colors['selection_bg']}; }}
         """)
         btn.clicked.connect(lambda _, k=key: self._on_numpad_key(k))
         return btn
@@ -451,10 +419,11 @@ class CartWidget(QWidget):
     #  INLINE KEYBOARD  (Izoh uchun)
     # ─────────────────────────────────────────
     def _build_keyboard_panel(self):
+        colors = ThemeManager.get_theme_colors()
         panel = QFrame()
-        panel.setStyleSheet("""
-            QFrame { background: #1e1e1e; border-top: 1px solid #333; }
-        """)
+        panel.setStyleSheet(
+            f"QFrame {{ background: {colors['bg_secondary']}; border-top: 1px solid {colors['border']}; }}"
+        )
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(10, 8, 10, 10)
         layout.setSpacing(5)
@@ -463,18 +432,18 @@ class CartWidget(QWidget):
         top = QHBoxLayout()
         self.kb_display = QLabel("Izoh...")
         self.kb_display.setFixedHeight(38)
-        self.kb_display.setStyleSheet("""
-            font-size: 15px; font-weight: 600; color: #334155;
-            background: white; border: 1.5px solid #3b82f6;
+        self.kb_display.setStyleSheet(f"""
+            font-size: 15px; font-weight: 600; color: {colors['text_secondary']};
+            background: {colors['input_bg']}; border: 1.5px solid {colors['accent']};
             border-radius: 8px; padding: 4px 12px;
         """)
         kb_close = QPushButton("✕")
         kb_close.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         kb_close.setFixedSize(38, 38)
-        kb_close.setStyleSheet("""
-            QPushButton { background:#ef4444; color:white; font-weight:bold;
-                font-size:14px; border-radius:8px; border:none; }
-            QPushButton:hover { background:#dc2626; }
+        kb_close.setStyleSheet(f"""
+            QPushButton {{ background:{colors['error']}; color:white; font-weight:bold;
+                font-size:14px; border-radius:8px; border:none; }}
+            QPushButton:hover {{ background:{colors['accent_action']}; }}
         """)
         kb_close.clicked.connect(self._close_panels)
         top.addWidget(self.kb_display, stretch=1)
@@ -498,24 +467,25 @@ class CartWidget(QWidget):
         return panel
 
     def _make_kb_key(self, key):
+        colors = ThemeManager.get_theme_colors()
         label = '␣' if key == 'SPACE' else ('TOZALASH' if key == 'CLR' else key)
         btn = QPushButton(label)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn.setFixedHeight(40)
         if key == '⌫':
-            style = "background:#fee2e2; color:#ef4444; font-size:16px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['error']}; font-size:16px; font-weight:bold;"
         elif key == 'CLR':
-            style = "background:#fff7ed; color:#ea580c; font-size:10px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['accent_action']}; font-size:10px; font-weight:bold;"
         elif key == 'SPACE':
-            style = "background:#eff6ff; color:#3b82f6; font-size:14px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['accent']}; font-size:14px; font-weight:bold;"
             btn.setMinimumWidth(100)
         elif key.isdigit():
-            style = "background:#e0e7ff; color:#3730a3; font-size:14px; font-weight:bold;"
+            style = f"background:{colors['bg_tertiary']}; color:{colors['text_secondary']}; font-size:14px; font-weight:bold;"
         else:
-            style = "background:white; color:#1e293b; font-size:13px; font-weight:600;"
+            style = f"background:{colors['input_bg']}; color:{colors['text_primary']}; font-size:13px; font-weight:600;"
         btn.setStyleSheet(f"""
-            QPushButton {{ {style} border:1px solid #e2e8f0; border-radius:6px; }}
-            QPushButton:pressed {{ background:#dbeafe; }}
+            QPushButton {{ {style} border:1px solid {colors['border']}; border-radius:6px; }}
+            QPushButton:pressed {{ background:{colors['selection_bg']}; }}
         """)
         btn.clicked.connect(lambda _, k=key: self._on_kb_key(k))
         return btn
@@ -565,42 +535,113 @@ class CartWidget(QWidget):
     # ─────────────────────────────────────────
     #  Styles
     # ─────────────────────────────────────────
-    @staticmethod
-    def _order_type_style(is_active: bool) -> str:
+    def _order_type_style(self, is_active: bool) -> str:
+        colors = ThemeManager.get_theme_colors()
         if is_active:
-            return """
-                QPushButton {
-                    background: #3b82f6; color: white;
+            return f"""
+                QPushButton {{
+                    background: {colors['accent']}; color: white;
                     border: none; border-radius: 10px;
                     font-weight: 700; font-size: 13px;
-                }
+                }}
             """
-        return """
-            QPushButton {
-                background: white; color: #475569;
-                border: 1.5px solid #e2e8f0;
+        return f"""
+            QPushButton {{
+                background: {colors['bg_secondary']}; color: {colors['text_secondary']};
+                border: 1.5px solid {colors['border']};
                 border-radius: 10px; font-weight: 600; font-size: 13px;
-            }
-            QPushButton:hover { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+            }}
+            QPushButton:hover {{ background: {colors['bg_tertiary']}; color: {colors['accent']}; border-color: {colors['accent']}; }}
         """
 
-    @staticmethod
-    def _input_style() -> str:
-        return """
-            QLineEdit, QComboBox {
+    def _input_style(self) -> str:
+        colors = ThemeManager.get_theme_colors()
+        return f"""
+            QLineEdit, QComboBox {{
                 padding: 10px 14px;
                 font-size: 15px;
-                border: 1.5px solid #e2e8f0;
+                border: 1.5px solid {colors['border']};
                 border-radius: 10px;
-                background: white;
-                color: #1e293b;
-            }
-            QLineEdit:focus, QComboBox:focus {
-                border-color: #93c5fd;
-            }
+                background: {colors['input_bg']};
+                color: {colors['text_primary']};
+            }}
+            QLineEdit:focus, QComboBox:focus {{
+                border-color: {colors['accent']};
+            }}
             QComboBox::drop-down { border: none; }
             QComboBox::down-arrow { width: 14px; height: 14px; }
         """
+
+    def apply_theme(self):
+        """Re-apply theme styles for runtime light/dark switching."""
+        styles = get_component_styles()
+        colors = ThemeManager.get_theme_colors()
+        self._theme_colors = colors
+
+        self.setStyleSheet(styles["cart_container"])
+        if hasattr(self, "customer_input"):
+            self.customer_input.setStyleSheet(styles["cart_input"])
+        if hasattr(self, "customer_results"):
+            self.customer_results.setStyleSheet(styles["cart_list"])
+        if hasattr(self, "cg_mock"):
+            self.cg_mock.setStyleSheet(styles["cart_input"])
+        if hasattr(self, "search_item_input"):
+            self.search_item_input.setStyleSheet(styles["cart_input"])
+        if hasattr(self, "price_list_combo"):
+            self.price_list_combo.setStyleSheet(styles["cart_input"])
+        if hasattr(self, "customer_clear_btn"):
+            self.customer_clear_btn.setStyleSheet(styles["cart_button"])
+        if hasattr(self, "customer_add_btn"):
+            self.customer_add_btn.setStyleSheet(styles["cart_button"])
+        if hasattr(self, "columns_btn"):
+            self.columns_btn.setStyleSheet(
+                f"color: {colors['accent']}; font-weight: bold; font-size: 12px; margin-top: 15px; margin-left: 10px;"
+            )
+        if hasattr(self, "table"):
+            self.table.setStyleSheet(styles["cart_table"])
+        if hasattr(self, "total_label"):
+            self.total_label.setStyleSheet(
+                f"color: {colors['success']}; font-size: 22px; font-weight: 900; "
+                f"background: {colors['bg_tertiary']}; padding: 0 14px; border-radius: 8px;"
+            )
+        if hasattr(self, "total_qty_label"):
+            self.total_qty_label.setStyleSheet(
+                f"color: {colors['text_primary']}; font-size: 16px; font-weight: 800; "
+                f"background: {colors['bg_tertiary']}; padding: 0 12px; border-radius: 8px;"
+            )
+        if hasattr(self, "discounts_label"):
+            self.discounts_label.setStyleSheet(
+                f"color: {colors['text_primary']}; font-size: 16px; font-weight: 800; "
+                f"background: {colors['bg_tertiary']}; padding: 0 12px; border-radius: 8px;"
+            )
+        if hasattr(self, "checkout_btn"):
+            self.checkout_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {colors['success']}, stop:1 {colors['accent_hover']});
+                    color: white;
+                    font-weight: 900; 
+                    font-size: 18px;
+                    border-radius: 8px;
+                    margin-top: 12px;
+                    border: none;
+                }}
+                QPushButton:hover {{ background: {colors['accent_hover']}; }}
+                QPushButton:pressed {{ background: {colors['accent_pressed']}; }}
+            """)
+        if hasattr(self, "cancel_btn"):
+            self.cancel_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {colors['error']}, stop:1 {colors['accent_action']});
+                    color: white; 
+                    font-weight: 800; 
+                    border-radius: 8px; 
+                    font-size: 13px;
+                    border: none;
+                    letter-spacing: 0.5px;
+                }}
+                QPushButton:hover {{ background: {colors['accent_action']}; }}
+                QPushButton:pressed {{ background: {colors['error']}; }}
+            """)
 
     # ─────────────────────────────────────────
     #  Business logic
@@ -616,10 +657,12 @@ class CartWidget(QWidget):
         self.ticket_input.setEnabled(needs_ticket)
         if not needs_ticket:
             self.ticket_input.clear()
-            self.ticket_input.setStyleSheet(self._input_style() + "background-color: #f3f4f6;")
+            self.ticket_input.setStyleSheet(self._input_style() + f"background-color: {ThemeManager.get_theme_colors()['bg_tertiary']};")
             self.numpad_panel.setVisible(False)
         else:
-            self.ticket_input.setStyleSheet(self._input_style() + "border: 2px solid #3b82f6;")
+            self.ticket_input.setStyleSheet(
+                self._input_style() + f"border: 2px solid {ThemeManager.get_theme_colors()['accent']};"
+            )
 
 
     def load_price_lists(self):
@@ -1266,6 +1309,226 @@ class CartWidget(QWidget):
             logger.debug("Customer Group serverdan olinmadi: %s", e)
             return []
 
+    def _open_add_customer_form(self):
+        if not self.api or not self.api.is_configured():
+            InfoDialog(self, "Xatolik", "Customer qo'shish uchun serverga ulanish kerak.", kind="error").exec()
+            return
+
+        company = (load_config().get("company") or "").strip()
+        if not company:
+            InfoDialog(self, "Xatolik", "Company topilmadi. Avval sinxronizatsiya qiling.", kind="error").exec()
+            return
+
+        colors = ThemeManager.get_theme_colors()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Yangi Customer")
+        dlg.setModal(True)
+        dlg.setMinimumWidth(420)
+        dlg.setStyleSheet(f"background: {colors['bg_primary']}; color: {colors['text_primary']};")
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        title = QLabel("Yangi customer qo'shish")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
+        layout.addWidget(title)
+
+        company_info = QLabel(f"Kompaniya: {company}")
+        company_info.setStyleSheet(f"font-size: 12px; color: {colors['text_secondary']};")
+        layout.addWidget(company_info)
+
+        customer_type_info = QLabel("Customer Type: Company")
+        customer_type_info.setStyleSheet(f"font-size: 12px; color: {colors['text_secondary']};")
+        layout.addWidget(customer_type_info)
+
+        name_label = QLabel("Customer name")
+        name_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {colors['text_secondary']};")
+        layout.addWidget(name_label)
+
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("Masalan: ABC Trade")
+        name_input.setFixedHeight(40)
+        name_input.setStyleSheet(get_component_styles()["cart_input"])
+        layout.addWidget(name_input)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        cancel_btn = QPushButton("Bekor qilish")
+        cancel_btn.setMinimumHeight(38)
+        cancel_btn.setStyleSheet(get_component_styles()["cart_button"])
+        cancel_btn.clicked.connect(dlg.reject)
+
+        save_btn = QPushButton("Qo'shish")
+        save_btn.setMinimumHeight(38)
+        save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {colors['accent']};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-weight: 700;
+                padding: 0 16px;
+            }}
+            QPushButton:hover {{ background: {colors['accent_hover']}; }}
+        """)
+        save_btn.clicked.connect(dlg.accept)
+
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+        QTimer.singleShot(0, name_input.setFocus)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        customer_name = name_input.text().strip()
+        if not customer_name:
+            InfoDialog(self, "Xatolik", "Customer name bo'sh bo'lmasligi kerak.", kind="warning").exec()
+            return
+
+        customer_group = self._resolve_new_customer_group()
+        if not customer_group:
+            InfoDialog(self, "Xatolik", "Customer Group topilmadi.", kind="error").exec()
+            return
+
+        territory = self._resolve_new_customer_territory()
+        meta_fields = self._get_customer_meta_fields()
+
+        doc = {
+            "doctype": "Customer",
+            "customer_name": customer_name,
+            "customer_type": "Company",
+            "customer_group": customer_group,
+        }
+        if territory:
+            doc["territory"] = territory
+
+        if company:
+            company_field = ""
+            for field_name in ("company", "default_company", "customer_company"):
+                if field_name in meta_fields:
+                    company_field = field_name
+                    break
+            if not company_field:
+                for field_name in sorted(meta_fields):
+                    lowered = field_name.lower()
+                    if lowered.endswith("company"):
+                        company_field = field_name
+                        break
+            if company_field:
+                doc[company_field] = company
+
+        success, response = self.api.call_method("frappe.client.insert", {"doc": doc})
+        if not success or not isinstance(response, dict):
+            InfoDialog(
+                self,
+                "Xatolik",
+                f"Customer qo'shib bo'lmadi: {response}",
+                kind="error",
+            ).exec()
+            return
+
+        customer_code = str(response.get("name") or customer_name).strip()
+        inserted_name = str(response.get("customer_name") or customer_name).strip()
+        customer_phone = str(response.get("mobile_no") or response.get("phone") or "").strip()
+        customer_email = str(response.get("email_id") or response.get("email") or "").strip()
+
+        try:
+            db.connect(reuse_if_open=True)
+            Customer.insert(
+                name=customer_code,
+                customer_name=inserted_name,
+                customer_group=response.get("customer_group") or customer_group,
+                phone=customer_phone,
+                email=customer_email,
+                address=response.get("customer_primary_address"),
+                posawesome_data=json.dumps(response),
+                last_sync=datetime.datetime.now(),
+            ).on_conflict(
+                conflict_target=[Customer.name],
+                update={
+                    "customer_name": inserted_name,
+                    "customer_group": response.get("customer_group") or customer_group,
+                    "phone": customer_phone,
+                    "email": customer_email,
+                    "address": response.get("customer_primary_address"),
+                    "posawesome_data": json.dumps(response),
+                    "last_sync": datetime.datetime.now(),
+                },
+            ).execute()
+        except Exception as e:
+            logger.debug("Yangi customer lokal bazaga saqlanmadi: %s", e)
+        finally:
+            if not db.is_closed():
+                db.close()
+
+        self._customer_info_cache.pop(customer_code, None)
+        self.load_customers()
+        self._apply_customer_filters(typed_text="", selected_name=customer_code, show_popup=False)
+        self._reprice_cart()
+        InfoDialog(self, "Muvaffaqiyatli", f"Customer qo'shildi: {inserted_name}", kind="success").exec()
+
+    def _resolve_new_customer_group(self) -> str:
+        selected_group = self._get_selected_customer_group()
+        if selected_group and selected_group != "all":
+            return selected_group
+
+        for row in self._all_customers:
+            group = (row.get("customer_group") or "").strip()
+            if group:
+                return group
+
+        for idx in range(self.cg_mock.count()):
+            group = str(self.cg_mock.itemData(idx) or "").strip()
+            if group and group != "all":
+                return group
+        return ""
+
+    def _resolve_new_customer_territory(self) -> str:
+        if not self.api:
+            return "All Territories"
+        try:
+            success, response = self.api.call_method(
+                "frappe.client.get_list",
+                {
+                    "doctype": "Territory",
+                    "fields": ["name"],
+                    "filters": {"is_group": 0},
+                    "limit_page_length": 1,
+                    "order_by": "name asc",
+                },
+            )
+            if success and isinstance(response, list) and response:
+                territory = str(response[0].get("name") or "").strip()
+                if territory:
+                    return territory
+        except Exception as e:
+            logger.debug("Territory olinmadi: %s", e)
+        return "All Territories"
+
+    def _get_customer_meta_fields(self) -> set[str]:
+        if isinstance(self._customer_meta_fields, set):
+            return set(self._customer_meta_fields)
+        self._customer_meta_fields = set()
+        if not self.api:
+            return set()
+        try:
+            success, response = self.api.call_method("frappe.client.get_meta", {"doctype": "Customer"})
+            if not success or not isinstance(response, dict):
+                return set()
+            fields = response.get("fields") or []
+            for field in fields:
+                if not isinstance(field, dict):
+                    continue
+                field_name = str(field.get("fieldname") or "").strip()
+                if field_name:
+                    self._customer_meta_fields.add(field_name)
+        except Exception as e:
+            logger.debug("Customer meta olinmadi: %s", e)
+        return set(self._customer_meta_fields)
+
     def _normalize_customer_search(self, text: str) -> list[str]:
         return [part for part in (text or "").strip().lower().split() if part]
 
@@ -1334,7 +1597,10 @@ class CartWidget(QWidget):
         if not hasattr(self, "customer_input") or not hasattr(self, "customer_results"):
             return
         top_left = self.customer_input.mapTo(self, QPoint(0, self.customer_input.height() + 4))
-        width = self.customer_input.width() + self.customer_clear_btn.width() + 6
+        clear_width = self.customer_clear_btn.width() if hasattr(self, "customer_clear_btn") else 0
+        add_width = self.customer_add_btn.width() if hasattr(self, "customer_add_btn") else 0
+        buttons_width = clear_width + add_width + 12
+        width = self.customer_input.width() + buttons_width
         row_height = 36
         visible_rows = min(max(self.customer_results.count(), 1), 5)
         height = 8 + (visible_rows * row_height)
@@ -1496,6 +1762,7 @@ class CartWidget(QWidget):
             self.table.setColumnHidden(3, not self.col_settings["show_amount"]["value"])
 
     def refresh_table(self):
+        colors = ThemeManager.get_theme_colors()
         self.table.setRowCount(0)
         total_qty = 0
         self.gross_total_amount = 0.0
@@ -1516,18 +1783,24 @@ class CartWidget(QWidget):
             minus_btn = QPushButton("−")
             minus_btn.setFixedSize(28, 28)
             minus_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            minus_btn.setStyleSheet("background: transparent; color: #ef4444; border: 1px solid #ef4444; border-radius: 4px; font-weight: bold; font-size: 14px; padding-bottom: 2px;")
+            minus_btn.setStyleSheet(
+                f"background: transparent; color: {colors['error']}; border: 1px solid {colors['error']}; border-radius: 4px; font-weight: bold; font-size: 14px; padding-bottom: 2px;"
+            )
             minus_btn.clicked.connect(lambda _, c=code: self.update_qty(c, -1))
             
             qty_lbl = QtyLabel(str(item['qty']))
             qty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            qty_lbl.setStyleSheet("font-weight: 900; font-size: 14px; color: white; min-width: 30px;")
+            qty_lbl.setStyleSheet(
+                f"font-weight: 900; font-size: 14px; color: {colors['text_primary']}; min-width: 30px;"
+            )
             qty_lbl.clicked.connect(lambda c=code, q=str(item['qty']): self._open_qty_numpad(c, q))
             
             plus_btn = QPushButton("+")
             plus_btn.setFixedSize(28, 28)
             plus_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            plus_btn.setStyleSheet("background: transparent; color: #10b981; border: 1px solid #10b981; border-radius: 4px; font-weight: bold; font-size: 14px; padding-bottom: 2px;")
+            plus_btn.setStyleSheet(
+                f"background: transparent; color: {colors['success']}; border: 1px solid {colors['success']}; border-radius: 4px; font-weight: bold; font-size: 14px; padding-bottom: 2px;"
+            )
             plus_btn.clicked.connect(lambda _, c=code: self.update_qty(c, 1))
             
             qty_layout.addStretch()
@@ -1547,11 +1820,14 @@ class CartWidget(QWidget):
                 rate_lbl.setToolTip("Rate ni shu joyda o'zgartiring")
                 rate_lbl.editingFinished.connect(lambda c=code, w=rate_lbl: self._commit_inline_rate(c, w))
                 rate_lbl.setStyleSheet(
-                    "color: #60a5fa; font-weight: 700; font-size: 13px; background:#0f172a; border:1px solid #334155; border-radius:6px; padding:4px;"
+                    f"color: {colors['accent']}; font-weight: 700; font-size: 13px; "
+                    f"background:{colors['input_bg']}; border:1px solid {colors['border']}; border-radius:6px; padding:4px;"
                 )
             else:
                 rate_lbl = QLabel(f"UZS {item['price']:,.0f}")
-                rate_lbl.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 13px;")
+                rate_lbl.setStyleSheet(
+                    f"color: {colors['text_tertiary']}; font-weight: 600; font-size: 13px;"
+                )
             rate_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setCellWidget(row, 2, rate_lbl)
 
@@ -1563,7 +1839,9 @@ class CartWidget(QWidget):
             amt = qty * rate
             amt_lbl = QLabel(f"UZS {amt:,.0f}")
             amt_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            amt_lbl.setStyleSheet("font-weight: 900; font-size: 14px; color: white;")
+            amt_lbl.setStyleSheet(
+                f"font-weight: 900; font-size: 14px; color: {colors['text_primary']};"
+            )
             amt_lbl.setContentsMargins(0, 0, 10, 0)
             self.table.setCellWidget(row, 3, amt_lbl)
 
@@ -1577,11 +1855,15 @@ class CartWidget(QWidget):
             del_btn = QPushButton("×")
             del_btn.setFixedSize(22, 22)
             del_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            del_btn.setStyleSheet("background: transparent; color: #ef4444; font-size: 18px; font-weight: 900; border: none;")
+            del_btn.setStyleSheet(
+                f"background: transparent; color: {colors['error']}; font-size: 18px; font-weight: 900; border: none;"
+            )
             del_btn.clicked.connect(lambda _, c=code: self.update_qty_absolute(c, "0"))
             
             name_lbl = QLabel(item['name'])
-            name_lbl.setStyleSheet("font-weight: 600; font-size: 13px; color: white;")
+            name_lbl.setStyleSheet(
+                f"font-weight: 600; font-size: 13px; color: {colors['text_primary']};"
+            )
             name_lbl.setWordWrap(True)
             
             name_layout.addWidget(del_btn)

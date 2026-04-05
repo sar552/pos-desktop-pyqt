@@ -11,14 +11,14 @@ from core.logger import get_logger
 from core.config import clear_credentials
 from ui.login_window import LoginWindow
 from ui.main_window import MainWindow
-from ui.styles import GLOBAL_STYLE
+from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
 
 
 def main():
     app = QApplication(sys.argv)
-    app.setStyleSheet(GLOBAL_STYLE)
+    ThemeManager.initialize(app)
 
     # Bitta shared API instance yaratamiz
     shared_api = FrappeAPI()
