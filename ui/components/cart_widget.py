@@ -231,88 +231,94 @@ class CartWidget(QWidget):
         bottom_area = QVBoxLayout()
         bottom_area.setSpacing(12)
         
-        # ROW 1: Items Discounts, Total, PAY button
+        # ROW 1: Total, PAY button
         row1 = QHBoxLayout()
         row1.setSpacing(12)
         
-        def _stat_box(title, val_id):
+        def _stat_box(title, val_id, highlight=False):
             vbox = QVBoxLayout()
             vbox.setSpacing(4)
             lbl = QLabel(title)
-            lbl.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: 700;")
+            lbl.setStyleSheet("color: #9ca3af; font-size: 12px; font-weight: 600; letter-spacing: 0.5px;")
             val = QLabel("0")
-            val.setFixedHeight(50)
-            val.setStyleSheet("color: white; font-size: 18px; font-weight: 900; background: #1f2937; padding: 0 14px; border-radius: 6px;")
+            val.setFixedHeight(44)
+            if highlight:
+                val.setStyleSheet("color: #10b981; font-size: 20px; font-weight: 900; background: #1f2937; padding: 0 12px; border-radius: 8px;")
+            else:
+                val.setStyleSheet("color: white; font-size: 16px; font-weight: 800; background: #1f2937; padding: 0 12px; border-radius: 8px;")
             val.setAlignment(Qt.AlignmentFlag.AlignVCenter)
             setattr(self, val_id, val)
             vbox.addWidget(lbl)
             vbox.addWidget(val)
             return vbox
         
-        row1.addLayout(_stat_box("Items Discounts", "discounts_label"))
-        
         t_vbox = QVBoxLayout()
         t_vbox.setSpacing(4)
         t_lbl = QLabel("Total")
-        t_lbl.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: 700;")
+        t_lbl.setStyleSheet("color: #9ca3af; font-size: 12px; font-weight: 600; letter-spacing: 0.5px;")
         self.total_label = QLabel("UZS 0")
-        self.total_label.setFixedHeight(50)
-        self.total_label.setStyleSheet("color: #10b981; font-size: 22px; font-weight: 900; background: #1f2937; padding: 0 14px; border-radius: 6px;")
+        self.total_label.setFixedHeight(52)
+        self.total_label.setStyleSheet("color: #10b981; font-size: 22px; font-weight: 900; background: #1f2937; padding: 0 14px; border-radius: 8px;")
         self.total_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         t_vbox.addWidget(t_lbl)
         t_vbox.addWidget(self.total_label)
         
         self.checkout_btn = QPushButton("PAY")
-        self.checkout_btn.setFixedHeight(60)
+        self.checkout_btn.setFixedHeight(56)
         self.checkout_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.checkout_btn.setStyleSheet("""
             QPushButton {
-                background-color: #10b981;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #10b981, stop:1 #059669);
                 color: white;
                 font-weight: 900; 
-                font-size: 20px;
+                font-size: 18px;
                 border-radius: 8px;
-                margin-top: 14px;
+                margin-top: 12px;
+                border: none;
             }
-            QPushButton:hover { background-color: #059669; }
+            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #047857); }
+            QPushButton:pressed { background: #047857; }
         """)
         self.checkout_btn.clicked.connect(self.handle_checkout)
         
         row1.addLayout(t_vbox)
         row1.addWidget(self.checkout_btn)
         row1.setStretch(0, 1)
-        row1.setStretch(1, 1)
-        row1.setStretch(2, 2)
+        row1.setStretch(1, 2)
         bottom_area.addLayout(row1)
         
-        # ROW 2: Total Qty, Cancel Sale button
+        # ROW 2: Total Qty, Items Discounts, Cancel Sale button
         row2 = QHBoxLayout()
-        row2.setSpacing(12)
+        row2.setSpacing(10)
+        
         row2.addLayout(_stat_box("Total Qty", "total_qty_label"))
+        row2.addLayout(_stat_box("Items Discounts", "discounts_label"))
         
         cancel_btn = QPushButton("CANCEL SALE")
-        cancel_btn.setFixedHeight(50)
+        cancel_btn.setFixedHeight(44)
         cancel_btn.setStyleSheet("""
             QPushButton {
-                background: #ec4899; 
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ec4899, stop:1 #db2777);
                 color: white; 
-                font-weight: 900; 
-                border-radius: 6px; 
-                font-size: 15px;
+                font-weight: 800; 
+                border-radius: 8px; 
+                font-size: 13px;
+                border: none;
+                letter-spacing: 0.5px;
             }
-            QPushButton:hover { background-color: #db2777; }
+            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #db2777, stop:1 #be185d); }
+            QPushButton:pressed { background: #be185d; }
         """)
         cancel_btn.clicked.connect(self.clear_cart)
         
         btn_vbox = QVBoxLayout()
-        btn_row = QHBoxLayout()
-        btn_row.addWidget(cancel_btn)
-        btn_vbox.addSpacing(18)
-        btn_vbox.addLayout(btn_row)
+        btn_vbox.addSpacing(16)
+        btn_vbox.addWidget(cancel_btn)
         
         row2.addLayout(btn_vbox)
         row2.setStretch(0, 1)
-        row2.setStretch(1, 2)
+        row2.setStretch(1, 1)
+        row2.setStretch(2, 1)
         bottom_area.addLayout(row2)
 
         main_layout.addLayout(bottom_area)
