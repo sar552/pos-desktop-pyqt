@@ -194,7 +194,7 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(logo_widget)
 
         self.company_logo_label = QLabel()
-        self.company_logo_label.setFixedSize(56, 56)
+        self.company_logo_label.setFixedSize(72, 72)
         self.company_logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         top_bar.addWidget(self.company_logo_label)
 
@@ -474,11 +474,11 @@ class MainWindow(QMainWindow):
             QLabel {{
                 background: {colors['bg_secondary']};
                 border: 1.5px solid {colors['border']};
-                border-radius: 10px;
+                border-radius: 14px;
                 color: {colors['text_tertiary']};
-                font-size: 24px;
+                font-size: 28px;
                 font-weight: 700;
-                padding: 3px;
+                padding: 4px;
             }}
         """)
 

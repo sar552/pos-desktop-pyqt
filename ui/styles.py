@@ -39,10 +39,10 @@ THEME_COLORS = {
         "warning": "#F59E0B",
     },
     "dark": {
-        # Backgrounds - Deep blacks and dark grays
-        "bg_primary": "#0A0A0C",       # Deep dark background
-        "bg_secondary": "#1C1C1E",     # Dark gray for cards
-        "bg_tertiary": "#2C2C2E",      # Lighter gray for headers
+        # Backgrounds - Dark navy blues (tyomniy siniy)
+        "bg_primary": "#0B1120",       # Deep dark navy background
+        "bg_secondary": "#111B2E",     # Dark navy for cards
+        "bg_tertiary": "#1A2740",      # Slightly lighter navy for headers
         
         # Text colors - Light grays and whites
         "text_primary": "#EDEDEF",     # Almost white for primary text
@@ -50,8 +50,8 @@ THEME_COLORS = {
         "text_tertiary": "#8A8F98",    # Darker gray for hints
         
         # Borders
-        "border": "#3A3A3C",           # Dark gray border
-        "border_light": "#2C2C2E",     # Very dark gray
+        "border": "#253552",           # Navy-tinted border
+        "border_light": "#1A2740",     # Very dark navy
         
         # Accent colors - Bright teal/cyan for visibility
         "accent": "#14B8A6",           # Bright teal
@@ -60,16 +60,16 @@ THEME_COLORS = {
         "accent_action": "#FB923C",    # Bright orange for actions
         
         # Selection
-        "selection_bg": "#2C4A47",     # Dark teal selection
+        "selection_bg": "#1A3352",     # Dark blue selection
         "selection_text": "#5EEAD4",   # Light teal text
         
         # Inputs
-        "input_bg": "#1C1C1E",         # Dark input background
-        "input_focus_bg": "#2C2C2E",   # Lighter on focus
+        "input_bg": "#111B2E",         # Dark navy input background
+        "input_focus_bg": "#1A2740",   # Slightly lighter on focus
         
         # Scrollbars
-        "scrollbar_bg": "#1C1C1E",
-        "scrollbar_handle": "#3A3A3C",
+        "scrollbar_bg": "#111B2E",
+        "scrollbar_handle": "#253552",
         
         # Status colors
         "success": "#22C55E",

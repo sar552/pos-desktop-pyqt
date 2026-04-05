@@ -1342,6 +1342,26 @@ class CartWidget(QWidget):
         customer_type_info.setStyleSheet(f"font-size: 12px; color: {colors['text_secondary']};")
         layout.addWidget(customer_type_info)
 
+        cg_label = QLabel("Customer Group")
+        cg_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {colors['text_secondary']};")
+        layout.addWidget(cg_label)
+
+        cg_combo = QComboBox()
+        cg_combo.setFixedHeight(40)
+        cg_combo.setStyleSheet(get_component_styles()["cart_combo"])
+        for idx in range(self.cg_mock.count()):
+            group_data = str(self.cg_mock.itemData(idx) or "").strip()
+            group_text = self.cg_mock.itemText(idx)
+            if group_data and group_data != "all":
+                cg_combo.addItem(group_text, group_data)
+        selected_cg = self._get_selected_customer_group()
+        if selected_cg and selected_cg != "all":
+            for i in range(cg_combo.count()):
+                if cg_combo.itemData(i) == selected_cg:
+                    cg_combo.setCurrentIndex(i)
+                    break
+        layout.addWidget(cg_combo)
+
         name_label = QLabel("Customer name")
         name_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {colors['text_secondary']};")
         layout.addWidget(name_label)
@@ -1388,7 +1408,9 @@ class CartWidget(QWidget):
             InfoDialog(self, "Xatolik", "Customer name bo'sh bo'lmasligi kerak.", kind="warning").exec()
             return
 
-        customer_group = self._resolve_new_customer_group()
+        customer_group = str(cg_combo.currentData() or cg_combo.currentText() or "").strip()
+        if not customer_group:
+            customer_group = self._resolve_new_customer_group()
         if not customer_group:
             InfoDialog(self, "Xatolik", "Customer Group topilmadi.", kind="error").exec()
             return

@@ -30,14 +30,21 @@ class ImageLoader(QThread):
     def run(self):
         try:
             full_url = self.url if self.url.startswith("http") else f"{self.api.url}{self.url}"
-            response = self.api.session.get(full_url, timeout=IMAGE_TIMEOUT)
+            headers = {"Accept": "image/*,*/*"}
+            if self.api.api_key and self.api.api_secret:
+                headers["Authorization"] = f"token {self.api.api_key}:{self.api.api_secret}"
+            if self.api.site:
+                headers["X-Frappe-Site-Name"] = self.api.site
+            response = self.api.session.get(full_url, headers=headers, timeout=IMAGE_TIMEOUT)
             if response.status_code == 200:
                 image = QImage()
                 if image.loadFromData(response.content):
                     pixmap = QPixmap.fromImage(image)
                     self.image_loaded.emit(pixmap)
-        except Exception:
-            pass
+            else:
+                logger.debug("Image yuklanmadi: %s — HTTP %d", full_url, response.status_code)
+        except Exception as e:
+            logger.debug("Image yuklash xatosi: %s — %s", self.url, e)
 
 
 class ItemButton(QFrame):
@@ -184,11 +191,33 @@ class ItemButton(QFrame):
             }}
         """)
 
+    def _set_pixmap(self, pixmap: QPixmap):
+        """Yuklangan rasmni image_label'ga o'rnatish"""
+        if pixmap.isNull():
+            return
+        scaled = pixmap.scaled(
+            self.image_label.maximumWidth(),
+            self.image_label.maximumHeight(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.image_label.setPixmap(scaled)
+        self.image_label.setText("")
+        self.image_label.setStyleSheet("background: transparent; border-radius: 10px;")
+
     def _on_loader_finished(self):
         """ImageLoader tugaganda resurslarni tozalash"""
         if self.loader:
             self.loader.deleteLater()
             self.loader = None
+
+    def enterEvent(self, event):
+        self._apply_hover_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._apply_normal_style()
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

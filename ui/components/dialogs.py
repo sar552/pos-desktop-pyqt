@@ -6,9 +6,10 @@ ClickableLineEdit — click signal bilan QLineEdit
 """
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QLineEdit,
+    QPushButton, QFrame, QLineEdit, QCheckBox,
 )
 from PyQt6.QtCore import pyqtSignal
+from ui.theme_manager import ThemeManager
 
 
 class ClickableLineEdit(QLineEdit):
@@ -32,7 +33,8 @@ class InfoDialog(QDialog):
         self.setWindowTitle(title)
         self.setMinimumWidth(320)
         self.setMaximumWidth(500)
-        self.setStyleSheet("background: white;")
+        colors = ThemeManager.get_theme_colors()
+        self.setStyleSheet(f"background: {colors['bg_secondary']}; color: {colors['text_primary']};")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 18, 22, 18)
@@ -47,24 +49,24 @@ class InfoDialog(QDialog):
         )
         top.addWidget(ic)
         ttl = QLabel(title)
-        ttl.setStyleSheet(f"font-size:16px; font-weight:800; color:{self._COLORS.get(kind, '#1e293b')};")
+        ttl.setStyleSheet(f"font-size:16px; font-weight:800; color:{self._COLORS.get(kind, colors['text_primary'])};")
         top.addWidget(ttl, 1)
         layout.addLayout(top)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background:#f1f5f9; max-height:1px;")
+        sep.setStyleSheet(f"background:{colors['border_light']}; max-height:1px;")
         layout.addWidget(sep)
 
         msg = QLabel(message)
         msg.setWordWrap(True)
-        msg.setStyleSheet("font-size:13px; color:#334155; line-height:1.5;")
+        msg.setStyleSheet(f"font-size:13px; color:{colors['text_primary']}; line-height:1.5;")
         layout.addWidget(msg)
 
         ok = QPushButton("OK")
         ok.setMinimumHeight(38)
         ok.setStyleSheet(
-            f"QPushButton{{background:{self._COLORS.get(kind, '#3b82f6')};"
+            f"QPushButton{{background:{self._COLORS.get(kind, colors['accent'])};"
             f"color:white;font-weight:700;border-radius:10px;border:none;}}"
             f"QPushButton:hover{{opacity:0.9;}}"
         )
@@ -81,7 +83,8 @@ class ConfirmDialog(QDialog):
         self.setWindowTitle(title)
         self.setMinimumWidth(320)
         self.setMaximumWidth(500)
-        self.setStyleSheet("background: white;")
+        colors = ThemeManager.get_theme_colors()
+        self.setStyleSheet(f"background: {colors['bg_secondary']}; color: {colors['text_primary']};")
         self.result_accepted = False
 
         layout = QVBoxLayout(self)
@@ -96,18 +99,18 @@ class ConfirmDialog(QDialog):
         )
         top.addWidget(ic)
         ttl = QLabel(title)
-        ttl.setStyleSheet("font-size:16px; font-weight:800; color:#1e293b;")
+        ttl.setStyleSheet(f"font-size:16px; font-weight:800; color:{colors['text_primary']};")
         top.addWidget(ttl, 1)
         layout.addLayout(top)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background:#f1f5f9; max-height:1px;")
+        sep.setStyleSheet(f"background:{colors['border_light']}; max-height:1px;")
         layout.addWidget(sep)
 
         msg = QLabel(message)
         msg.setWordWrap(True)
-        msg.setStyleSheet("font-size:13px; color:#334155;")
+        msg.setStyleSheet(f"font-size:13px; color:{colors['text_primary']};")
         layout.addWidget(msg)
 
         btn_row = QHBoxLayout()
@@ -116,9 +119,9 @@ class ConfirmDialog(QDialog):
         no_btn = QPushButton(no_text)
         no_btn.setMinimumHeight(38)
         no_btn.setStyleSheet(
-            "QPushButton{background:#f1f5f9;color:#64748b;font-weight:700;"
-            "border-radius:10px;border:none;}"
-            "QPushButton:hover{background:#e2e8f0;}"
+            f"QPushButton{{background:{colors['bg_tertiary']};color:{colors['text_secondary']};font-weight:700;"
+            f"border-radius:10px;border:none;}}"
+            f"QPushButton:hover{{background:{colors['border']};}}"
         )
         no_btn.clicked.connect(self.reject)
 
@@ -140,15 +143,14 @@ class ConfirmDialog(QDialog):
         self.accept()
 
 
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox, QFrame
-
 class SettingsDialog(QDialog):
     '''Asosiy Settings (Jadvallar) dialogi — POSAwesome veb-uslubida'''
     def __init__(self, parent, title: str, options: dict):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setFixedWidth(360)
-        self.setStyleSheet("background: white; color: #1e293b;")
+        colors = ThemeManager.get_theme_colors()
+        self.setStyleSheet(f"background: {colors['bg_secondary']}; color: {colors['text_primary']};")
         
         self.options = options
         self.checkboxes = {}
@@ -158,12 +160,12 @@ class SettingsDialog(QDialog):
         layout.setSpacing(15)
 
         lbl = QLabel(title)
-        lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #0f172a;")
+        lbl.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {colors['text_primary']};")
         layout.addWidget(lbl)
 
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("background: #e2e8f0; max-height: 1px;")
+        line.setStyleSheet(f"background: {colors['border']}; max-height: 1px;")
         layout.addWidget(line)
 
         for key, details in options.items():
@@ -171,10 +173,10 @@ class SettingsDialog(QDialog):
             is_checked = details.get("value", False)
             cb = QCheckBox(label_text)
             cb.setChecked(is_checked)
-            cb.setStyleSheet("""
-                QCheckBox { font-size: 14px; font-weight: 500; color: #334155; padding: 4px 0; }
-                QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px; border: 1px solid #cbd5e1; }
-                QCheckBox::indicator:checked { background: #3b82f6; border: 1px solid #3b82f6; }
+            cb.setStyleSheet(f"""
+                QCheckBox {{ font-size: 14px; font-weight: 500; color: {colors['text_primary']}; padding: 4px 0; }}
+                QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid {colors['border']}; background: {colors['input_bg']}; }}
+                QCheckBox::indicator:checked {{ background: {colors['accent']}; border: 1px solid {colors['accent']}; }}
             """)
             self.checkboxes[key] = cb
             layout.addWidget(cb)
@@ -186,84 +188,16 @@ class SettingsDialog(QDialog):
         cancel_btn = QPushButton("Bekor qilish")
         cancel_btn.setFixedHeight(40)
         cancel_btn.setStyleSheet(
-            "QPushButton { background: transparent; color: #64748b; font-weight: 600; border: none; font-size: 14px; }"
-            "QPushButton:hover { color: #f43f5e; background: #fef2f2; border-radius: 6px; }"
+            f"QPushButton {{ background: transparent; color: {colors['text_secondary']}; font-weight: 600; border: none; font-size: 14px; }}"
+            f"QPushButton:hover {{ color: #f43f5e; background: {colors['bg_tertiary']}; border-radius: 6px; }}"
         )
         cancel_btn.clicked.connect(self.reject)
         
         save_btn = QPushButton("Saqlash")
         save_btn.setFixedHeight(40)
         save_btn.setStyleSheet(
-            "QPushButton { background: #3b82f6; color: white; font-weight: 600; border-radius: 6px; border: none; font-size: 14px; padding: 0 20px; }"
-            "QPushButton:hover { background: #2563eb; }"
-        )
-        save_btn.clicked.connect(self.accept)
-
-        btn_row.addWidget(cancel_btn)
-        btn_row.addStretch()
-        btn_row.addWidget(save_btn)
-        layout.addLayout(btn_row)
-
-    def get_results(self) -> dict:
-        return {key: cb.isChecked() for key, cb in self.checkboxes.items()}
-
-
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox, QFrame
-
-class SettingsDialog(QDialog):
-    '''Asosiy Settings (Jadvallar) dialogi — POSAwesome veb-uslubida'''
-    def __init__(self, parent, title: str, options: dict):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setFixedWidth(360)
-        self.setStyleSheet("background: white; color: #1e293b;")
-        
-        self.options = options
-        self.checkboxes = {}
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
-
-        lbl = QLabel(title)
-        lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #0f172a;")
-        layout.addWidget(lbl)
-
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("background: #e2e8f0; max-height: 1px;")
-        layout.addWidget(line)
-
-        for key, details in options.items():
-            label_text = details.get("label", key)
-            is_checked = details.get("value", False)
-            cb = QCheckBox(label_text)
-            cb.setChecked(is_checked)
-            cb.setStyleSheet("""
-                QCheckBox { font-size: 14px; font-weight: 500; color: #334155; padding: 4px 0; }
-                QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px; border: 1px solid #cbd5e1; }
-                QCheckBox::indicator:checked { background: #3b82f6; border: 1px solid #3b82f6; }
-            """)
-            self.checkboxes[key] = cb
-            layout.addWidget(cb)
-
-        layout.addStretch()
-
-        btn_row = QHBoxLayout()
-        
-        cancel_btn = QPushButton("Bekor qilish")
-        cancel_btn.setFixedHeight(40)
-        cancel_btn.setStyleSheet(
-            "QPushButton { background: transparent; color: #64748b; font-weight: 600; border: none; font-size: 14px; }"
-            "QPushButton:hover { color: #f43f5e; background: #fef2f2; border-radius: 6px; }"
-        )
-        cancel_btn.clicked.connect(self.reject)
-        
-        save_btn = QPushButton("Saqlash")
-        save_btn.setFixedHeight(40)
-        save_btn.setStyleSheet(
-            "QPushButton { background: #3b82f6; color: white; font-weight: 600; border-radius: 6px; border: none; font-size: 14px; padding: 0 20px; }"
-            "QPushButton:hover { background: #2563eb; }"
+            f"QPushButton {{ background: {colors['accent']}; color: white; font-weight: 600; border-radius: 6px; border: none; font-size: 14px; padding: 0 20px; }}"
+            f"QPushButton:hover {{ background: {colors['accent_hover']}; }}"
         )
         save_btn.clicked.connect(self.accept)
 
