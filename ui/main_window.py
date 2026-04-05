@@ -16,6 +16,7 @@ from ui.components.item_browser import ItemBrowser
 from ui.components.cart_widget import CartWidget
 from ui.components.checkout_window import CheckoutWindow
 from ui.components.history_window import HistoryWindow
+from ui.components.payments_window import PaymentsWindow
 from ui.components.offline_queue_window import OfflineQueueWindow
 from ui.components.pos_opening import PosOpeningDialog
 from ui.components.pos_closing import PosClosingDialog
@@ -246,6 +247,12 @@ class MainWindow(QMainWindow):
         )
         self.history_btn.clicked.connect(self.show_history)
         top_bar.addWidget(self.history_btn)
+
+        self.payments_btn = _tb_btn(
+            "Payments", "#0ea5e9", hover="#0284c7"
+        )
+        self.payments_btn.clicked.connect(self.show_payments_window)
+        top_bar.addWidget(self.payments_btn)
 
         # Sync Button — blue
         self.sync_btn = _tb_btn(
@@ -552,10 +559,33 @@ class MainWindow(QMainWindow):
         self._sync_item_browser_cart_view()
         self._update_offline_queue_count()
 
+    def _get_active_cart_customer(self) -> str:
+        active_cart = self.sales_tabs.currentWidget()
+        if not active_cart or not hasattr(active_cart, "get_selected_customer_name"):
+            return ""
+        customer = (active_cart.get_selected_customer_name() or "").strip()
+        if customer.lower() in {"guest", "guest customer"}:
+            return ""
+        return customer
+
     def show_printer_settings(self):
         from ui.components.printer_settings import PrinterSettingsDialog
         dlg = PrinterSettingsDialog(self, self.api)
         dlg.exec()
+
+    def show_payments_window(self):
+        dlg = PaymentsWindow(
+            self,
+            self.api,
+            opening_entry=self.opening_entry or "",
+            initial_customer=self._get_active_cart_customer(),
+        )
+        dlg.payment_processed.connect(self._after_payment_processed)
+        dlg.exec()
+
+    def _after_payment_processed(self):
+        if self.history_panel.isVisible():
+            self.history_panel.load_history()
 
     def show_history(self):
         visible = self.history_panel.isVisible()
@@ -693,6 +723,7 @@ class MainWindow(QMainWindow):
         self.add_sale_btn.setEnabled(enabled)
         self.close_shift_btn.setEnabled(enabled)
         self.open_shift_btn.setVisible(not enabled)
+        self.payments_btn.setEnabled(enabled)
         if hasattr(self, 'item_browser'):
             self.item_browser.setEnabled(enabled)
         if hasattr(self, 'sales_tabs'):

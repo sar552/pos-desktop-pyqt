@@ -2,9 +2,10 @@ import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QHBoxLayout,
-    QComboBox, QLineEdit, QGroupBox, QFrame,
+    QComboBox, QLineEdit, QGroupBox, QFrame, QListWidget, QListWidgetItem,
 )
 from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import QEvent, QPoint, QTimer
 from PyQt6.QtGui import QDoubleValidator
 from database.models import Customer, PosProfile, db
 from core.logger import get_logger
@@ -37,6 +38,7 @@ class CartWidget(QWidget):
         self._all_customers = []
         self._filtered_customers = []
         self._customer_ui_updating = False
+        self._selected_customer = ""
         self._customer_info_cache = {}
         self._item_meta_cache = {}
         self._is_repricing = False
@@ -81,22 +83,19 @@ class CartWidget(QWidget):
         cust_label = QLabel("Customer search")
         cust_label.setStyleSheet("color: #a0a0a0; font-size: 11px;")
         
-        self.customer_combo = QComboBox()
-        self.customer_combo.setEditable(True)
-        self.customer_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.customer_combo.setMaxVisibleItems(12)
-        self.customer_combo.setFixedHeight(40)
-        self.customer_combo.setStyleSheet("""
-            QComboBox { background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px; }
-            QComboBox QAbstractItemView { background: #1e1e1e; color: white; }
+        self.customer_input = QLineEdit()
+        self.customer_input.setPlaceholderText("Guest Customer")
+        self.customer_input.installEventFilter(self)
+        self.customer_input.setFixedHeight(40)
+        self.customer_input.setStyleSheet("""
+            QLineEdit { background: #1e1e1e; color: white; border: 1px solid #333; border-radius: 4px; padding: 5px 10px; }
+            QLineEdit:focus { border: 1px solid #3b82f6; }
         """)
-        self.customer_combo.lineEdit().setPlaceholderText("Guest Customer")
-        self.customer_combo.lineEdit().textEdited.connect(self._on_customer_search_edited)
-        self.customer_combo.lineEdit().returnPressed.connect(self._commit_customer_search)
-        self.customer_combo.activated.connect(self._on_customer_selected)
+        self.customer_input.textEdited.connect(self._on_customer_search_edited)
+        self.customer_input.returnPressed.connect(self._commit_customer_search)
         customer_row = QHBoxLayout()
         customer_row.setSpacing(6)
-        customer_row.addWidget(self.customer_combo, 1)
+        customer_row.addWidget(self.customer_input, 1)
 
         self.customer_clear_btn = QPushButton("✕")
         self.customer_clear_btn.setFixedSize(36, 36)
@@ -113,6 +112,30 @@ class CartWidget(QWidget):
         customer_row.addWidget(self.customer_clear_btn)
         customer_vbox.addWidget(cust_label)
         customer_vbox.addLayout(customer_row)
+        self.customer_results = QListWidget(self)
+        self.customer_results.setVisible(False)
+        self.customer_results.setMaximumHeight(180)
+        self.customer_results.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.customer_results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.customer_results.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.customer_results.setStyleSheet("""
+            QListWidget {
+                background: #1e1e1e; color: white; border: 1px solid #333;
+                border-radius: 6px; padding: 4px;
+            }
+            QListWidget::item {
+                padding: 8px 10px;
+                border-radius: 4px;
+            }
+            QListWidget::item:selected {
+                background: #2563eb;
+                color: white;
+            }
+            QListWidget::item:hover {
+                background: #2a2a2a;
+            }
+        """)
+        self.customer_results.itemClicked.connect(self._on_customer_item_clicked)
         
         # Customer Group
         cg_vbox = QVBoxLayout()
@@ -693,11 +716,61 @@ class CartWidget(QWidget):
         selected = (self.get_selected_customer_name() or "").strip()
         if selected:
             return selected
+        default_customer = self._get_default_customer_name()
+        if default_customer:
+            return default_customer
         profile = self._current_profile_data or self._get_current_profile_data()
         profile_customer = (profile.get("customer") or "").strip() if isinstance(profile, dict) else ""
         if profile_customer:
             return profile_customer
         return (load_config().get("default_customer") or "").strip()
+
+    def _get_default_customer_name(self) -> str:
+        guest_aliases = {"guest customer", "guest"}
+        for row in self._all_customers:
+            name = str(row.get("name") or "").strip()
+            customer_name = str(row.get("customer_name") or "").strip()
+            if name.lower() in guest_aliases or customer_name.lower() in guest_aliases:
+                return name or customer_name
+
+        config_default = (load_config().get("default_customer") or "").strip()
+        if config_default:
+            return config_default
+
+        profile = self._current_profile_data or self._get_current_profile_data()
+        profile_customer = (profile.get("customer") or "").strip() if isinstance(profile, dict) else ""
+        return profile_customer
+
+    def eventFilter(self, obj, event):
+        if obj is self.customer_input and event.type() == QEvent.Type.KeyPress:
+            default_customer = (self._get_default_customer_name() or "").strip()
+            current_text = obj.text().strip()
+            selected_customer = (self._selected_customer or "").strip()
+            event_text = event.text() or ""
+            if default_customer and current_text == default_customer and selected_customer == default_customer:
+                if event.key() in {Qt.Key.Key_Backspace, Qt.Key.Key_Delete}:
+                    self.customer_input.blockSignals(True)
+                    self.customer_input.clear()
+                    self.customer_input.blockSignals(False)
+                    self._selected_customer = ""
+                    self._render_customer_results([])
+                    return True
+                if event_text and event_text.isprintable() and not event_text.isspace():
+                    self.customer_input.blockSignals(True)
+                    self.customer_input.clear()
+                    self.customer_input.blockSignals(False)
+                    self._selected_customer = ""
+        if obj is self.customer_input and event.type() == QEvent.Type.FocusIn:
+            default_customer = (self._get_default_customer_name() or "").strip()
+            current_text = obj.text().strip()
+            selected_customer = (self.get_selected_customer_name() or "").strip()
+            if default_customer and current_text == default_customer and selected_customer == default_customer:
+                QTimer.singleShot(0, obj.selectAll)
+        return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_customer_results()
 
     def _get_customer_info_local(self, customer_name: str) -> dict:
         if not customer_name:
@@ -1057,9 +1130,6 @@ class CartWidget(QWidget):
         try:
             db.connect(reuse_if_open=True)
 
-            config = load_config()
-            default_customer = config.get("default_customer", "")
-
             rows = list(
                 Customer.select(
                     Customer.name,
@@ -1073,11 +1143,15 @@ class CartWidget(QWidget):
 
             self._all_customers = rows
             self._load_customer_groups()
-            self._apply_customer_filters(
-                typed_text="",
-                selected_name=default_customer,
-                show_popup=False,
-            )
+            default_customer = self._get_default_customer_name()
+            self._filtered_customers = list(self._all_customers)
+            if default_customer:
+                matched = self._find_customer_by_text(default_customer, self._all_customers)
+                if matched:
+                    self._select_customer_row(matched)
+                else:
+                    self.customer_input.setText(default_customer)
+            self._render_customer_results([])
         except Exception as e:
             logger.debug("Mijozlar yuklanmadi: %s", e)
         finally:
@@ -1086,7 +1160,7 @@ class CartWidget(QWidget):
 
     def refresh_customer_groups(self):
         current_group = self.cg_mock.currentData()
-        current_search = self.customer_combo.lineEdit().text().strip()
+        current_search = self.customer_input.text().strip()
         current_customer = self.get_selected_customer_name()
 
         self._load_customer_groups()
@@ -1243,9 +1317,42 @@ class CartWidget(QWidget):
                 return row
         return None
 
+    def _render_customer_results(self, rows):
+        self.customer_results.clear()
+        for row in rows:
+            item = QListWidgetItem(self._format_customer_label(row))
+            item.setData(Qt.ItemDataRole.UserRole, row.get("name"))
+            self.customer_results.addItem(item)
+        if rows:
+            self._position_customer_results()
+            self.customer_results.raise_()
+            self.customer_results.show()
+        else:
+            self.customer_results.hide()
+
+    def _position_customer_results(self):
+        if not hasattr(self, "customer_input") or not hasattr(self, "customer_results"):
+            return
+        top_left = self.customer_input.mapTo(self, QPoint(0, self.customer_input.height() + 4))
+        width = self.customer_input.width() + self.customer_clear_btn.width() + 6
+        row_height = 36
+        visible_rows = min(max(self.customer_results.count(), 1), 5)
+        height = 8 + (visible_rows * row_height)
+        self.customer_results.setGeometry(top_left.x(), top_left.y(), width, height)
+
+    def _select_customer_row(self, row: dict):
+        label = self._format_customer_label(row)
+        self._customer_ui_updating = True
+        self.customer_input.blockSignals(True)
+        self.customer_input.setText(label)
+        self.customer_input.setCursorPosition(len(label))
+        self.customer_input.blockSignals(False)
+        self._selected_customer = str(row.get("name") or "").strip()
+        self._render_customer_results([])
+        self._customer_ui_updating = False
+
     def _apply_customer_filters(self, typed_text: str | None = None, selected_name: str = "", show_popup: bool = False):
-        line_edit = self.customer_combo.lineEdit()
-        search_text = typed_text if typed_text is not None else line_edit.text()
+        search_text = typed_text if typed_text is not None else self.customer_input.text()
         parts = self._normalize_customer_search(search_text)
         selected_group = self._get_selected_customer_group()
 
@@ -1259,14 +1366,6 @@ class CartWidget(QWidget):
             filtered.append(row)
 
         self._filtered_customers = filtered
-
-        self._customer_ui_updating = True
-        self.customer_combo.blockSignals(True)
-        line_edit.blockSignals(True)
-        self.customer_combo.clear()
-        for row in filtered:
-            self.customer_combo.addItem(self._format_customer_label(row), row.get("name"))
-
         target_name = selected_name.strip()
         if not target_name:
             matched = self._find_customer_by_text(search_text, filtered)
@@ -1277,60 +1376,56 @@ class CartWidget(QWidget):
                 target_name = matched.get("name", "")
 
         if target_name:
-            idx = self.customer_combo.findData(target_name)
-            if idx >= 0:
-                self.customer_combo.setCurrentIndex(idx)
-                line_edit.setText(self.customer_combo.itemText(idx) if not search_text.strip() else search_text)
-            else:
-                self.customer_combo.setCurrentIndex(-1)
-                line_edit.setText(search_text or target_name)
-        else:
-            self.customer_combo.setCurrentIndex(-1)
-            line_edit.setText(search_text)
+            selected = next((row for row in filtered if str(row.get("name") or "").strip() == target_name), None)
+            if not selected:
+                selected = next((row for row in self._all_customers if str(row.get("name") or "").strip() == target_name), None)
+            if selected:
+                self._select_customer_row(selected)
+                return
 
-        line_edit.setCursorPosition(len(line_edit.text()))
-        line_edit.blockSignals(False)
-        self.customer_combo.blockSignals(False)
+        self._selected_customer = ""
+        self._customer_ui_updating = True
+        self.customer_input.blockSignals(True)
+        self.customer_input.setText(search_text)
+        self.customer_input.setCursorPosition(len(search_text))
+        self.customer_input.blockSignals(False)
         self._customer_ui_updating = False
-
-        if show_popup and filtered:
-            self.customer_combo.showPopup()
-        elif show_popup:
-            self.customer_combo.hidePopup()
+        self._render_customer_results(filtered if show_popup else [])
 
     def _on_customer_search_edited(self, text: str):
         if self._customer_ui_updating:
             return
+        self._selected_customer = ""
         self._apply_customer_filters(typed_text=text, show_popup=True)
 
     def _on_customer_group_changed(self, _index: int):
         if self._customer_ui_updating:
             return
-        line_edit = self.customer_combo.lineEdit()
-        line_edit.blockSignals(True)
-        line_edit.clear()
-        line_edit.blockSignals(False)
+        self.customer_input.blockSignals(True)
+        self.customer_input.clear()
+        self.customer_input.blockSignals(False)
+        self._selected_customer = ""
         self._apply_customer_filters(typed_text="", show_popup=True)
 
     def _clear_customer_selection(self):
-        line_edit = self.customer_combo.lineEdit()
-        line_edit.blockSignals(True)
-        line_edit.clear()
-        line_edit.blockSignals(False)
+        self.customer_input.blockSignals(True)
+        self.customer_input.clear()
+        self.customer_input.blockSignals(False)
+        self._selected_customer = ""
         self._apply_customer_filters(typed_text="", selected_name="", show_popup=True)
         self._reprice_cart()
 
-    def _on_customer_selected(self, index: int):
-        if index < 0:
+    def _on_customer_item_clicked(self, item: QListWidgetItem):
+        if not item:
             return
-        name = self.customer_combo.itemData(index)
+        name = str(item.data(Qt.ItemDataRole.UserRole) or "").strip()
         if not name:
             return
         self._apply_customer_filters(typed_text="", selected_name=str(name), show_popup=False)
         self._reprice_cart()
 
     def _commit_customer_search(self):
-        typed = self.customer_combo.lineEdit().text().strip()
+        typed = self.customer_input.text().strip()
         matched = self._find_customer_by_text(typed, self._filtered_customers or self._all_customers)
         if matched:
             self._apply_customer_filters(
@@ -1348,13 +1443,10 @@ class CartWidget(QWidget):
         self._reprice_cart()
 
     def get_selected_customer_name(self) -> str:
-        current_index = self.customer_combo.currentIndex()
-        if current_index >= 0:
-            customer_name = self.customer_combo.itemData(current_index)
-            if customer_name:
-                return str(customer_name).strip()
+        if self._selected_customer:
+            return self._selected_customer
 
-        typed = self.customer_combo.lineEdit().text().strip()
+        typed = self.customer_input.text().strip()
         matched = self._find_customer_by_text(typed, self._filtered_customers or self._all_customers)
         if matched:
             return str(matched.get("name") or "").strip()

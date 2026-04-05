@@ -122,6 +122,12 @@ def process_pending_invoice(api: FrappeAPI, invoice: PendingInvoice) -> tuple[st
     data_payload = {
         "payments": formatted_payments,
     }
+    if payload.get("due_date"):
+        data_payload["due_date"] = payload.get("due_date")
+    if payload.get("is_credit_sale"):
+        data_payload["is_credit_sale"] = 1
+    if payload.get("is_partly_paid"):
+        data_payload["is_partly_paid"] = 1
     
     try:
         success, response = api.call_method(

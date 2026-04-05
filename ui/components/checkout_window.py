@@ -3,14 +3,15 @@ import uuid
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QWidget, QFrame, QGridLayout,
+    QCheckBox, QDateEdit,
 )
-from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QDate
 from PyQt6.QtGui import QDoubleValidator
 
 from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
-from database.models import PendingInvoice, PosShift, db
+from database.models import PendingInvoice, PosShift, PosProfile, db
 from core.printer import print_receipt
 from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit
@@ -50,6 +51,12 @@ class CheckoutWorker(QThread):
             data_payload = {
                 "payments": formatted_payments,
             }
+            if invoice_payload.get("due_date"):
+                data_payload["due_date"] = invoice_payload.get("due_date")
+            if invoice_payload.get("is_credit_sale"):
+                data_payload["is_credit_sale"] = 1
+            if invoice_payload.get("is_partly_paid"):
+                data_payload["is_partly_paid"] = 1
             
             # POSAwesome API: submit_invoice(invoice, data, submit_in_background)
             # invoice va data JSON string bo'lishi kerak
@@ -118,6 +125,10 @@ class CheckoutWindow(QDialog):
         self.max_discount_percentage = float(order_data.get("max_discount_percentage", 0.0) or 0.0)
         self.apply_discount_on = order_data.get("apply_discount_on") or "Grand Total"
         self.extra_discount_amount = 0.0
+        self.profile_data = self._load_profile_data()
+        self.allow_credit_sale = bool(self._flt_profile_flag("posa_allow_credit_sale", 0))
+        self.allow_partial_payment = bool(self._flt_profile_flag("posa_allow_partial_payment", 0))
+        self.current_customer = self._resolve_customer_name()
         self.payment_inputs = {}
         self._payment_method_order = []
         self._initial_payment_method = ""
@@ -140,26 +151,48 @@ class CheckoutWindow(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("To'lov")
-        self.setFixedSize(560, 680)
+        self.resize(1080, 760)
+        self.setMinimumSize(980, 720)
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setStyleSheet("background: #f3f6fb;")
         
         main_h_layout = QHBoxLayout(self)
-        main_h_layout.setContentsMargins(18, 18, 18, 18)
-        main_h_layout.setSpacing(16)
-        
-        # CHAP TOMON (To'lov turlari va Ma'lumotlar)
-        left_widget = QWidget()
-        left_widget.setStyleSheet("background: transparent;")
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(14)
+        main_h_layout.setContentsMargins(22, 22, 22, 22)
+        main_h_layout.setSpacing(20)
+
+        left_panel = QFrame()
+        left_panel.setStyleSheet("""
+            background: #ffffff;
+            border: 1px solid #dbe4f0;
+            border-radius: 20px;
+        """)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(18, 18, 18, 18)
+        left_layout.setSpacing(16)
+
+        right_panel = QFrame()
+        right_panel.setStyleSheet("""
+            background: #ffffff;
+            border: 1px solid #dbe4f0;
+            border-radius: 20px;
+        """)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(18, 18, 18, 18)
+        right_layout.setSpacing(16)
+
+        left_header = QLabel("To'lov xulosasi")
+        left_header.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
+        left_layout.addWidget(left_header)
+
+        left_subtitle = QLabel("Summalar va qarzga sotish shu yerda boshqariladi.")
+        left_subtitle.setStyleSheet("font-size: 12px; color: #64748b;")
+        left_layout.addWidget(left_subtitle)
         
         # Jami summa ko'rsatkichi
         summary_frame = QFrame()
         summary_frame.setStyleSheet("""
-            background: #ffffff;
+            background: #f8fbff;
             border: 1px solid #dbe4f0;
             border-radius: 16px;
         """)
@@ -219,22 +252,82 @@ class CheckoutWindow(QDialog):
         summary_layout.addWidget(self.lbl_change)
         
         left_layout.addWidget(summary_frame)
-        
-        # To'lov tullari qismi
-        methods_title = QLabel("Payment Methods")
-        methods_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #64748b;")
-        left_layout.addWidget(methods_title)
 
-        payment_widget = QFrame()
-        payment_widget.setStyleSheet("""
+        credit_frame = QFrame()
+        credit_frame.setStyleSheet("""
             background: #ffffff;
             border: 1px solid #dbe4f0;
             border-radius: 16px;
         """)
+        credit_layout = QVBoxLayout(credit_frame)
+        credit_layout.setContentsMargins(16, 14, 16, 14)
+        credit_layout.setSpacing(10)
+
+        self.credit_sale_checkbox = QCheckBox("Qarzga sotish")
+        self.credit_sale_checkbox.setStyleSheet("""
+            QCheckBox {
+                font-size: 14px;
+                font-weight: 700;
+                color: #0f172a;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+        """)
+        self.credit_sale_checkbox.stateChanged.connect(self._on_credit_sale_toggled)
+        credit_layout.addWidget(self.credit_sale_checkbox)
+
+        self.credit_hint_label = QLabel()
+        self.credit_hint_label.setWordWrap(True)
+        self.credit_hint_label.setStyleSheet("font-size: 12px; color: #64748b;")
+        credit_layout.addWidget(self.credit_hint_label)
+
+        due_row = QHBoxLayout()
+        due_row.setSpacing(10)
+        due_label = QLabel("Muddat")
+        due_label.setStyleSheet("font-size: 12px; font-weight: 700; color: #64748b;")
+        self.credit_due_date = QDateEdit()
+        self.credit_due_date.setCalendarPopup(True)
+        self.credit_due_date.setDisplayFormat("yyyy-MM-dd")
+        self.credit_due_date.setDate(QDate.currentDate().addDays(7))
+        self.credit_due_date.setMinimumDate(QDate.currentDate())
+        self.credit_due_date.setFixedHeight(36)
+        self.credit_due_date.setStyleSheet("""
+            QDateEdit {
+                background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1;
+                border-radius: 10px; padding: 0 10px; font-size: 13px; font-weight: 600;
+            }
+        """)
+        due_row.addWidget(due_label)
+        due_row.addWidget(self.credit_due_date, 1)
+        credit_layout.addLayout(due_row)
+
+        left_layout.addWidget(credit_frame)
+        left_layout.addStretch()
+
+        right_header = QLabel("Payment qilish")
+        right_header.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
+        right_layout.addWidget(right_header)
+
+        right_subtitle = QLabel("Summani payment methodlar bo'yicha shu tomonda taqsimlaysiz.")
+        right_subtitle.setStyleSheet("font-size: 12px; color: #64748b;")
+        right_layout.addWidget(right_subtitle)
+        
+        methods_title = QLabel("Payment Methods")
+        methods_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #64748b;")
+        right_layout.addWidget(methods_title)
+
+        payment_widget = QFrame()
+        payment_widget.setStyleSheet("""
+            background: #f8fbff;
+            border: 1px solid #dbe4f0;
+            border-radius: 16px;
+        """)
         self.payment_layout = QGridLayout(payment_widget)
-        self.payment_layout.setContentsMargins(14, 14, 14, 14)
-        self.payment_layout.setHorizontalSpacing(10)
-        self.payment_layout.setVerticalSpacing(10)
+        self.payment_layout.setContentsMargins(18, 18, 18, 18)
+        self.payment_layout.setHorizontalSpacing(14)
+        self.payment_layout.setVerticalSpacing(14)
         
         config = load_config()
         methods = config.get("payment_methods", ["Naqd", "Plastik", "Payme"])
@@ -252,19 +345,19 @@ class CheckoutWindow(QDialog):
 
             lbl = QLabel(method)
             lbl.setStyleSheet("""
-                font-size: 13px; font-weight: 700; color: #334155;
-                background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;
-                padding: 12px 14px;
+                font-size: 14px; font-weight: 800; color: #334155;
+                background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px;
+                padding: 13px 14px;
             """)
             method_header_layout.addWidget(lbl, 1)
 
             fill_btn = QPushButton("Fill")
             fill_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            fill_btn.setMinimumHeight(42)
+            fill_btn.setMinimumHeight(46)
             fill_btn.setStyleSheet("""
                 QPushButton {
-                    background: #eff6ff; color: #1d4ed8; font-size: 13px; font-weight: 700;
-                    border-radius: 12px; padding: 0 14px; border: 1px solid #bfdbfe;
+                    background: #eff6ff; color: #1d4ed8; font-size: 14px; font-weight: 800;
+                    border-radius: 12px; padding: 0 16px; border: 1px solid #bfdbfe;
                 }
                 QPushButton:hover { background: #dbeafe; color: #1e40af; }
             """)
@@ -273,10 +366,10 @@ class CheckoutWindow(QDialog):
             
             inp = ClickableLineEdit()
             inp.setPlaceholderText("0")
-            inp.setMinimumHeight(46)
+            inp.setMinimumHeight(50)
             inp.setStyleSheet("""
-                font-size: 18px; font-weight: 700; color: #0f172a;
-                background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 14px;
+                font-size: 22px; font-weight: 800; color: #0f172a;
+                background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 16px;
             """)
             val = QDoubleValidator(0.0, 999999999.0, 2)
             inp.setValidator(val)
@@ -293,37 +386,56 @@ class CheckoutWindow(QDialog):
         if methods:
             self._set_active_input(self.payment_inputs[methods[0]])
 
-        left_layout.addWidget(payment_widget)
-        
-        # Tugmalar
+        right_layout.addWidget(payment_widget)
+
+        actions_frame = QFrame()
+        actions_frame.setStyleSheet("""
+            background: #f8fbff;
+            border: 1px solid #dbe4f0;
+            border-radius: 16px;
+        """)
+        actions_layout = QVBoxLayout(actions_frame)
+        actions_layout.setContentsMargins(16, 16, 16, 16)
+        actions_layout.setSpacing(12)
+
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
         
         btn_clear = QPushButton("Tozalash")
         btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_clear.setMinimumHeight(48)
+        btn_clear.setMinimumHeight(54)
         btn_clear.setStyleSheet("""
-            background: #ffffff; color: #dc2626; font-size: 15px; font-weight: 700;
+            background: #ffffff; color: #dc2626; font-size: 16px; font-weight: 800;
             border-radius: 12px; padding: 12px 16px; border: 1px solid #fecaca;
         """)
         btn_clear.clicked.connect(self._clear_amounts)
         
         btn_layout.addWidget(btn_clear)
-        left_layout.addLayout(btn_layout)
+        actions_layout.addLayout(btn_layout)
         
         self.btn_pay = QPushButton("To'lash (Enter)")
         self.btn_pay.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_pay.setMinimumHeight(58)
+        self.btn_pay.setMinimumHeight(64)
         self.btn_pay.setStyleSheet("""
-            background: #22c55e; color: #ffffff; font-size: 20px; font-weight: 800;
+            background: #22c55e; color: #ffffff; font-size: 22px; font-weight: 900;
             border-radius: 14px; padding: 16px; border: none;
         """)
         self.btn_pay.clicked.connect(self._process_payment)
-        left_layout.addWidget(self.btn_pay)
+        actions_layout.addWidget(self.btn_pay)
+
+        actions_hint = QLabel("Maslahat: kerakli methodga `Fill` bosing yoki summani qo'lda taqsimlang.")
+        actions_hint.setWordWrap(True)
+        actions_hint.setStyleSheet("font-size: 12px; color: #64748b;")
+        actions_layout.addWidget(actions_hint)
+
+        right_layout.addWidget(actions_frame)
+        right_layout.addStretch()
         
-        main_h_layout.addWidget(left_widget, stretch=1)
+        main_h_layout.addWidget(left_panel, stretch=5)
+        main_h_layout.addWidget(right_panel, stretch=6)
         if methods:
             self._reset_payment_distribution()
+        self._refresh_credit_sale_availability()
         self._refresh_summary_labels()
 
     def _set_active_input(self, input_widget):
@@ -364,6 +476,79 @@ class CheckoutWindow(QDialog):
             return
         self._clear_amounts()
         self.active_input.setText(str(int(self.total_amount)))
+
+    def _load_profile_data(self) -> dict:
+        try:
+            db.connect(reuse_if_open=True)
+            config = load_config()
+            profile_name = (config.get("pos_profile") or "").strip()
+            query = PosProfile.select()
+            if profile_name:
+                query = query.where(PosProfile.name == profile_name)
+            profile = query.first()
+            if not profile or not profile.profile_data:
+                return {}
+            return json.loads(profile.profile_data)
+        except Exception as e:
+            logger.debug("Checkout POS Profile o'qilmadi: %s", e)
+            return {}
+        finally:
+            if not db.is_closed():
+                db.close()
+
+    def _flt_profile_flag(self, key: str, default=0.0) -> float:
+        try:
+            return float(self.profile_data.get(key, default) or default)
+        except (TypeError, ValueError, AttributeError):
+            return float(default or 0.0)
+
+    def _resolve_customer_name(self) -> str:
+        config = load_config()
+        customer = (self.order_data.get("customer") or "").strip()
+        if customer:
+            return customer
+        return (config.get("default_customer") or "Guest Customer").strip()
+
+    def _is_guest_customer(self) -> bool:
+        customer = (self.current_customer or "").strip().lower()
+        return customer in {"guest", "guest customer"}
+
+    def _credit_sale_mode_active(self) -> bool:
+        return bool(self.credit_sale_checkbox.isChecked() and not self.credit_sale_checkbox.isHidden())
+
+    def _current_due_date(self) -> str:
+        return self.credit_due_date.date().toString("yyyy-MM-dd")
+
+    def _refresh_credit_sale_availability(self):
+        can_show = self.allow_credit_sale or self.allow_partial_payment
+        self.credit_sale_checkbox.setVisible(can_show)
+        self.credit_hint_label.setVisible(can_show)
+        self.credit_due_date.setVisible(can_show)
+
+        if not can_show:
+            return
+
+        if self._is_guest_customer():
+            self.credit_sale_checkbox.setChecked(False)
+            self.credit_sale_checkbox.setEnabled(False)
+            self.credit_sale_checkbox.setToolTip("Guest Customer uchun qarzga sotish mumkin emas")
+            self.credit_hint_label.setText("Guest Customer uchun qarzga yoki qisman to'lash bloklangan.")
+            self.credit_due_date.setEnabled(False)
+            return
+
+        self.credit_sale_checkbox.setEnabled(True)
+        self.credit_sale_checkbox.setToolTip("")
+        self.credit_hint_label.setText(
+            "Checkbox yoqilsa qolgan summa discount emas, outstanding qarz bo'lib saqlanadi."
+        )
+        self.credit_due_date.setEnabled(self.credit_sale_checkbox.isChecked())
+
+    def _on_credit_sale_toggled(self):
+        if self.credit_sale_checkbox.isChecked() and self._is_guest_customer():
+            self.credit_sale_checkbox.setChecked(False)
+            return
+        self.credit_due_date.setEnabled(self.credit_sale_checkbox.isChecked())
+        self._recalculate()
 
     def _fill_payment_method(self, method: str):
         if method not in self.payment_inputs:
@@ -455,10 +640,19 @@ class CheckoutWindow(QDialog):
         self._is_calculating = True
         try:
             paid = self._get_paid_total()
-            shortage = max(self.total_amount - paid, 0.0)
+            payable_total = self.total_amount
+            shortage = max(payable_total - paid, 0.0)
             self.extra_discount_amount = 0.0
 
-            if shortage > 0:
+            if self._credit_sale_mode_active() and shortage > 0:
+                if paid <= 0.0001:
+                    can_submit = self.allow_credit_sale
+                else:
+                    can_submit = self.allow_partial_payment
+                self.lbl_balance.setText(f"Qarz: {shortage:,.0f} UZS")
+                self.lbl_change.setText("Qaytim: 0 UZS")
+                self._set_pay_button_enabled(can_submit)
+            elif shortage > 0:
                 if self._can_apply_underpayment_discount(shortage):
                     self.extra_discount_amount = shortage
                     self.lbl_balance.setText("Qoldiq: 0 UZS")
@@ -469,7 +663,7 @@ class CheckoutWindow(QDialog):
                     self.lbl_change.setText("Qaytim: 0 UZS")
                     self._set_pay_button_enabled(False)
             else:
-                diff = paid - self.total_amount
+                diff = paid - payable_total
                 self.lbl_balance.setText("Qoldiq: 0 UZS")
                 self.lbl_change.setText(f"Qaytim: {diff:,.0f} UZS")
                 self._set_pay_button_enabled(True)
@@ -537,12 +731,28 @@ class CheckoutWindow(QDialog):
                 except (ValueError, TypeError):
                     pass
 
+        credit_mode = self._credit_sale_mode_active()
         shortage = max(self.total_amount - paid_total, 0.0)
-        extra_discount = shortage if self._can_apply_underpayment_discount(shortage) else 0.0
+        extra_discount = 0.0 if credit_mode else (
+            shortage if self._can_apply_underpayment_discount(shortage) else 0.0
+        )
         final_invoice_discount = self.base_invoice_discount_amount + extra_discount
         final_payable_total = max(self.net_total_amount - final_invoice_discount, 0.0)
 
-        if paid_total + 0.0001 < final_payable_total:
+        is_credit_sale = False
+        is_partly_paid = False
+        if credit_mode and shortage > 0:
+            if self._is_guest_customer():
+                return
+            if paid_total <= 0.0001:
+                if not self.allow_credit_sale:
+                    return
+                is_credit_sale = True
+            else:
+                if not self.allow_partial_payment:
+                    return
+                is_partly_paid = True
+        elif paid_total + 0.0001 < final_payable_total:
             return
 
         excess = max(paid_total - final_payable_total, 0.0)
@@ -582,8 +792,12 @@ class CheckoutWindow(QDialog):
             "base_total": self.net_total_amount,
             "base_net_total": self.net_total_amount,
             "items": [],
-            "payments": payments
+            "payments": payments,
+            "is_credit_sale": int(is_credit_sale),
+            "is_partly_paid": int(is_partly_paid),
         }
+        if credit_mode and shortage > 0:
+            invoice_data["due_date"] = self._current_due_date()
         if opening_entry:
             invoice_data["posa_pos_opening_shift"] = opening_entry
         
@@ -618,6 +832,9 @@ class CheckoutWindow(QDialog):
         self.order_data["total_amount"] = final_payable_total
         self.order_data["net_total_amount"] = self.net_total_amount
         self.order_data["paid_amount"] = sum(p["amount"] for p in payments)
+        self.order_data["due_date"] = invoice_data.get("due_date")
+        self.order_data["is_credit_sale"] = is_credit_sale
+        self.order_data["is_partly_paid"] = is_partly_paid
 
         self._submitted_payments = list(payments)
 

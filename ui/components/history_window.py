@@ -142,6 +142,32 @@ class CancelOrderWorker(QThread):
         self.api = api
 
     def run(self):
+        success, doc = self.api.call_method(
+            "frappe.client.get",
+            {"doctype": "Sales Invoice", "name": self.invoice_id},
+        )
+        if not success or not isinstance(doc, dict):
+            self.finished.emit(False, f"Xatolik: {doc}")
+            return
+
+        docstatus = int(doc.get("docstatus") or 0)
+        status = str(doc.get("status") or "").strip().lower()
+
+        if docstatus == 2 or status == "cancelled":
+            self.finished.emit(True, "Chek allaqachon bekor qilingan.")
+            return
+
+        if docstatus == 0 or status == "draft":
+            success, response = self.api.call_method(
+                "frappe.client.delete",
+                {"doctype": "Sales Invoice", "name": self.invoice_id},
+            )
+            if success:
+                self.finished.emit(True, "Draft chek muvaffaqiyatli o'chirildi!")
+            else:
+                self.finished.emit(False, f"Xatolik: {response}")
+            return
+
         success, response = self.api.call_method(
             "frappe.client.cancel",
             {"doctype": "Sales Invoice", "name": self.invoice_id},
@@ -287,8 +313,8 @@ class CancelReasonDialog(QDialog):
         super().__init__(parent)
         self.invoice_id = invoice_id
         self.setWindowTitle("Bekor qilish sababi")
-        self.setMinimumSize(500, 400)
-        self.resize(620, 480)
+        self.setMinimumSize(460, 220)
+        self.resize(520, 240)
         self.setStyleSheet("background: white;")
         self._init_ui()
 
@@ -304,7 +330,6 @@ class CancelReasonDialog(QDialog):
 
         # Input display
         self.input = QLineEdit()
-        self.input.setReadOnly(True)
         self.input.setPlaceholderText("Sabab yozing...")
         self.input.setMinimumHeight(40)
         self.input.setStyleSheet("""
@@ -316,20 +341,7 @@ class CancelReasonDialog(QDialog):
             }
         """)
         layout.addWidget(self.input)
-
-        # Keyboard rows
-        rows = [
-            ['1','2','3','4','5','6','7','8','9','0','⌫'],
-            ['Q','W','E','R','T','Y','U','I','O','P'],
-            ['A','S','D','F','G','H','J','K','L','CLR'],
-            ['Z','X','C','V','B','N','M','SPACE'],
-        ]
-        for row_keys in rows:
-            row_w = QHBoxLayout()
-            row_w.setSpacing(4)
-            for k in row_keys:
-                row_w.addWidget(self._make_key(k))
-            layout.addLayout(row_w)
+        self.input.setFocus()
 
         # Buttons
         btn_row = QHBoxLayout()
@@ -356,39 +368,6 @@ class CancelReasonDialog(QDialog):
         btn_row.addWidget(confirm_btn)
 
         layout.addLayout(btn_row)
-
-    def _make_key(self, key):
-        label = '␣' if key == 'SPACE' else ('TOZALASH' if key == 'CLR' else key)
-        btn = QPushButton(label)
-        btn.setMinimumHeight(40)
-        if key == '⌫':
-            style = "background:#fee2e2; color:#ef4444; font-size:15px; font-weight:bold;"
-        elif key == 'CLR':
-            style = "background:#fff7ed; color:#ea580c; font-size:10px; font-weight:bold;"
-        elif key == 'SPACE':
-            style = "background:#eff6ff; color:#3b82f6; font-size:13px; font-weight:bold;"
-            btn.setMinimumWidth(80)
-        elif key.isdigit():
-            style = "background:#f1f5f9; color:#334155; font-size:13px; font-weight:700;"
-        else:
-            style = "background:white; color:#1e293b; font-size:13px; font-weight:600;"
-        btn.setStyleSheet(f"""
-            QPushButton {{ {style} border:1px solid #e2e8f0; border-radius:6px; }}
-            QPushButton:pressed {{ background:#dbeafe; }}
-        """)
-        btn.clicked.connect(lambda _, k=key: self._on_key(k))
-        return btn
-
-    def _on_key(self, key):
-        cur = self.input.text()
-        if key == '⌫':
-            self.input.setText(cur[:-1])
-        elif key == 'CLR':
-            self.input.clear()
-        elif key == 'SPACE':
-            self.input.setText(cur + ' ')
-        else:
-            self.input.setText(cur + key)
 
     def _on_confirm(self):
         if self.input.text().strip():
@@ -495,8 +474,9 @@ class HistoryWindow(QWidget):
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(4, 150)
         self.table.setColumnWidth(5, 150)
         self.table.setColumnWidth(6, 130)
         layout.addWidget(self.table)
@@ -517,7 +497,7 @@ class HistoryWindow(QWidget):
             self.table.insertRow(i)
             self.table.setRowHeight(i, 46)
             inv_name = item.get("name", "")
-            status = item.get("status", "")
+            status_text, status_tone = self._derive_payment_status(item)
 
             self.table.setItem(i, 0, QTableWidgetItem(inv_name))
             self.table.setItem(i, 1, QTableWidgetItem(item.get("posting_date", "")))
@@ -528,8 +508,14 @@ class HistoryWindow(QWidget):
             amt.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
             self.table.setItem(i, 5, amt)
 
-            if status != "Cancelled":
-                btn = QPushButton("Bekor qilish")
+            if status_tone == "cancelled":
+                lbl = QLabel("Bekor qilingan")
+                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                lbl.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 11px;")
+                self.table.setCellWidget(i, 6, lbl)
+            else:
+                action_text = "O'chirish" if status_tone == "draft" else "Bekor qilish"
+                btn = QPushButton(action_text)
                 btn.setStyleSheet("""
                     QPushButton {
                         background: #fff7ed; color: #ea580c;
@@ -539,23 +525,29 @@ class HistoryWindow(QWidget):
                     }
                     QPushButton:hover { background: #ffedd5; }
                 """)
-                btn.clicked.connect(lambda _, inv=inv_name: self._confirm_cancel(inv))
+                btn.clicked.connect(
+                    lambda _, inv=inv_name, tone=status_tone: self._confirm_cancel(inv, tone)
+                )
                 self.table.setCellWidget(i, 6, btn)
-            else:
-                lbl = QLabel("Bekor qilingan")
-                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                lbl.setStyleSheet("color: #ef4444; font-weight: 600; font-size: 11px;")
-                self.table.setCellWidget(i, 6, lbl)
 
     def _derive_payment_status(self, item: dict) -> tuple[str, str]:
         status = str(item.get("status") or "").strip()
+        status_key = status.lower()
         docstatus = int(item.get("docstatus") or 0)
         outstanding = float(item.get("outstanding_amount") or 0.0)
         grand_total = float(item.get("grand_total") or 0.0)
         paid_amount = max(grand_total - outstanding, 0.0)
 
+        if docstatus == 0 or status_key == "draft":
+            return "Draft", "draft"
         if docstatus == 2 or status.lower() == "cancelled":
             return "Bekor qilingan", "cancelled"
+        if status_key == "paid":
+            return "Paid", "paid"
+        if status_key in {"partly paid", "partially paid"}:
+            return "Qisman to'langan", "partial"
+        if status_key in {"unpaid", "overdue"}:
+            return "To'lanmagan", "unpaid"
         if outstanding <= 0:
             return "Paid", "paid"
         if paid_amount > 0:
@@ -568,11 +560,13 @@ class HistoryWindow(QWidget):
             "paid": ("#dcfce7", "#166534", "#86efac"),
             "partial": ("#fef3c7", "#92400e", "#fcd34d"),
             "unpaid": ("#fee2e2", "#b91c1c", "#fca5a5"),
+            "draft": ("#fce7f3", "#be185d", "#f9a8d4"),
             "cancelled": ("#e5e7eb", "#4b5563", "#d1d5db"),
         }
         bg, fg, border = styles.get(tone, styles["unpaid"])
         badge = QLabel(text)
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setMinimumWidth(118)
         badge.setStyleSheet(
             f"""
             QLabel {{
@@ -582,7 +576,7 @@ class HistoryWindow(QWidget):
                 border-radius: 10px;
                 font-size: 11px;
                 font-weight: 700;
-                padding: 6px 10px;
+                padding: 6px 12px;
             }}
             """
         )
@@ -593,13 +587,27 @@ class HistoryWindow(QWidget):
         invoice_id = self.table.item(item.row(), 0).text()
         TransactionDetailDialog(self, self.api, invoice_id).exec()
 
-    def _confirm_cancel(self, invoice_id: str):
-        dlg = CancelReasonDialog(self, invoice_id)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+    def _confirm_cancel(self, invoice_id: str, status_tone: str):
+        if status_tone == "draft":
+            answer = QMessageBox.question(
+                self,
+                "Draft chekni o'chirish",
+                f"{invoice_id} draft chekni o'chirmoqchimisiz?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            reason = ""
+        else:
+            dlg = CancelReasonDialog(self, invoice_id)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
             reason = dlg.get_reason()
-            self.cancel_worker = CancelOrderWorker(self.api, invoice_id, reason)
-            self.cancel_worker.finished.connect(self._on_cancel_finished)
-            self.cancel_worker.start()
+
+        self.cancel_worker = CancelOrderWorker(self.api, invoice_id, reason)
+        self.cancel_worker.finished.connect(self._on_cancel_finished)
+        self.cancel_worker.start()
 
     def _on_cancel_finished(self, success: bool, message: str):
         QMessageBox.information(self, "Natija", message)
