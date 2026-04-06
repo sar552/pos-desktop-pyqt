@@ -708,6 +708,8 @@ class MainWindow(QMainWindow):
                 cart = self.sales_tabs.widget(i)
                 if hasattr(cart, 'load_price_lists'):
                     cart.load_price_lists()
+                if hasattr(cart, 'invalidate_item_meta_cache'):
+                    cart.invalidate_item_meta_cache()
                 if hasattr(cart, 'load_customers'):
                     cart.load_customers()
                 if hasattr(cart, 'refresh_customer_groups'):
@@ -823,14 +825,37 @@ class MainWindow(QMainWindow):
                     return
                 if getattr(self.global_keyboard, 'input_field', None) != new_widget:
                     self._current_focused_input = new_widget
+                    try:
+                        new_widget.destroyed.connect(self._clear_destroyed_focused_input)
+                    except Exception:
+                        pass
+
+    def _clear_destroyed_focused_input(self, *_args):
+        self._current_focused_input = None
+
+    def _get_live_focused_input(self):
+        widget = getattr(self, "_current_focused_input", None)
+        if widget is None or not isinstance(widget, QLineEdit):
+            self._current_focused_input = None
+            return None
+        try:
+            widget.objectName()
+            return widget
+        except RuntimeError:
+            self._current_focused_input = None
+            return None
 
     def _toggle_global_keyboard(self):
         if getattr(self, 'global_keyboard', None) is None or not self.global_keyboard.isVisible():
-            if not isinstance(self._current_focused_input, QLineEdit):
+            focused_input = self._get_live_focused_input()
+            if focused_input is None:
                 return
             current_text = ""
-            if isinstance(self._current_focused_input, QLineEdit):
-                current_text = self._current_focused_input.text()
+            try:
+                current_text = focused_input.text()
+            except RuntimeError:
+                self._current_focused_input = None
+                return
             
             self.global_keyboard = TouchKeyboard(self, initial_text=current_text, title="Elektron Klaviatura")
             self.global_keyboard.text_changed.connect(self._on_global_keyboard_text_changed)
@@ -841,8 +866,13 @@ class MainWindow(QMainWindow):
             self.global_keyboard = None
             
     def _on_global_keyboard_text_changed(self, text):
-        if isinstance(self._current_focused_input, QLineEdit):
-            self._current_focused_input.setText(text)
+        focused_input = self._get_live_focused_input()
+        if focused_input is None:
+            return
+        try:
+            focused_input.setText(text)
+        except RuntimeError:
+            self._current_focused_input = None
     
     def _apply_central_widget_theme(self, widget):
         """Apply theme to central widget"""

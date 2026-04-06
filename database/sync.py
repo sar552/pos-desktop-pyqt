@@ -89,7 +89,12 @@ class SyncWorker(QThread):
         pos_profile = shift_data.get("pos_profile", {})
         pos_opening_shift = shift_data.get("pos_opening_shift", {})
         company = shift_data.get("company", {})
+        stock_settings = shift_data.get("stock_settings", {}) or {}
         company_data = company if isinstance(company, dict) else {}
+
+        if isinstance(pos_profile, dict):
+            pos_profile = dict(pos_profile)
+            pos_profile["stock_settings"] = stock_settings
 
         profile_name = pos_profile.get("name")
         if not profile_name:
@@ -101,6 +106,7 @@ class SyncWorker(QThread):
         config["company"] = company_data.get("name")
         config["warehouse"] = pos_profile.get("warehouse")
         config["currency"] = pos_profile.get("currency")
+        config["allow_negative_stock"] = bool(stock_settings.get("allow_negative_stock"))
         
         # Default customer ni POS Profile dan olish
         default_customer = pos_profile.get("customer")

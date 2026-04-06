@@ -60,6 +60,7 @@ class ItemButton(QFrame):
         self.colors = ThemeManager.get_theme_colors()
         self.api = api
         self.loader = None  # ImageLoader reference
+        self._original_pixmap = None
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -72,7 +73,7 @@ class ItemButton(QFrame):
         # --- Rasm qismi (karta yuqori qismi) ---
         self.image_container = QWidget()
         self.image_container.setMinimumHeight(100)
-        self.image_container.setMaximumHeight(150)
+        self.image_container.setMaximumHeight(132)
         self.image_container.setStyleSheet(f"""
             background: {self.colors['bg_tertiary']};
             border-top-left-radius: 8px;
@@ -80,17 +81,19 @@ class ItemButton(QFrame):
         """)
 
         img_inner = QVBoxLayout(self.image_container)
+        img_inner.setContentsMargins(10, 8, 10, 8)
         img_inner.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.image_label = QLabel()
-        self.image_label.setMinimumSize(70, 70)
-        self.image_label.setMaximumSize(100, 100)
+        self.image_label.setMinimumSize(108, 78)
+        self.image_label.setMaximumSize(132, 96)
+        self.image_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet(f"""
             background: {self.colors['bg_secondary']};
             border-radius: 10px;
             color: {self.colors['text_tertiary']};
-            font-size: 28px;
+            font-size: 32px;
         """)
         self.image_label.setText("📦")
 
@@ -195,21 +198,36 @@ class ItemButton(QFrame):
         """Yuklangan rasmni image_label'ga o'rnatish"""
         if pixmap.isNull():
             return
-        scaled = pixmap.scaled(
-            self.image_label.maximumWidth(),
-            self.image_label.maximumHeight(),
-            Qt.AspectRatioMode.KeepAspectRatio,
+        self._original_pixmap = pixmap
+        self.image_label.setText("")
+        self.image_label.setStyleSheet("background: transparent; border-radius: 10px; border: none;")
+        self._render_pixmap()
+
+    def _render_pixmap(self):
+        """Rasmni container o'lchamiga moslab qayta chizish"""
+        if not self._original_pixmap or self._original_pixmap.isNull():
+            return
+        target_size = self.image_label.size()
+        if target_size.width() <= 0 or target_size.height() <= 0:
+            return
+        scaled = self._original_pixmap.scaled(
+            target_size,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
             Qt.TransformationMode.SmoothTransformation,
         )
-        self.image_label.setPixmap(scaled)
-        self.image_label.setText("")
-        self.image_label.setStyleSheet("background: transparent; border-radius: 10px;")
+        x = max(0, (scaled.width() - target_size.width()) // 2)
+        y = max(0, (scaled.height() - target_size.height()) // 2)
+        self.image_label.setPixmap(scaled.copy(x, y, target_size.width(), target_size.height()))
 
     def _on_loader_finished(self):
         """ImageLoader tugaganda resurslarni tozalash"""
         if self.loader:
             self.loader.deleteLater()
             self.loader = None
+
+    def resizeEvent(self, event):
+        self._render_pixmap()
+        super().resizeEvent(event)
 
     def enterEvent(self, event):
         self._apply_hover_style()

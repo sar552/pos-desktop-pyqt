@@ -6,8 +6,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtCore import QEvent, QPoint, QTimer
-from PyQt6.QtGui import QDoubleValidator
-from database.models import Customer, PosProfile, db
+from PyQt6.QtGui import QDoubleValidator, QFontMetrics
+from database.models import Customer, PosProfile, Item, db
 from core.logger import get_logger
 from core.constants import TICKET_ORDER_TYPES, ORDER_TYPES
 from core.config import load_config
@@ -188,11 +188,9 @@ class CartWidget(QWidget):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        header.resizeSection(1, 120)  # QTY
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        header.resizeSection(2, 90)   # RATE
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        header.resizeSection(3, 100)  # AMOUNT
+        header.resizeSection(1, 150)  # QTY
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         
         # Make row height dynamic based on content
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -858,7 +856,7 @@ class CartWidget(QWidget):
 
     def _get_item_meta(self, item_code: str) -> dict:
         cached = self._item_meta_cache.get(item_code)
-        if cached is not None:
+        if cached:
             return dict(cached)
         try:
             db.connect(reuse_if_open=True)
@@ -883,6 +881,9 @@ class CartWidget(QWidget):
         finally:
             if not db.is_closed():
                 db.close()
+
+    def invalidate_item_meta_cache(self):
+        self._item_meta_cache.clear()
 
     def _build_item_state(self, item_code: str, item_name: str, price: float, currency: str, qty: int = 1) -> dict:
         meta = self._get_item_meta(item_code)
@@ -916,6 +917,44 @@ class CartWidget(QWidget):
             "_manual_rate_set": False,
             "_manual_rate_value": None,
         }
+
+    def _item_allows_negative_stock(self, item_code: str) -> bool:
+        meta = self._get_item_meta(item_code)
+        if bool(meta.get("allow_negative_stock", 0)):
+            return True
+        profile = self._current_profile_data or self._get_current_profile_data()
+        stock_settings = profile.get("stock_settings") if isinstance(profile, dict) else {}
+        if isinstance(stock_settings, dict) and bool(stock_settings.get("allow_negative_stock")):
+            return True
+        return bool(load_config().get("allow_negative_stock"))
+
+    def _get_item_actual_stock_qty(self, item_code: str) -> float:
+        meta = self._get_item_meta(item_code)
+        return self._flt(meta.get("actual_qty"), 0.0)
+
+    def _can_set_item_qty(self, item_code: str, desired_qty: int, silent: bool = False) -> bool:
+        if desired_qty <= 0:
+            return True
+
+        meta = self._get_item_meta(item_code)
+        item_name = str(meta.get("item_name") or self.items.get(item_code, {}).get("name") or item_code)
+        is_stock_item = bool(int(meta.get("is_stock_item", self.items.get(item_code, {}).get("is_stock_item", 1)) or 0))
+        if not is_stock_item or self._item_allows_negative_stock(item_code):
+            return True
+
+        actual_qty = self._get_item_actual_stock_qty(item_code)
+        if desired_qty <= actual_qty:
+            return True
+
+        if not silent:
+            left_qty = max(actual_qty - self._flt(self.items.get(item_code, {}).get("qty"), 0.0), 0.0)
+            InfoDialog(
+                self,
+                "Xatolik",
+                f"{item_name} uchun yetarli qoldiq yo'q.\nMavjud: {actual_qty:g}\nQolgan: {left_qty:g}",
+                kind="warning",
+            ).exec()
+        return False
 
     def _can_edit_rate(self) -> bool:
         return bool(self._flt(self._get_profile_flag("posa_allow_user_to_edit_rate", 0)))
@@ -1371,6 +1410,16 @@ class CartWidget(QWidget):
         name_input.setStyleSheet(get_component_styles()["cart_input"])
         layout.addWidget(name_input)
 
+        phone_label = QLabel("Phone number")
+        phone_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {colors['text_secondary']};")
+        layout.addWidget(phone_label)
+
+        phone_input = QLineEdit()
+        phone_input.setPlaceholderText("Masalan: +998901234567")
+        phone_input.setFixedHeight(40)
+        phone_input.setStyleSheet(get_component_styles()["cart_input"])
+        layout.addWidget(phone_input)
+
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
@@ -1406,6 +1455,7 @@ class CartWidget(QWidget):
         if not customer_name:
             InfoDialog(self, "Xatolik", "Customer name bo'sh bo'lmasligi kerak.", kind="warning").exec()
             return
+        phone_number = phone_input.text().strip()
 
         customer_group = str(cg_combo.currentData() or cg_combo.currentText() or "").strip()
         if not customer_group:
@@ -1416,32 +1466,23 @@ class CartWidget(QWidget):
 
         territory = self._resolve_new_customer_territory()
         meta_fields = self._get_customer_meta_fields()
-
-        doc = {
-            "doctype": "Customer",
+        pos_profile_doc = self._current_profile_data or self._get_current_profile_data()
+        api_args = {
             "customer_name": customer_name,
-            "customer_type": "Company",
+            "company": company,
+            "pos_profile_doc": json.dumps(pos_profile_doc or {}),
             "customer_group": customer_group,
+            "territory": territory,
+            "customer_type": "Company",
+            "method": "create",
         }
-        if territory:
-            doc["territory"] = territory
+        if phone_number:
+            api_args["mobile_no"] = phone_number
 
-        if company:
-            company_field = ""
-            for field_name in ("company", "default_company", "customer_company"):
-                if field_name in meta_fields:
-                    company_field = field_name
-                    break
-            if not company_field:
-                for field_name in sorted(meta_fields):
-                    lowered = field_name.lower()
-                    if lowered.endswith("company"):
-                        company_field = field_name
-                        break
-            if company_field:
-                doc[company_field] = company
-
-        success, response = self.api.call_method("frappe.client.insert", {"doc": doc})
+        success, response = self.api.call_method(
+            "posawesome.posawesome.api.customers.create_customer",
+            api_args,
+        )
         if not success or not isinstance(response, dict):
             InfoDialog(
                 self,
@@ -1452,8 +1493,28 @@ class CartWidget(QWidget):
             return
 
         customer_code = str(response.get("name") or customer_name).strip()
+
+        if phone_number and customer_code and "phone_number" in meta_fields:
+            phone_update_success, phone_update_response = self.api.call_method(
+                "frappe.client.set_value",
+                {
+                    "doctype": "Customer",
+                    "name": customer_code,
+                    "fieldname": "phone_number",
+                    "value": phone_number,
+                },
+            )
+            if phone_update_success and isinstance(phone_update_response, dict):
+                response["phone_number"] = phone_number
+
         inserted_name = str(response.get("customer_name") or customer_name).strip()
-        customer_phone = str(response.get("mobile_no") or response.get("phone") or "").strip()
+        customer_phone = str(
+            response.get("phone_number")
+            or response.get("mobile_no")
+            or response.get("phone")
+            or phone_number
+            or ""
+        ).strip()
         customer_email = str(response.get("email_id") or response.get("email") or "").strip()
 
         try:
@@ -1741,8 +1802,12 @@ class CartWidget(QWidget):
         return typed
 
     def add_item(self, item_code: str, item_name: str, price: float, currency: str):
+        current_qty = int(self.items.get(item_code, {}).get("qty", 0) or 0)
+        desired_qty = current_qty + 1
+        if not self._can_set_item_qty(item_code, desired_qty):
+            return
         if item_code in self.items:
-            self.items[item_code]["qty"] = int(self.items[item_code]["qty"] + 1)
+            self.items[item_code]["qty"] = desired_qty
         else:
             self.items[item_code] = self._build_item_state(item_code, item_name, price, currency, qty=1)
         self._reprice_cart()
@@ -1750,9 +1815,13 @@ class CartWidget(QWidget):
 
     def update_qty(self, item_code: str, change: int):
         if item_code in self.items:
-            self.items[item_code]["qty"] = int(self.items[item_code]["qty"] + change)
-            if self.items[item_code]["qty"] <= 0:
+            desired_qty = int(self.items[item_code]["qty"] + change)
+            if desired_qty <= 0:
                 del self.items[item_code]
+            else:
+                if not self._can_set_item_qty(item_code, desired_qty):
+                    return
+                self.items[item_code]["qty"] = desired_qty
             self._reprice_cart()
             self._emit_cart_updated()
 
@@ -1760,6 +1829,8 @@ class CartWidget(QWidget):
         try:
             new_qty = int(float(new_qty_str))
             if new_qty > 0:
+                if not self._can_set_item_qty(item_code, new_qty):
+                    return
                 self.items[item_code]["qty"] = new_qty
             else:
                 del self.items[item_code]
@@ -1800,27 +1871,32 @@ class CartWidget(QWidget):
             qty_widget.setStyleSheet("background-color: transparent;")
             qty_layout = QHBoxLayout(qty_widget)
             qty_layout.setContentsMargins(0, 0, 0, 0)
+            qty_layout.setSpacing(10)
             
             minus_btn = QPushButton("−")
-            minus_btn.setFixedSize(28, 28)
+            minus_btn.setFixedSize(30, 30)
             minus_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             minus_btn.setStyleSheet(
-                f"background: transparent; color: {colors['error']}; border: 1px solid {colors['error']}; border-radius: 4px; font-weight: bold; font-size: 14px; padding-bottom: 2px;"
+                f"background: transparent; color: {colors['error']}; border: 1px solid {colors['error']}; border-radius: 6px; font-weight: 800; font-size: 16px;"
             )
             minus_btn.clicked.connect(lambda _, c=code: self.update_qty(c, -1))
             
-            qty_lbl = QtyLabel(str(item['qty']))
+            qty_lbl = QLineEdit(str(item['qty']))
             qty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            qty_lbl.setFixedSize(52, 32)
+            qty_lbl.setValidator(QDoubleValidator(0.0, 9999999999.0, 0))
+            qty_lbl.setProperty("disable_virtual_keyboard", True)
             qty_lbl.setStyleSheet(
-                f"font-weight: 900; font-size: 14px; color: {colors['text_primary']}; min-width: 30px;"
+                f"font-weight: 900; font-size: 15px; color: {colors['text_primary']}; "
+                f"background:{colors['input_bg']}; border:1px solid {colors['border']}; border-radius:8px; padding:2px 6px;"
             )
-            qty_lbl.clicked.connect(lambda c=code, q=str(item['qty']): self._open_qty_numpad(c, q))
+            qty_lbl.editingFinished.connect(lambda c=code, w=qty_lbl: self.update_qty_absolute(c, w.text()))
             
             plus_btn = QPushButton("+")
-            plus_btn.setFixedSize(28, 28)
+            plus_btn.setFixedSize(30, 30)
             plus_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             plus_btn.setStyleSheet(
-                f"background: transparent; color: {colors['success']}; border: 1px solid {colors['success']}; border-radius: 4px; font-weight: bold; font-size: 14px; padding-bottom: 2px;"
+                f"background: transparent; color: {colors['success']}; border: 1px solid {colors['success']}; border-radius: 6px; font-weight: 800; font-size: 16px;"
             )
             plus_btn.clicked.connect(lambda _, c=code: self.update_qty(c, 1))
             
@@ -1833,24 +1909,40 @@ class CartWidget(QWidget):
             self.table.setCellWidget(row, 1, qty_widget)
 
             # RATE
+            rate_value = self._flt(item.get('price'), 0)
+            rate_text = f"UZS {rate_value:,.0f}" if not self._can_edit_rate() else f"{rate_value:.0f}"
+            rate_metrics = QFontMetrics(self.font())
+            rate_width = max(96, rate_metrics.horizontalAdvance(rate_text) + 34)
             if self._can_edit_rate():
-                rate_lbl = QLineEdit(f"{self._flt(item.get('price'), 0):.0f}")
+                rate_lbl = QLineEdit(f"{rate_value:.0f}")
                 rate_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 rate_lbl.setValidator(QDoubleValidator(0.0, 9999999999.0, 2))
                 rate_lbl.setPlaceholderText("Rate")
                 rate_lbl.setToolTip("Rate ni shu joyda o'zgartiring")
                 rate_lbl.editingFinished.connect(lambda c=code, w=rate_lbl: self._commit_inline_rate(c, w))
+                rate_lbl.setMinimumWidth(rate_width)
+                rate_lbl.setFixedHeight(34)
                 rate_lbl.setStyleSheet(
                     f"color: {colors['accent']}; font-weight: 700; font-size: 13px; "
-                    f"background:{colors['input_bg']}; border:1px solid {colors['border']}; border-radius:6px; padding:4px;"
+                    f"background:{colors['input_bg']}; border:1px solid {colors['border']}; border-radius:8px; padding:4px 12px;"
                 )
             else:
-                rate_lbl = QLabel(f"UZS {item['price']:,.0f}")
+                rate_lbl = QLabel(rate_text)
+                rate_lbl.setMinimumWidth(rate_width)
+                rate_lbl.setFixedHeight(34)
                 rate_lbl.setStyleSheet(
-                    f"color: {colors['text_tertiary']}; font-weight: 600; font-size: 13px;"
+                    f"color: {colors['text_tertiary']}; font-weight: 700; font-size: 13px; "
+                    f"background:{colors['bg_tertiary']}; border-radius:8px; padding:4px 12px;"
                 )
             rate_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setCellWidget(row, 2, rate_lbl)
+            rate_widget = QWidget()
+            rate_layout = QHBoxLayout(rate_widget)
+            rate_layout.setContentsMargins(4, 0, 4, 0)
+            rate_layout.addStretch()
+            rate_layout.addWidget(rate_lbl)
+            rate_layout.addStretch()
+            rate_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setCellWidget(row, 2, rate_widget)
 
             # AMOUNT
             qty = self._flt(item.get('qty'), 0)
@@ -1858,13 +1950,24 @@ class CartWidget(QWidget):
             line_discount = self._flt(item.get('discount_amount'))
             rate = self._flt(item.get('rate'), self._flt(item.get('price')))
             amt = qty * rate
-            amt_lbl = QLabel(f"UZS {amt:,.0f}")
-            amt_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            amount_text = f"UZS {amt:,.0f}"
+            amount_width = max(120, rate_metrics.horizontalAdvance(amount_text) + 36)
+            amt_lbl = QLabel(amount_text)
+            amt_lbl.setMinimumWidth(amount_width)
+            amt_lbl.setFixedHeight(34)
+            amt_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             amt_lbl.setStyleSheet(
-                f"font-weight: 900; font-size: 14px; color: {colors['text_primary']};"
+                f"font-weight: 900; font-size: 14px; color: {colors['text_primary']}; "
+                f"background:{colors['bg_tertiary']}; border-radius:8px; padding:4px 14px;"
             )
-            amt_lbl.setContentsMargins(0, 0, 10, 0)
-            self.table.setCellWidget(row, 3, amt_lbl)
+            amount_widget = QWidget()
+            amount_layout = QHBoxLayout(amount_widget)
+            amount_layout.setContentsMargins(4, 0, 4, 0)
+            amount_layout.addStretch()
+            amount_layout.addWidget(amt_lbl)
+            amount_layout.addStretch()
+            amount_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setCellWidget(row, 3, amount_widget)
 
             # Name with compact delete button
             name_widget = QWidget()
@@ -1909,6 +2012,10 @@ class CartWidget(QWidget):
             self.total_qty_label.setText(str(total_qty))
         if hasattr(self, 'discounts_label'):
             self.discounts_label.setText(f"UZS {self.item_discount_total:,.0f}")
+        self.table.resizeColumnToContents(2)
+        self.table.resizeColumnToContents(3)
+        self.table.setColumnWidth(2, max(self.table.columnWidth(2), 120))
+        self.table.setColumnWidth(3, max(self.table.columnWidth(3), 150))
         
         # Re-apply column visibility after refresh
         self.table.setColumnHidden(1, not self.col_settings["show_qty"]["value"])
