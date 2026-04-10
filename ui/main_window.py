@@ -319,6 +319,7 @@ class MainWindow(QMainWindow):
 
         self.item_browser = ItemBrowser(self.api)
         self.item_browser.item_selected.connect(self.add_item_to_active_cart)
+        self.item_browser.search_resolved.connect(self.add_item_payload_to_active_cart)
         # splitter.addWidget(self.item_browser)
 
         # ── Sales Tabs ──────────────────
@@ -560,6 +561,8 @@ class MainWindow(QMainWindow):
         new_cart.checkout_requested.connect(self.on_checkout)
         new_cart.price_list_changed.connect(self.item_browser.set_price_list)
         new_cart.cart_updated.connect(self._sync_item_browser_cart_view)
+        new_cart.item_search_changed.connect(self.item_browser.set_search_text)
+        new_cart.item_search_submitted.connect(self.item_browser.submit_search)
         tab_index = self.sales_tabs.addTab(new_cart, f"Sotuv {tab_count + 1}")
         self.sales_tabs.setCurrentIndex(tab_index)
         self._sync_item_browser_cart_view()
@@ -568,6 +571,8 @@ class MainWindow(QMainWindow):
         cart = self.sales_tabs.widget(index)
         if cart:
             self.item_browser.set_price_list(cart.price_list_combo.currentText())
+            if hasattr(cart, "search_item_input"):
+                self.item_browser.set_search_text(cart.search_item_input.text(), trigger=True)
         self._sync_item_browser_cart_view()
 
     def _get_active_cart_reservations(self) -> dict:
@@ -578,7 +583,7 @@ class MainWindow(QMainWindow):
         reservations = {}
         for code, item in active_cart.items.items():
             try:
-                qty = int(float(item.get("qty", 0)))
+                qty = float(item.get("qty", 0))
             except (TypeError, ValueError):
                 qty = 0
             if qty > 0:
@@ -610,6 +615,18 @@ class MainWindow(QMainWindow):
         active_cart = self.sales_tabs.currentWidget()
         if active_cart:
             active_cart.add_item(item_code, item_name, price, currency)
+            if hasattr(active_cart, "clear_item_search"):
+                active_cart.clear_item_search()
+            self.item_browser.set_search_text("", trigger=True)
+            self._sync_item_browser_cart_view()
+
+    def add_item_payload_to_active_cart(self, payload: dict):
+        active_cart = self.sales_tabs.currentWidget()
+        if active_cart:
+            active_cart.apply_item_payload(payload)
+            if hasattr(active_cart, "clear_item_search"):
+                active_cart.clear_item_search()
+            self.item_browser.set_search_text("", trigger=True)
             self._sync_item_browser_cart_view()
 
     def on_checkout(self, order_data: dict):

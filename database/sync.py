@@ -33,7 +33,9 @@ class SyncWorker(QThread):
                 self.sync_finished.emit(False, "POS Profil ochiq emas yoki topilmadi. Avval smena oching.")
                 return
 
-            self._sync_items(pos_profile_data)
+            self._sync_scale_barcode_settings()
+            item_codes = self._sync_items(pos_profile_data)
+            self._sync_item_barcode_details(pos_profile_data, item_codes)
             self._sync_item_prices(pos_profile_data)
             self._sync_customers(pos_profile_data)
 
@@ -154,6 +156,35 @@ class SyncWorker(QThread):
 
         return pos_profile
 
+    def _sync_scale_barcode_settings(self):
+        config = load_config()
+        settings_payload = None
+
+        try:
+            success, response = self.api.call_method(
+                "frappe.client.get",
+                {"doctype": "Scale Barcode Settings", "name": "Scale Barcode Settings"},
+            )
+            if success and isinstance(response, dict):
+                settings_payload = response
+        except Exception as e:
+            logger.debug("Scale Barcode Settings to'g'ridan olinmadi: %s", e)
+
+        if settings_payload is None:
+            try:
+                success, response = self.api.call_method(
+                    "posawesome.posawesome.api.items.parse_scale_barcode",
+                    {"barcode": ""},
+                )
+                if success and isinstance(response, dict) and isinstance(response.get("settings"), dict):
+                    settings_payload = response.get("settings")
+            except Exception as e:
+                logger.debug("Scale barcode metadata olinmadi: %s", e)
+
+        if settings_payload:
+            config["scale_barcode_settings"] = settings_payload
+            save_config(config)
+
     def _sync_items(self, pos_profile_data: dict):
         self.progress_update.emit("Tovarlar POSAwesome'dan yuklanmoqda...")
         profile_json = json.dumps(pos_profile_data)
@@ -239,9 +270,60 @@ class SyncWorker(QThread):
             if len(items_response) < limit:
                 has_more = False
 
-        if server_item_codes:
-            # Optionally remove items not in server_item_codes if you want pure sync
-            pass
+        return list(server_item_codes)
+
+    def _sync_item_barcode_details(self, pos_profile_data: dict, item_codes: list[str]):
+        if not item_codes:
+            return
+        self.progress_update.emit("Barcode va item detail ma'lumotlari boyitilmoqda...")
+        profile_json = json.dumps(pos_profile_data)
+        batch_size = 100
+
+        for offset in range(0, len(item_codes), batch_size):
+            batch_codes = item_codes[offset:offset + batch_size]
+            try:
+                success, details = self.api.call_method(
+                    "posawesome.posawesome.api.items.get_items_details",
+                    {
+                        "pos_profile": profile_json,
+                        "items_data": json.dumps([{"item_code": code} for code in batch_codes]),
+                        "price_list": pos_profile_data.get("selling_price_list") or load_config().get("price_list") or "Standard Selling",
+                    },
+                )
+            except Exception as e:
+                logger.debug("Item barcode detail sync xatosi: %s", e)
+                continue
+
+            if not success or not isinstance(details, list):
+                continue
+
+            with db.atomic():
+                for detail in details:
+                    item_code = detail.get("item_code")
+                    if not item_code:
+                        continue
+                    item = Item.get_or_none(Item.item_code == item_code)
+                    if not item:
+                        continue
+                    try:
+                        payload = json.loads(item.posawesome_data or "{}")
+                    except Exception:
+                        payload = {}
+                    payload.update(detail)
+                    barcode_value = item.barcode or payload.get("barcode")
+                    if not barcode_value:
+                        item_barcode = payload.get("item_barcode") or []
+                        if item_barcode and isinstance(item_barcode[0], dict):
+                            barcode_value = item_barcode[0].get("barcode")
+                    Item.update(
+                        barcode=barcode_value,
+                        posawesome_data=json.dumps(payload),
+                        last_sync=datetime.datetime.now(),
+                    ).where(Item.item_code == item_code).execute()
+
+            self.progress_update.emit(
+                f"Barcode detail yuklandi: {min(offset + batch_size, len(item_codes))}/{len(item_codes)}"
+            )
 
 
     def _sync_item_prices(self, pos_profile_data: dict):

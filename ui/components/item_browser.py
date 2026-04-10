@@ -13,6 +13,8 @@ from PyQt6.QtCore import pyqtSignal, Qt, QSize, QThread, QObject, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPainterPath
 from database.models import Item, ItemPrice, db
 from core.api import FrappeAPI
+from core.config import load_config
+from core.feedback import SoundFeedback
 from core.logger import get_logger
 from core.constants import ITEM_LOAD_LIMIT, IMAGE_TIMEOUT
 logger = get_logger(__name__)
@@ -251,6 +253,7 @@ class ItemButton(QFrame):
 
 class ItemBrowser(QWidget):
     item_selected = pyqtSignal(str, str, float, str)
+    search_resolved = pyqtSignal(dict)
     settings_clicked = pyqtSignal()
 
     def __init__(self, api: FrappeAPI):
@@ -295,6 +298,7 @@ class ItemBrowser(QWidget):
         self.search_input.setProperty("disable_virtual_keyboard", True)
         self.search_input.setStyleSheet(styles["item_search"])
         self.search_input.textChanged.connect(self.filter_items)
+        self.search_input.returnPressed.connect(lambda: self.submit_search(self.search_input.text()))
         main_layout.addWidget(self.search_input)
         
         # Top Settings Header (optional visible mostly in List View context in UI, but we can show always)
@@ -527,6 +531,7 @@ class ItemBrowser(QWidget):
             allow_negative = bool(p_data.get("allow_negative_stock", 0))
             is_stock = bool(p_data.get("is_stock_item", 1))
             if is_stock and not allow_negative and st_qty <= 0:
+                SoundFeedback.error()
                 InfoDialog(self, "Xatolik", f"{name} omborda qolmagan!", kind="warning").exec()
                 return
         self.item_selected.emit(code, name, rate, currency)
@@ -538,7 +543,7 @@ class ItemBrowser(QWidget):
             if not key:
                 continue
             try:
-                numeric_qty = int(float(qty))
+                numeric_qty = float(qty)
             except (TypeError, ValueError):
                 continue
             if numeric_qty > 0:
@@ -746,6 +751,7 @@ class ItemBrowser(QWidget):
         is_stock = bool(p_data.get("is_stock_item", 1))
         
         if is_stock and not allow_negative and st_qty <= 0:
+            SoundFeedback.error()
             InfoDialog(self, "Xatolik", f"{item.item_name} omborda qolmagan (0 qt)!", kind="warning").exec()
             return
             
@@ -754,6 +760,181 @@ class ItemBrowser(QWidget):
     def set_price_list(self, price_list):
         self.current_price_list = price_list
         self.load_items(self.search_input.text())
+
+    def set_search_text(self, text: str, trigger: bool = True):
+        normalized = str(text or "")
+        self.search_input.blockSignals(True)
+        self.search_input.setText(normalized)
+        self.search_input.blockSignals(False)
+        if trigger:
+            self.load_items(normalized)
+
+    def _extract_item_barcodes(self, item: Item) -> list[str]:
+        values = []
+        if item.barcode:
+            values.append(str(item.barcode).strip())
+        try:
+            payload = json.loads(item.posawesome_data or "{}")
+        except Exception:
+            payload = {}
+        for row in payload.get("item_barcode") or []:
+            if isinstance(row, dict) and row.get("barcode"):
+                values.append(str(row.get("barcode")).strip())
+        for row in payload.get("barcodes") or []:
+            if row:
+                values.append(str(row).strip())
+        deduped = []
+        seen = set()
+        for value in values:
+            if value and value not in seen:
+                deduped.append(value)
+                seen.add(value)
+        return deduped
+
+    def _get_scale_settings(self) -> dict:
+        settings = load_config().get("scale_barcode_settings") or {}
+        return settings if isinstance(settings, dict) else {}
+
+    def _parse_scale_barcode_local(self, barcode: str) -> dict | None:
+        settings = self._get_scale_settings()
+        barcode_value = str(barcode or "").strip()
+        if not barcode_value:
+            return None
+        try:
+            prefix = str(settings.get("prefix") or "").strip()
+            prefix_included = int(settings.get("prefix_included_or_not") or 0)
+            prefix_length = int(settings.get("no_of_prefix_characters") or 0) if prefix_included else 0
+            item_start = int(settings.get("item_code_starting_digit") or 0)
+            item_digits = int(settings.get("item_code_total_digits") or 0)
+            weight_start = int(settings.get("weight_starting_digit") or 0)
+            weight_digits = int(settings.get("weight_total_digits") or 0)
+            weight_decimals = int(settings.get("weight_decimals") or 0)
+            price_enabled = int(settings.get("price_included_in_barcode_or_not") or 0)
+            price_start = int(settings.get("price_starting_digit") or 0)
+            price_digits = int(settings.get("price_total_digit") or 0)
+            price_decimals = int(settings.get("price_decimals") or 0)
+        except Exception:
+            return None
+
+        if prefix and not barcode_value.startswith(prefix):
+            return None
+        if not (item_start and item_digits):
+            return None
+
+        def extract_numeric_segment(start: int, length: int, decimals: int = 0):
+            if not (start and length):
+                return None
+            start_idx = max(start - 1, 0)
+            end_idx = start_idx + length
+            if len(barcode_value) < end_idx:
+                return None
+            whole = barcode_value[start_idx:end_idx]
+            decimal_part = ""
+            if decimals > 0:
+                decimal_end = end_idx + decimals
+                if len(barcode_value) < decimal_end:
+                    return None
+                decimal_part = barcode_value[end_idx:decimal_end]
+            try:
+                return float(f"{whole}.{decimal_part}" if decimal_part else whole)
+            except Exception:
+                return None
+
+        item_start_idx = max(item_start - 1, 0)
+        item_end_idx = item_start_idx + item_digits
+        if len(barcode_value) < item_end_idx:
+            return None
+        item_code = barcode_value[item_start_idx:item_end_idx]
+        result = {"barcode": barcode_value, "item_code": item_code}
+        qty = extract_numeric_segment(weight_start, weight_digits, weight_decimals)
+        if qty is not None:
+            result["qty"] = qty
+        if price_enabled:
+            price = extract_numeric_segment(price_start, price_digits, price_decimals)
+            if price is not None:
+                result["price"] = price
+        if prefix_length:
+            result["prefix_length"] = prefix_length
+        return result
+
+    def _find_local_item_for_search(self, search: str):
+        normalized = str(search or "").strip()
+        if not normalized:
+            return None, None
+        scale_data = self._parse_scale_barcode_local(normalized)
+        target_code = str(scale_data.get("item_code") if scale_data else normalized).strip()
+        try:
+            db.connect(reuse_if_open=True)
+            query = Item.select()
+            if self.current_category:
+                query = query.where(Item.item_group == self.current_category)
+            for item in query:
+                if item.item_code == target_code:
+                    return item, scale_data
+                barcodes = self._extract_item_barcodes(item)
+                if normalized in barcodes:
+                    return item, scale_data
+            return None, scale_data
+        finally:
+            if not db.is_closed():
+                db.close()
+
+    def _resolve_online_barcode(self, search: str) -> dict | None:
+        if not self.api or not self.api.is_configured():
+            return None
+        try:
+            success, response = self.api.call_method(
+                "posawesome.posawesome.api.items.get_items_from_barcode",
+                {
+                    "selling_price_list": self.current_price_list or load_config().get("price_list") or "Standard Selling",
+                    "currency": load_config().get("currency") or "UZS",
+                    "barcode": search,
+                },
+            )
+            if not success or not isinstance(response, dict) or not response.get("item_code"):
+                return None
+            return {
+                "item_code": response.get("item_code"),
+                "item_name": response.get("item_name") or response.get("item_code"),
+                "rate": float(response.get("price_list_rate") or response.get("rate") or 0),
+                "currency": response.get("currency") or load_config().get("currency") or "UZS",
+                "qty": response.get("scale_qty") or 1,
+                "uom": response.get("uom"),
+                "manual_rate": response.get("scale_price") is not None,
+            }
+        except Exception as e:
+            logger.debug("Barcode server resolve xatosi: %s", e)
+            return None
+
+    def submit_search(self, search: str):
+        search = str(search or "").strip()
+        if not search:
+            return
+
+        item, scale_data = self._find_local_item_for_search(search)
+        if item:
+            price, currency = self._resolve_display_price(item)
+            payload = {
+                "item_code": item.item_code,
+                "item_name": item.item_name,
+                "rate": scale_data.get("price") if scale_data and scale_data.get("price") is not None else price,
+                "currency": currency,
+                "qty": scale_data.get("qty") if scale_data and scale_data.get("qty") is not None else 1,
+                "manual_rate": bool(scale_data and scale_data.get("price") is not None),
+            }
+            self.search_resolved.emit(payload)
+            self.set_search_text("", trigger=True)
+            return
+
+        online_payload = self._resolve_online_barcode(search)
+        if online_payload:
+            self.search_resolved.emit(online_payload)
+            self.set_search_text("", trigger=True)
+            return
+
+        self.load_items(search)
+        if self.items_table.rowCount() == 0 and self.items_grid.count() == 0:
+            SoundFeedback.error()
 
 
     def open_settings(self):
@@ -765,6 +946,33 @@ class ItemBrowser(QWidget):
                 self.settings[k]["value"] = res[k]
             # Reload to apply filters
             self.load_items(self.search_input.text())
+
+    def _item_matches_search(self, item: Item, search: str) -> bool:
+        normalized = str(search or "").strip().lower()
+        if not normalized:
+            return True
+
+        parts = [part for part in normalized.split() if part]
+        try:
+            payload = json.loads(item.posawesome_data or "{}")
+        except Exception:
+            payload = {}
+
+        values = [
+            str(item.item_code or "").lower(),
+            str(item.item_name or "").lower(),
+            str(item.barcode or "").lower(),
+            str(item.description or "").lower(),
+        ]
+        for row in payload.get("item_barcode") or []:
+            if isinstance(row, dict) and row.get("barcode"):
+                values.append(str(row.get("barcode")).lower())
+        for row in payload.get("barcodes") or []:
+            if row:
+                values.append(str(row).lower())
+
+        return all(any(part in value for value in values) for part in parts)
+
     def load_items(self, search=""):
         # Gridni tozalash
         while self.items_grid.count():
@@ -787,13 +995,14 @@ class ItemBrowser(QWidget):
             query = Item.select()
             if self.current_category:
                 query = query.where(Item.item_group == self.current_category)
-            if search:
-                query = query.where(Item.item_name.contains(search) | Item.item_code.contains(search))
+            items_iter = query if search else query.limit(ITEM_LOAD_LIMIT)
 
             row, col = 0, 0
             table_row = 0
             
-            for item in query.limit(ITEM_LOAD_LIMIT):
+            for item in items_iter:
+                if search and not self._item_matches_search(item, search):
+                    continue
                 p, cur = self._resolve_display_price(item)
                 raw_qty = float(json.loads(item.posawesome_data).get("actual_qty", 0)) if item.posawesome_data else 0.0
                 st_qty = self._get_effective_stock_qty(item.item_code, raw_qty)

@@ -12,6 +12,7 @@ from core.logger import get_logger
 from core.constants import TICKET_ORDER_TYPES, ORDER_TYPES
 from core.config import load_config
 from core.api import FrappeAPI
+from core.feedback import SoundFeedback
 from ui.components.keyboard import TouchKeyboard
 from ui.components.dialogs import InfoDialog
 from ui.component_styles import get_component_styles
@@ -32,6 +33,8 @@ class CartWidget(QWidget):
     checkout_requested = pyqtSignal(dict)
     price_list_changed = pyqtSignal(str)
     cart_updated = pyqtSignal(dict)
+    item_search_changed = pyqtSignal(str)
+    item_search_submitted = pyqtSignal(str)
 
     def __init__(self, api: FrappeAPI | None = None):
         super().__init__()
@@ -161,6 +164,8 @@ class CartWidget(QWidget):
         self.search_item_input.setPlaceholderText("Search items or barcode...")
         self.search_item_input.setFixedHeight(40)
         self.search_item_input.setStyleSheet(styles["cart_input"])
+        self.search_item_input.textChanged.connect(self.item_search_changed.emit)
+        self.search_item_input.returnPressed.connect(lambda: self.item_search_submitted.emit(self.search_item_input.text()))
         
         pl_vbox = QVBoxLayout()
         pl_vbox.setSpacing(2)
@@ -895,14 +900,14 @@ class CartWidget(QWidget):
     def invalidate_item_meta_cache(self):
         self._item_meta_cache.clear()
 
-    def _build_item_state(self, item_code: str, item_name: str, price: float, currency: str, qty: int = 1) -> dict:
+    def _build_item_state(self, item_code: str, item_name: str, price: float, currency: str, qty: float = 1.0) -> dict:
         meta = self._get_item_meta(item_code)
         price_value = self._flt(price)
         return {
             "item_code": item_code,
             "name": item_name or meta.get("item_name") or item_code,
             "item_name": item_name or meta.get("item_name") or item_code,
-            "qty": int(qty),
+            "qty": self._flt(qty, 1.0),
             "currency": currency or meta.get("currency") or "UZS",
             "price": price_value,
             "price_list_rate": price_value,
@@ -942,7 +947,7 @@ class CartWidget(QWidget):
         meta = self._get_item_meta(item_code)
         return self._flt(meta.get("actual_qty"), 0.0)
 
-    def _can_set_item_qty(self, item_code: str, desired_qty: int, silent: bool = False) -> bool:
+    def _can_set_item_qty(self, item_code: str, desired_qty: float, silent: bool = False) -> bool:
         if desired_qty <= 0:
             return True
 
@@ -957,6 +962,7 @@ class CartWidget(QWidget):
             return True
 
         if not silent:
+            SoundFeedback.error()
             left_qty = max(actual_qty - self._flt(self.items.get(item_code, {}).get("qty"), 0.0), 0.0)
             InfoDialog(
                 self,
@@ -1800,6 +1806,14 @@ class CartWidget(QWidget):
             )
         self._reprice_cart()
 
+    def clear_item_search(self):
+        if not hasattr(self, "search_item_input"):
+            return
+        self.search_item_input.blockSignals(True)
+        self.search_item_input.clear()
+        self.search_item_input.blockSignals(False)
+        self.item_search_changed.emit("")
+
     def get_selected_customer_name(self) -> str:
         if self._selected_customer:
             return self._selected_customer
@@ -1811,43 +1825,87 @@ class CartWidget(QWidget):
 
         return typed
 
-    def add_item(self, item_code: str, item_name: str, price: float, currency: str):
-        current_qty = int(self.items.get(item_code, {}).get("qty", 0) or 0)
+    def add_item(self, item_code: str, item_name: str, price: float, currency: str) -> bool:
+        current_qty = self._flt(self.items.get(item_code, {}).get("qty", 0), 0.0)
         desired_qty = current_qty + 1
         if not self._can_set_item_qty(item_code, desired_qty):
-            return
+            return False
         if item_code in self.items:
             self.items[item_code]["qty"] = desired_qty
         else:
             self.items[item_code] = self._build_item_state(item_code, item_name, price, currency, qty=1)
         self._reprice_cart()
         self._emit_cart_updated()
+        SoundFeedback.success()
+        return True
 
-    def update_qty(self, item_code: str, change: int):
+    def update_qty(self, item_code: str, change: int) -> bool:
         if item_code in self.items:
-            desired_qty = int(self.items[item_code]["qty"] + change)
+            previous_qty = self._flt(self.items[item_code]["qty"], 0.0)
+            desired_qty = previous_qty + change
             if desired_qty <= 0:
                 del self.items[item_code]
             else:
                 if not self._can_set_item_qty(item_code, desired_qty):
-                    return
+                    return False
                 self.items[item_code]["qty"] = desired_qty
             self._reprice_cart()
             self._emit_cart_updated()
+            if desired_qty > previous_qty:
+                SoundFeedback.success()
+            return True
+        return False
 
-    def update_qty_absolute(self, item_code: str, new_qty_str: str):
+    def update_qty_absolute(self, item_code: str, new_qty_str: str) -> bool:
         try:
-            new_qty = int(float(new_qty_str))
+            previous_qty = self._flt(self.items.get(item_code, {}).get("qty"), 0.0)
+            new_qty = float(new_qty_str)
             if new_qty > 0:
                 if not self._can_set_item_qty(item_code, new_qty):
-                    return
+                    return False
                 self.items[item_code]["qty"] = new_qty
             else:
                 del self.items[item_code]
             self._reprice_cart()
             self._emit_cart_updated()
+            if new_qty > previous_qty:
+                SoundFeedback.success()
+            return True
         except (ValueError, KeyError):
-            pass
+            return False
+
+    def apply_item_payload(self, payload: dict) -> bool:
+        item_code = str(payload.get("item_code") or "").strip()
+        if not item_code:
+            return False
+
+        item_name = str(payload.get("item_name") or payload.get("name") or item_code).strip()
+        currency = str(payload.get("currency") or "UZS").strip() or "UZS"
+        rate = self._flt(payload.get("rate"), 0.0)
+        qty = self._flt(payload.get("qty"), 1.0)
+        if qty <= 0:
+            qty = 1.0
+
+        current_qty = self._flt(self.items.get(item_code, {}).get("qty", 0.0), 0.0)
+        desired_qty = current_qty + qty
+        if not self._can_set_item_qty(item_code, desired_qty):
+            return False
+
+        if item_code in self.items:
+            self.items[item_code]["qty"] = desired_qty
+            if rate > 0 and payload.get("manual_rate"):
+                self._apply_manual_rate_to_item(self.items[item_code], rate, persist=True)
+        else:
+            self.items[item_code] = self._build_item_state(item_code, item_name, rate, currency, qty=qty)
+            if payload.get("uom"):
+                self.items[item_code]["uom"] = payload.get("uom")
+            if rate > 0 and payload.get("manual_rate"):
+                self._apply_manual_rate_to_item(self.items[item_code], rate, persist=True)
+
+        self._reprice_cart()
+        self._emit_cart_updated()
+        SoundFeedback.success()
+        return True
 
 
     def open_columns_settings(self):
@@ -1866,7 +1924,7 @@ class CartWidget(QWidget):
     def refresh_table(self):
         colors = ThemeManager.get_theme_colors()
         self.table.setRowCount(0)
-        total_qty = 0
+        total_qty = 0.0
         self.gross_total_amount = 0.0
         self.net_total_amount = 0.0
         self.item_discount_total = 0.0
@@ -1893,10 +1951,10 @@ class CartWidget(QWidget):
             """)
             minus_btn.clicked.connect(lambda _, c=code: self.update_qty(c, -1))
             
-            qty_lbl = QLineEdit(str(item['qty']))
+            qty_lbl = QLineEdit(f"{self._flt(item.get('qty'), 0.0):g}")
             qty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             qty_lbl.setFixedSize(52, 32)
-            qty_lbl.setValidator(QDoubleValidator(0.0, 9999999999.0, 0))
+            qty_lbl.setValidator(QDoubleValidator(0.0, 9999999999.0, 3))
             qty_lbl.setProperty("disable_virtual_keyboard", True)
             qty_lbl.setStyleSheet(
                 f"font-weight: 900; font-size: 15px; color: {colors['text_primary']}; "
@@ -2008,7 +2066,7 @@ class CartWidget(QWidget):
             name_layout.addWidget(name_lbl, 1)
             self.table.setCellWidget(row, 0, name_widget)
 
-            total_qty += int(qty)
+            total_qty += qty
             self.gross_total_amount += qty * price_list_rate
             self.item_discount_total += qty * line_discount
             self.net_total_amount += amt
@@ -2023,7 +2081,7 @@ class CartWidget(QWidget):
         if hasattr(self, 'total_label'):
             self.total_label.setText(f"UZS {self.total_amount:,.0f}")
         if hasattr(self, 'total_qty_label'):
-            self.total_qty_label.setText(str(total_qty))
+            self.total_qty_label.setText(f"{total_qty:g}")
         if hasattr(self, 'discounts_label'):
             self.discounts_label.setText(f"UZS {self.item_discount_total:,.0f}")
         self.table.resizeColumnToContents(2)
@@ -2074,7 +2132,7 @@ class CartWidget(QWidget):
         snapshot = {}
         for code, item in self.items.items():
             try:
-                qty = int(float(item.get("qty", 0)))
+                qty = float(item.get("qty", 0))
             except (TypeError, ValueError):
                 qty = 0
             if qty > 0:
