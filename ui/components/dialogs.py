@@ -24,9 +24,6 @@ class ClickableLineEdit(QLineEdit):
 class InfoDialog(QDialog):
     """kind: 'success' | 'warning' | 'error'"""
     _ICONS = {"success": "✓", "warning": "⚠️", "error": "✕"}
-    _COLORS = {"success": "#16a34a", "warning": "#d97706", "error": "#dc2626"}
-    _BG = {"success": "#f0fdf4", "warning": "#fffbeb", "error": "#fef2f2"}
-    _BORDER = {"success": "#bbf7d0", "warning": "#fde68a", "error": "#fecaca"}
 
     def __init__(self, parent, title: str, message: str, kind: str = "success"):
         super().__init__(parent)
@@ -34,6 +31,24 @@ class InfoDialog(QDialog):
         self.setMinimumWidth(320)
         self.setMaximumWidth(500)
         colors = ThemeManager.get_theme_colors()
+
+        # Theme-aware status colors
+        _COLORS = {
+            "success": colors['success'],
+            "warning": colors['warning'],
+            "error": colors['error'],
+        }
+        _BG = {
+            "success": colors.get('success_bg', '#f0fdf4'),
+            "warning": colors.get('warning_bg', '#fffbeb'),
+            "error": colors.get('error_bg', '#fef2f2'),
+        }
+        _BORDER = {
+            "success": colors.get('success_border', '#bbf7d0'),
+            "warning": colors.get('warning_border', '#fde68a'),
+            "error": colors.get('error_border', '#fecaca'),
+        }
+
         self.setStyleSheet(f"background: {colors['bg_secondary']}; color: {colors['text_primary']};")
 
         layout = QVBoxLayout(self)
@@ -43,13 +58,13 @@ class InfoDialog(QDialog):
         top = QHBoxLayout()
         ic = QLabel(self._ICONS.get(kind, "ℹ"))
         ic.setStyleSheet(
-            f"font-size:26px; background:{self._BG.get(kind, '#f8fafc')};"
-            f"border:1.5px solid {self._BORDER.get(kind, '#e2e8f0')};"
-            f"border-radius:10px; padding:6px 12px;"
+            f"font-size:26px; background:{_BG.get(kind, colors['bg_tertiary'])};"
+            f"border:1.5px solid {_BORDER.get(kind, colors['border'])};"
+            f"border-radius:8px; padding:6px 12px;"
         )
         top.addWidget(ic)
         ttl = QLabel(title)
-        ttl.setStyleSheet(f"font-size:16px; font-weight:800; color:{self._COLORS.get(kind, colors['text_primary'])};")
+        ttl.setStyleSheet(f"font-size:16px; font-weight:700; color:{_COLORS.get(kind, colors['text_primary'])};")
         top.addWidget(ttl, 1)
         layout.addLayout(top)
 
@@ -66,8 +81,8 @@ class InfoDialog(QDialog):
         ok = QPushButton("OK")
         ok.setMinimumHeight(38)
         ok.setStyleSheet(
-            f"QPushButton{{background:{self._COLORS.get(kind, colors['accent'])};"
-            f"color:white;font-weight:700;border-radius:10px;border:none;}}"
+            f"QPushButton{{background:{_COLORS.get(kind, colors['accent'])};"
+            f"color:white;font-weight:700;border-radius:8px;border:none;}}"
             f"QPushButton:hover{{opacity:0.9;}}"
         )
         ok.clicked.connect(self.accept)
@@ -94,8 +109,8 @@ class ConfirmDialog(QDialog):
         top = QHBoxLayout()
         ic = QLabel(icon)
         ic.setStyleSheet(
-            "font-size:26px; background:#fffbeb;"
-            "border:1.5px solid #fde68a; border-radius:10px; padding:6px 12px;"
+            f"font-size:26px; background:{colors.get('warning_bg', '#fffbeb')};"
+            f"border:1.5px solid {colors.get('warning_border', '#fde68a')}; border-radius:10px; padding:6px 12px;"
         )
         top.addWidget(ic)
         ttl = QLabel(title)

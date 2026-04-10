@@ -149,11 +149,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         self._apply_central_widget_theme(central_widget)
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         # --- Top Bar ---
         top_bar = QHBoxLayout()
-        top_bar.setContentsMargins(10, 4, 10, 4)
-        top_bar.setSpacing(12)
+        top_bar.setContentsMargins(16, 8, 16, 8)
+        top_bar.setSpacing(10)
 
         # ── POSAwesome Brand Logo ──────────────────
         colors = ThemeManager.get_theme_colors()
@@ -174,8 +176,8 @@ class MainWindow(QMainWindow):
 
         self.brand_name = QLabel(f"POS<font color=\"{colors['accent']}\">Awesome</font>")
         self.brand_name.setStyleSheet(f"""
-            font-size: 24px;
-            font-weight: 900;
+            font-size: 22px;
+            font-weight: 800;
             color: {colors['accent']};
             background: transparent;
         """)
@@ -214,7 +216,7 @@ class MainWindow(QMainWindow):
         self.status_dot.setStyleSheet(f"background-color: {colors['text_tertiary']}; border-radius: 6px;")
 
         self.status_text = QLabel("Checking...")
-        self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['text_secondary']}; font-size: 13px;")
+        self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['text_secondary']}; font-size: 12px;")
 
         top_bar.addWidget(self.status_dot)
         top_bar.addWidget(self.status_text)
@@ -225,15 +227,15 @@ class MainWindow(QMainWindow):
                     hover: str = "", border: str = "none") -> QPushButton:
             b = QPushButton(label)
             b.setMinimumHeight(36)
-            b.setMaximumHeight(52)
+            b.setMaximumHeight(44)
             h = hover or bg
             disabled_bg = colors['bg_tertiary']
             disabled_text = colors['text_tertiary']
             b.setStyleSheet(f"""
                 QPushButton {{
                     background: {bg}; color: {color};
-                    font-weight: 700; font-size: 13px;
-                    border-radius: 10px; border: {border};
+                    font-weight: 600; font-size: 12px;
+                    border-radius: 8px; border: {border};
                     padding: 0 14px;
                 }}
                 QPushButton:hover {{ background: {h}; }}
@@ -258,9 +260,9 @@ class MainWindow(QMainWindow):
         self.add_sale_btn.clicked.connect(self.add_new_sale_tab)
         top_bar.addWidget(self.add_sale_btn)
 
-        # History Button — accent color
+        # History Button — accent variant
         self.history_btn = _tb_btn(
-            "Tarix", "#8b5cf6", "white", hover="#7c3aed"
+            "Tarix", colors['accent'], "white", hover=colors['accent_hover']
         )
         self.history_btn.clicked.connect(self.show_history)
         top_bar.addWidget(self.history_btn)
@@ -335,18 +337,19 @@ class MainWindow(QMainWindow):
                 color: {colors['text_tertiary']};
                 padding: 10px 20px;
                 font-weight: 600;
-                font-size: 13px;
+                font-size: 12px;
                 border-radius: 8px 8px 0 0;
-                margin-right: 4px;
+                margin-right: 3px;
                 border: 1px solid {colors['border']};
                 border-bottom: none;
                 min-width: 90px;
             }}
             QTabBar::tab:selected {{
-                background: {colors['bg_tertiary']};
+                background: {colors['bg_primary']};
                 color: {colors['accent']};
-                font-weight: 900;
-                border: 1px solid {colors['accent']};
+                font-weight: 700;
+                border: 1px solid {colors['border']};
+                border-bottom: 2px solid {colors['accent']};
             }}
             QTabBar::tab:hover:!selected {{
                 background: {colors['bg_tertiary']};
@@ -371,7 +374,7 @@ class MainWindow(QMainWindow):
         self.history_panel.setMaximumHeight(500)
         self.history_panel.setStyleSheet(f"""
             background: {colors['bg_primary']};
-            border-top: 2px solid {colors['border']};
+            border-top: 1px solid {colors['border']};
         """)
         main_layout.addWidget(self.history_panel)
 
@@ -397,12 +400,13 @@ class MainWindow(QMainWindow):
         self.keyboard_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.keyboard_btn.setStyleSheet(f"""
             QPushButton {{
-                background: {colors['bg_tertiary']}; color: {colors['text_primary']};
-                font-weight: bold; font-size: 13px;
+                background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
+                font-weight: 600; font-size: 12px;
                 border-radius: 6px; padding: 0 16px; margin: 2px;
+                border: 1px solid {colors['border']};
             }}
-            QPushButton:hover {{ background: {colors['border']}; }}
-            QPushButton:pressed {{ background: {colors['text_tertiary']}; }}
+            QPushButton:hover {{ background: {colors['bg_hover']}; color: {colors['text_primary']}; }}
+            QPushButton:pressed {{ background: {colors['border']}; }}
         """)
         self.keyboard_btn.clicked.connect(self._toggle_global_keyboard)
         self.statusBar().addPermanentWidget(self.keyboard_btn)
@@ -511,30 +515,33 @@ class MainWindow(QMainWindow):
         self._connectivity_worker.start()
 
     def _update_connectivity_ui(self, is_online: bool):
+        colors = ThemeManager.get_theme_colors()
         if is_online:
-            self.status_dot.setStyleSheet("background-color: #10b981; border-radius: 6px;")
+            self.status_dot.setStyleSheet(f"background-color: {colors['success']}; border-radius: 6px;")
             self.status_text.setText("ONLINE")
-            self.status_text.setStyleSheet("font-weight: bold; color: #10b981; font-size: 13px;")
+            self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['success']}; font-size: 12px;")
         else:
-            self.status_dot.setStyleSheet("background-color: #ef4444; border-radius: 6px;")
+            self.status_dot.setStyleSheet(f"background-color: {colors['error']}; border-radius: 6px;")
             self.status_text.setText("OFFLINE")
-            self.status_text.setStyleSheet("font-weight: bold; color: #ef4444; font-size: 13px;")
+            self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['error']}; font-size: 12px;")
 
     def _update_offline_queue_count(self):
         try:
             db.connect(reuse_if_open=True)
             count = PendingInvoice.select().where(PendingInvoice.status == "Pending").count()
             self.offline_btn.setText(f"Offline: {count}")
+            colors = ThemeManager.get_theme_colors()
 
             if count > 0:
-                self.offline_btn.setStyleSheet("""
-                    QPushButton { padding: 12px 20px; background-color: #fff7ed; color: #ea580c;
-                    font-weight: bold; font-size: 14px; border-radius: 8px; border: 2px solid #f97316; }
+                self.offline_btn.setStyleSheet(f"""
+                    QPushButton {{ padding: 12px 20px; background-color: {colors.get('warning_bg', '#fff7ed')}; color: {colors['warning']};
+                    font-weight: bold; font-size: 12px; border-radius: 8px; border: 1.5px solid {colors.get('warning_border', '#f97316')}; }}
                 """)
             else:
-                self.offline_btn.setStyleSheet("""
-                    QPushButton { padding: 12px 20px; background-color: #f3f4f6; color: #374151;
-                    font-weight: bold; font-size: 14px; border-radius: 8px; border: 1px solid #d1d5db; }
+                self.offline_btn.setStyleSheet(f"""
+                    QPushButton {{ padding: 12px 20px; background-color: {colors['bg_secondary']}; color: {colors['text_primary']};
+                    font-weight: bold; font-size: 12px; border-radius: 8px; border: 1.5px solid {colors['border']}; }}
+                    QPushButton:hover {{ background-color: {colors['bg_tertiary']}; }}
                 """)
         except Exception as e:
             logger.debug("Offline queue count xatosi: %s", e)
@@ -666,7 +673,7 @@ class MainWindow(QMainWindow):
             self.history_panel.setVisible(False)
             self.history_btn.setStyleSheet(
                 f"padding: 12px 20px; background-color: {colors['accent']}; color: white; "
-                "font-weight: bold; border-radius: 8px; margin-left: 10px;"
+                "font-weight: 600; border-radius: 8px; margin-left: 10px; border: none;"
             )
         else:
             self.history_panel.opening_entry = self.opening_entry or ""
@@ -674,7 +681,7 @@ class MainWindow(QMainWindow):
             self.history_panel.load_history()
             self.history_btn.setStyleSheet(
                 f"padding: 12px 20px; background-color: {colors['accent_hover']}; color: white; "
-                "font-weight: bold; border-radius: 8px; margin-left: 10px;"
+                "font-weight: 600; border-radius: 8px; margin-left: 10px; "
                 f"border: 2px solid {colors['accent']};"
             )
 
@@ -880,7 +887,7 @@ class MainWindow(QMainWindow):
         widget.setStyleSheet(f'background: {colors["bg_primary"]};')
     
     def _apply_theme_to_ui(self):
-        """Apply current theme to all UI elements"""
+        """Apply current theme to all UI elements."""
         colors = ThemeManager.get_theme_colors()
         
         # Update central widget
@@ -892,8 +899,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'brand_name'):
             self.brand_name.setText(f"POS<font color=\"{colors['accent']}\">Awesome</font>")
             self.brand_name.setStyleSheet(f"""
-                font-size: 24px;
-                font-weight: 900;
+                font-size: 22px;
+                font-weight: 800;
                 color: {colors['accent']};
                 background: transparent;
             """)
@@ -917,7 +924,7 @@ class MainWindow(QMainWindow):
             self.status_dot.setStyleSheet(f"background-color: {colors['text_tertiary']}; border-radius: 6px;")
         
         if hasattr(self, 'status_text'):
-            self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['text_secondary']}; font-size: 13px;")
+            self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['text_secondary']}; font-size: 12px;")
         
         # Update tabs styling
         if hasattr(self, 'sales_tabs'):
@@ -931,18 +938,19 @@ class MainWindow(QMainWindow):
                     color: {colors['text_tertiary']};
                     padding: 10px 20px;
                     font-weight: 600;
-                    font-size: 13px;
+                    font-size: 12px;
                     border-radius: 8px 8px 0 0;
-                    margin-right: 4px;
+                    margin-right: 3px;
                     border: 1px solid {colors['border']};
                     border-bottom: none;
                     min-width: 90px;
                 }}
                 QTabBar::tab:selected {{
-                    background: {colors['bg_tertiary']};
+                    background: {colors['bg_primary']};
                     color: {colors['accent']};
-                    font-weight: 900;
-                    border: 1px solid {colors['accent']};
+                    font-weight: 700;
+                    border: 1px solid {colors['border']};
+                    border-bottom: 2px solid {colors['accent']};
                 }}
                 QTabBar::tab:hover:!selected {{
                     background: {colors['bg_tertiary']};
@@ -954,7 +962,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'history_panel'):
             self.history_panel.setStyleSheet(f"""
                 background: {colors['bg_primary']};
-                border-top: 2px solid {colors['border']};
+                border-top: 1px solid {colors['border']};
             """)
             if hasattr(self.history_panel, "apply_theme"):
                 self.history_panel.apply_theme()

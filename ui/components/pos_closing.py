@@ -385,16 +385,24 @@ class PosClosingDialog(QDialog):
         self.closing_inputs = {}
         self.active_input = None
         self.colors = ThemeManager.get_theme_colors()
-        self.input_style_active = (
-            f"padding: 10px 14px; font-size: 15px; font-weight: 500; "
-            f"border: 2px solid {self.colors['accent']}; border-radius: 8px; "
-            f"background: {self.colors['input_bg']}; color: {self.colors['text_primary']};"
-        )
-        self.input_style_idle = (
-            f"padding: 10px 14px; font-size: 15px; font-weight: 500; "
-            f"border: 1px solid {self.colors['border']}; border-radius: 8px; "
-            f"background: {self.colors['bg_secondary']}; color: {self.colors['text_primary']};"
-        )
+        self.input_style_active = f"""
+            QLineEdit {{
+                padding: 10px 14px; font-size: 15px; font-weight: 500;
+                border: 2px solid {self.colors['accent']}; border-radius: 8px;
+                background: {self.colors['input_bg']}; color: {self.colors['text_primary']};
+            }}
+        """
+        self.input_style_idle = f"""
+            QLineEdit {{
+                padding: 10px 14px; font-size: 15px; font-weight: 500;
+                border: 1px solid {self.colors['border']}; border-radius: 8px;
+                background: {self.colors['bg_secondary']}; color: {self.colors['text_primary']};
+            }}
+            QLineEdit:focus {{
+                border: 2px solid {self.colors['accent']};
+                background: {self.colors['input_bg']};
+            }}
+        """
         self.init_ui()
         QTimer.singleShot(50, self._center_on_parent)
         self._load_closing_data()
@@ -495,6 +503,10 @@ class PosClosingDialog(QDialog):
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.viewport().setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+        from PyQt6.QtWidgets import QScroller
+        QScroller.grabGesture(self.scroll.viewport(), QScroller.ScrollerGestureType.LeftMouseButtonGesture)
         self.scroll.setStyleSheet(f"""
             QScrollArea {{
                 border: none; 
@@ -661,10 +673,11 @@ class PosClosingDialog(QDialog):
             QFrame {{
                 background: {colors['bg_secondary']};
                 border-radius: 8px;
-                border: 1px solid {colors['border']};
+                border: none;
             }}
             QFrame:hover {{
                 background: {colors['bg_tertiary']};
+                border: none;
             }}
         """)
         layout = QVBoxLayout(card)
@@ -955,7 +968,7 @@ class PosClosingDialog(QDialog):
                 color: {colors['success']};
                 padding: 12px 16px;
                 background: {colors['bg_tertiary']};
-                border: 1px solid {colors['border']};
+                border: none;
                 border-radius: 6px;
             """)
         else:
@@ -966,7 +979,7 @@ class PosClosingDialog(QDialog):
                 color: {colors['warning']};
                 padding: 12px 16px;
                 background: {colors['bg_tertiary']};
-                border: 1px solid {colors['border']};
+                border: none;
                 border-radius: 6px;
             """)
 

@@ -1,222 +1,357 @@
-# Theme color palettes - Based on design system for POS/Retail
+# ══════════════════════════════════════════════════════════════
+# DESIGN SYSTEM — POS Desktop
+# Modern SaaS-grade design tokens (Stripe / Shopify inspired)
+# ══════════════════════════════════════════════════════════════
+
+# ── Typography Scale ──────────────────────────────────────────
+FONT_SIZES = {
+    "xs": 11,
+    "sm": 12,
+    "base": 14,
+    "md": 16,
+    "lg": 20,
+    "xl": 24,
+    "xxl": 32,
+}
+
+# ── Spacing (8px grid) ───────────────────────────────────────
+SPACING = {
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "xxl": 32,
+    "xxxl": 48,
+}
+
+# ── Border Radius ─────────────────────────────────────────────
+RADIUS = {
+    "sm": 6,
+    "md": 8,
+    "lg": 12,
+    "xl": 16,
+    "pill": 9999,
+}
+
+# ── Shadows (light mode only — dark uses border emphasis) ─────
+SHADOWS = {
+    "sm": "0 1px 2px rgba(0,0,0,0.05)",
+    "md": "0 2px 8px rgba(0,0,0,0.08)",
+    "lg": "0 4px 16px rgba(0,0,0,0.10)",
+    "xl": "0 8px 32px rgba(0,0,0,0.12)",
+}
+
+# ── Transitions ───────────────────────────────────────────────
+TRANSITION_FAST = "0.12s"
+TRANSITION_BASE = "0.2s"
+
+# ══════════════════════════════════════════════════════════════
+# COLOR TOKENS
+# ══════════════════════════════════════════════════════════════
 THEME_COLORS = {
     "light": {
-        # Backgrounds - Light teal-based
-        "bg_primary": "#F0FDFA",      # Very light teal background
-        "bg_secondary": "#FFFFFF",     # Pure white for cards
-        "bg_tertiary": "#CCFBF1",      # Light teal for headers
-        
-        # Text colors - Dark teal/gray
-        "text_primary": "#134E4A",     # Dark teal for primary text
-        "text_secondary": "#0F766E",   # Teal for secondary text
-        "text_tertiary": "#64748B",    # Gray for disabled/hints
-        
-        # Borders
-        "border": "#99F6E4",           # Light teal border
-        "border_light": "#CCFBF1",     # Very light teal
-        
-        # Accent colors - Teal primary, Orange for actions
-        "accent": "#0D9488",           # Teal primary
-        "accent_hover": "#0F766E",     # Darker teal on hover
-        "accent_pressed": "#115E59",   # Even darker on press
-        "accent_action": "#EA580C",    # Orange for important actions
-        
+        # Backgrounds — clean whites / soft grays
+        "bg_primary": "#F7F8FA",       # App canvas — soft warm gray
+        "bg_secondary": "#FFFFFF",     # Cards / elevated surfaces
+        "bg_tertiary": "#F0F2F5",      # Subtle section fills / headers
+        "bg_hover": "#EBEDF0",         # Interactive hover state
+
+        # Text — high-contrast neutrals
+        "text_primary": "#1A1D23",     # Headings / body
+        "text_secondary": "#5E6370",   # Secondary labels
+        "text_tertiary": "#9DA3AE",    # Hints / placeholders
+
+        # Borders — subtle, structural
+        "border": "#E1E4EA",           # Default border
+        "border_light": "#EBEDF0",     # Lighter dividers
+
+        # Accent — indigo-teal (trustworthy, modern)
+        "accent": "#635BFF",           # Primary brand (Stripe violet)
+        "accent_hover": "#5348DB",     # Hover
+        "accent_pressed": "#453BBF",   # Active / pressed
+        "accent_light": "#F0EEFF",     # Light accent fill
+        "accent_action": "#E8590C",    # High-attention CTA (orange)
+
         # Selection
-        "selection_bg": "#CCFBF1",     # Light teal selection
-        "selection_text": "#134E4A",   # Dark teal text
-        
+        "selection_bg": "#F0EEFF",     # Light accent selection
+        "selection_text": "#1A1D23",
+
         # Inputs
-        "input_bg": "#FFFFFF",         # White input background
-        "input_focus_bg": "#F0FDFA",   # Very light teal on focus
-        
+        "input_bg": "#FFFFFF",
+        "input_focus_bg": "#FFFFFF",
+        "input_border": "#D0D4DB",
+
         # Scrollbars
-        "scrollbar_bg": "#F0FDFA",
-        "scrollbar_handle": "#99F6E4",
-        
-        # Status colors
-        "success": "#10B981",
+        "scrollbar_bg": "#F0F2F5",
+        "scrollbar_handle": "#C7CBD2",
+
+        # Status — accessible contrast
+        "success": "#16A34A",
+        "success_bg": "#F0FDF4",
+        "success_border": "#BBF7D0",
         "error": "#DC2626",
-        "warning": "#F59E0B",
+        "error_bg": "#FEF2F2",
+        "error_border": "#FECACA",
+        "warning": "#D97706",
+        "warning_bg": "#FFFBEB",
+        "warning_border": "#FDE68A",
+        "info": "#2563EB",
+        "info_bg": "#EFF6FF",
+        "info_border": "#BFDBFE",
     },
     "dark": {
-        # Backgrounds - Dark navy blues (tyomniy siniy)
-        "bg_primary": "#0B1120",       # Deep dark navy background
-        "bg_secondary": "#111B2E",     # Dark navy for cards
-        "bg_tertiary": "#1A2740",      # Slightly lighter navy for headers
-        
-        # Text colors - Light grays and whites
-        "text_primary": "#EDEDEF",     # Almost white for primary text
-        "text_secondary": "#ADADB0",   # Medium gray for secondary
-        "text_tertiary": "#8A8F98",    # Darker gray for hints
-        
-        # Borders
-        "border": "#253552",           # Navy-tinted border
-        "border_light": "#1A2740",     # Very dark navy
-        
-        # Accent colors - Bright teal/cyan for visibility
-        "accent": "#14B8A6",           # Bright teal
-        "accent_hover": "#0D9488",     # Medium teal on hover
-        "accent_pressed": "#0F766E",   # Darker teal on press
-        "accent_action": "#FB923C",    # Bright orange for actions
-        
+        # Backgrounds — deep charcoal (no pure black)
+        "bg_primary": "#111318",       # Canvas — warm dark
+        "bg_secondary": "#1A1D24",     # Cards / surfaces
+        "bg_tertiary": "#23262F",      # Fills / headers
+        "bg_hover": "#2C2F38",         # Hover
+
+        # Text — balanced light
+        "text_primary": "#ECEEF1",     # Body / headings
+        "text_secondary": "#9DA3AE",   # Secondary
+        "text_tertiary": "#6B7280",    # Hints
+
+        # Borders — subtle warm
+        "border": "#2E3139",           # Default
+        "border_light": "#23262F",     # Lighter
+
+        # Accent
+        "accent": "#7C75FF",           # Bright violet (visible on dark)
+        "accent_hover": "#6E66F0",     # Hover
+        "accent_pressed": "#5F56E0",   # Pressed
+        "accent_light": "#1E1B35",     # Dark accent fill
+        "accent_action": "#F97316",    # Bright orange CTA
+
         # Selection
-        "selection_bg": "#1A3352",     # Dark blue selection
-        "selection_text": "#5EEAD4",   # Light teal text
-        
+        "selection_bg": "#1E1B35",
+        "selection_text": "#C4BFFF",
+
         # Inputs
-        "input_bg": "#111B2E",         # Dark navy input background
-        "input_focus_bg": "#1A2740",   # Slightly lighter on focus
-        
+        "input_bg": "#1A1D24",
+        "input_focus_bg": "#23262F",
+        "input_border": "#3A3D46",
+
         # Scrollbars
-        "scrollbar_bg": "#111B2E",
-        "scrollbar_handle": "#253552",
-        
-        # Status colors
+        "scrollbar_bg": "#1A1D24",
+        "scrollbar_handle": "#3A3D46",
+
+        # Status — bright on dark
         "success": "#22C55E",
+        "success_bg": "#14261D",
+        "success_border": "#1A4D2E",
         "error": "#EF4444",
+        "error_bg": "#2A1515",
+        "error_border": "#4D1A1A",
         "warning": "#FBBF24",
+        "warning_bg": "#2A2510",
+        "warning_border": "#4D4417",
+        "info": "#3B82F6",
+        "info_bg": "#151D2E",
+        "info_border": "#1A3352",
     }
 }
 
 
 def get_stylesheet(theme="light"):
-    """Generate stylesheet based on theme"""
+    """Generate global application stylesheet based on active theme."""
     colors = THEME_COLORS.get(theme, THEME_COLORS["light"])
-    
+    fs = FONT_SIZES
+    r = RADIUS
+    sp = SPACING
+
     return f"""
-/* General Application Background and Font */
+/* ══════════════════════════════════════════════════════════════
+   GLOBAL FOUNDATION
+   ══════════════════════════════════════════════════════════════ */
 QWidget {{
     background-color: {colors['bg_primary']};
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: "Segoe UI", "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    font-size: {fs['base']}px;
     color: {colors['text_primary']};
 }}
 
-/* Base styles for labels */
 QLabel {{
     background-color: transparent;
     border: none;
 }}
 
-/* Specific styling for large input fields */
+/* ══════════════════════════════════════════════════════════════
+   INPUT CONTROLS
+   ══════════════════════════════════════════════════════════════ */
 QLineEdit, QComboBox {{
-    padding: 12px;
-    font-size: 16px;
-    border: 1px solid {colors['border']};
-    border-radius: 8px;
+    padding: {sp['sm'] + 2}px {sp['md']}px;
+    font-size: {fs['base']}px;
+    border: 1.5px solid {colors.get('input_border', colors['border'])};
+    border-radius: {r['md']}px;
     background-color: {colors['input_bg']};
     color: {colors['text_primary']};
 }}
-
 QLineEdit:focus, QComboBox:focus {{
     border: 2px solid {colors['accent']};
     background-color: {colors['input_focus_bg']};
 }}
+QLineEdit:disabled, QComboBox:disabled {{
+    background-color: {colors['bg_tertiary']};
+    color: {colors['text_tertiary']};
+}}
 
-/* ComboBox dropdown styling */
 QComboBox QAbstractItemView {{
-    background-color: {colors['input_bg']};
+    background-color: {colors['bg_secondary']};
     color: {colors['text_primary']};
     border: 1px solid {colors['border']};
     selection-background-color: {colors['selection_bg']};
     selection-color: {colors['selection_text']};
+    border-radius: {r['sm']}px;
+    padding: 4px;
+    outline: 0;
 }}
-QComboBox::drop-down {{
-    border: none;
-}}
+QComboBox::drop-down {{ border: none; }}
 
-/* Table Widget (Cart) styling */
+/* ══════════════════════════════════════════════════════════════
+   TABLE SYSTEM — Financial-grade data presentation
+   ══════════════════════════════════════════════════════════════ */
 QTableWidget {{
     background-color: {colors['bg_secondary']};
-    border: 1px solid {colors['border_light']};
-    border-radius: 8px;
-    gridline-color: {colors['border_light']};
+    alternate-background-color: {colors['bg_tertiary']};
+    border: 1px solid {colors['border']};
+    border-radius: {r['lg']}px;
+    gridline-color: transparent;
     color: {colors['text_primary']};
-    font-size: 15px;
+    font-size: {fs['base']}px;
     selection-background-color: {colors['selection_bg']};
     selection-color: {colors['text_primary']};
+    outline: 0;
 }}
-
 QTableWidget::item {{
+    padding: {sp['sm'] + 2}px {sp['sm']}px;
     border-bottom: 1px solid {colors['border_light']};
 }}
+QTableWidget::item:selected {{
+    background-color: {colors['selection_bg']};
+}}
 
-/* Table Header styling */
 QHeaderView::section {{
     background-color: {colors['bg_tertiary']};
     color: {colors['text_secondary']};
-    padding: 12px 5px;
+    padding: {sp['md']}px {sp['sm']}px;
     border: none;
     border-bottom: 2px solid {colors['border']};
-    font-size: 14px;
-    font-weight: bold;
+    font-size: {fs['xs']}px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
     text-transform: uppercase;
 }}
 
-/* Scrollbars */
+/* ══════════════════════════════════════════════════════════════
+   SCROLLBARS — thin, minimal
+   ══════════════════════════════════════════════════════════════ */
 QScrollBar:vertical {{
     border: none;
     background: {colors['scrollbar_bg']};
-    width: 10px;
-    margin: 0px 0px 0px 0px;
+    width: 8px;
+    margin: 2px;
+    border-radius: 4px;
 }}
 QScrollBar::handle:vertical {{
     background: {colors['scrollbar_handle']};
-    min-height: 20px;
-    border-radius: 5px;
+    min-height: 32px;
+    border-radius: 4px;
 }}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-    height: 0px;
+QScrollBar::handle:vertical:hover {{
+    background: {colors['accent_hover']};
 }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
 
 QScrollBar:horizontal {{
     border: none;
     background: {colors['scrollbar_bg']};
-    height: 10px;
-    margin: 0px 0px 0px 0px;
+    height: 8px;
+    margin: 2px;
+    border-radius: 4px;
 }}
 QScrollBar::handle:horizontal {{
     background: {colors['scrollbar_handle']};
-    min-width: 20px;
-    border-radius: 5px;
+    min-width: 32px;
+    border-radius: 4px;
 }}
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-    width: 0px;
+QScrollBar::handle:horizontal:hover {{
+    background: {colors['accent_hover']};
 }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
 
-/* GroupBox styling */
+/* ══════════════════════════════════════════════════════════════
+   GROUP BOX
+   ══════════════════════════════════════════════════════════════ */
 QGroupBox {{
-    font-weight: bold;
-    font-size: 16px;
-    border: 1px solid {colors['border_light']};
-    border-radius: 8px;
-    margin-top: 15px;
+    font-weight: 600;
+    font-size: {fs['base']}px;
+    border: 1px solid {colors['border']};
+    border-radius: {r['lg']}px;
+    margin-top: {sp['lg']}px;
+    padding: {sp['lg']}px;
     background-color: {colors['bg_secondary']};
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 15px;
-    padding: 0 5px;
+    left: {sp['lg']}px;
+    padding: 0 {sp['sm']}px;
     color: {colors['text_secondary']};
+    font-size: {fs['sm']}px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
 }}
 
-/* Custom general buttons */
+/* ══════════════════════════════════════════════════════════════
+   BUTTON SYSTEM
+   ══════════════════════════════════════════════════════════════ */
 QPushButton {{
     background-color: {colors['bg_secondary']};
-    border: 1px solid {colors['border']};
-    color: {colors['text_secondary']};
-    border-radius: 8px;
-    padding: 8px;
-    font-weight: bold;
+    border: 1.5px solid {colors['border']};
+    color: {colors['text_primary']};
+    border-radius: {r['md']}px;
+    padding: {sp['sm']}px {sp['lg']}px;
+    font-weight: 600;
+    font-size: {fs['sm']}px;
 }}
 QPushButton:hover {{
     background-color: {colors['bg_tertiary']};
+    border-color: {colors.get('input_border', colors['border'])};
 }}
 QPushButton:pressed {{
-    background-color: {colors['border_light']};
+    background-color: {colors['bg_hover']};
+}}
+QPushButton:disabled {{
+    background-color: {colors['bg_tertiary']};
+    color: {colors['text_tertiary']};
+    border-color: {colors['border_light']};
+}}
+
+/* ══════════════════════════════════════════════════════════════
+   TOOLTIPS
+   ══════════════════════════════════════════════════════════════ */
+QToolTip {{
+    background-color: {colors['bg_secondary']};
+    color: {colors['text_primary']};
+    border: 1px solid {colors['border']};
+    border-radius: {r['sm']}px;
+    padding: {sp['sm']}px {sp['md']}px;
+    font-size: {fs['sm']}px;
+}}
+
+/* ══════════════════════════════════════════════════════════════
+   STATUS BAR
+   ══════════════════════════════════════════════════════════════ */
+QStatusBar {{
+    background-color: {colors['bg_secondary']};
+    border-top: 1px solid {colors['border']};
+    color: {colors['text_secondary']};
+    font-size: {fs['xs']}px;
+    padding: 2px {sp['sm']}px;
 }}
 """
 
 
-# Legacy support - default to light theme
+# Legacy support — default to light theme
 GLOBAL_STYLE = get_stylesheet("light")

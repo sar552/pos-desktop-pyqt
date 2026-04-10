@@ -12,6 +12,8 @@ from core.logger import get_logger
 from database.models import PosShift, db
 from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit
+from ui.component_styles import get_component_styles
+from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
 
@@ -84,14 +86,11 @@ class PosOpeningDialog(QDialog):
         self.config = load_config()
         self.payment_inputs = {}
         self.active_input = None
-        self.profile_style_active = (
-            "padding: 10px 14px; font-size: 18px; font-weight: 700; "
-            "border: 2px solid #3b82f6; border-radius: 10px; background: #eff6ff; color: #1e293b;"
-        )
-        self.profile_style_idle = (
-            "padding: 10px 14px; font-size: 18px; font-weight: 700; "
-            "border: 1.5px solid #e2e8f0; border-radius: 10px; background: white; color: #1e293b;"
-        )
+
+        styles = get_component_styles()
+        self.colors = ThemeManager.get_theme_colors()
+        self.profile_style_active = styles["opening_input_active"]
+        self.profile_style_idle = styles["opening_input_idle"]
 
         if not self.dialog_data:
             success, response = self.api.call_method("posawesome.posawesome.api.shifts.get_opening_dialog_data")
@@ -122,7 +121,10 @@ class PosOpeningDialog(QDialog):
             self.windowFlags()
             & ~Qt.WindowType.WindowContextHelpButtonHint
         )
-        self.setStyleSheet("background: white;")
+
+        styles = get_component_styles()
+        colors = self.colors
+        self.setStyleSheet(styles["opening_container"])
 
         main_h = QHBoxLayout(self)
         main_h.setContentsMargins(20, 20, 20, 20)
@@ -136,27 +138,21 @@ class PosOpeningDialog(QDialog):
 
         # Header
         header = QFrame()
-        header.setStyleSheet("background: #1e40af; border-radius: 10px; padding: 15px;")
+        header.setStyleSheet(styles["opening_header"])
         h_layout = QVBoxLayout(header)
 
         title = QLabel("KASSA OCHISH")
-        title.setStyleSheet("color: #93c5fd; font-size: 11px; font-weight: 700; letter-spacing: 2px;")
+        title.setStyleSheet(f"color: rgba(255,255,255,0.7); font-size: 11px; font-weight: 700; letter-spacing: 2px;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h_layout.addWidget(title)
 
         self.company_combo = QComboBox()
-        self.company_combo.setStyleSheet("""
-            QComboBox { background: white; color: #1e293b; border-radius: 5px; padding: 5px; font-weight: bold; font-size: 13px; }
-            QComboBox::drop-down { border: none; }
-        """)
+        self.company_combo.setStyleSheet(styles["opening_combo"])
         self.company_combo.currentIndexChanged.connect(self._on_company_changed)
         h_layout.addWidget(self.company_combo)
 
         self.profile_combo = QComboBox()
-        self.profile_combo.setStyleSheet("""
-            QComboBox { background: white; color: #1e293b; border-radius: 5px; padding: 5px; font-weight: bold; font-size: 14px; }
-            QComboBox::drop-down { border: none; }
-        """)
+        self.profile_combo.setStyleSheet(styles["opening_combo"])
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         h_layout.addWidget(self.profile_combo)
 
@@ -164,9 +160,7 @@ class PosOpeningDialog(QDialog):
 
         # Payment mode inputs
         pay_label = QLabel("BOSHLANG'ICH SUMMALAR")
-        pay_label.setStyleSheet(
-            "font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
-        )
+        pay_label.setStyleSheet(styles["opening_section_label"])
         left_layout.addWidget(pay_label)
 
         scroll = QScrollArea()
@@ -184,32 +178,17 @@ class PosOpeningDialog(QDialog):
 
         btn_exit = QPushButton("Chiqish")
         btn_exit.setMinimumHeight(44)
-        btn_exit.setStyleSheet("""
-            QPushButton { background: #f1f5f9; color: #64748b;
-                font-weight: 700; font-size: 13px; border-radius: 12px; border: none; }
-            QPushButton:hover { background: #e2e8f0; }
-        """)
+        btn_exit.setStyleSheet(styles["opening_btn_secondary"])
         btn_exit.clicked.connect(self._on_exit)
 
         btn_logout = QPushButton("Logout")
         btn_logout.setMinimumHeight(44)
-        btn_logout.setStyleSheet("""
-            QPushButton { background: #fef3c7; color: #92400e;
-                font-weight: 700; font-size: 13px; border-radius: 12px; border: 1px solid #fde68a; }
-            QPushButton:hover { background: #fde68a; }
-        """)
+        btn_logout.setStyleSheet(styles["opening_btn_warning"])
         btn_logout.clicked.connect(self._on_logout)
 
         self.btn_open = QPushButton("KASSANI OCHISH")
         self.btn_open.setMinimumHeight(44)
-        self.btn_open.setStyleSheet("""
-            QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 #1d4ed8, stop:1 #1e40af);
-                color: white; font-weight: 800; font-size: 15px;
-                border-radius: 12px; border: none; }
-            QPushButton:hover { background: #1e3a8a; }
-            QPushButton:disabled { background: #93c5fd; color: #dbeafe; }
-        """)
+        self.btn_open.setStyleSheet(styles["opening_btn_primary"])
         self.btn_open.clicked.connect(self._process_opening)
 
         btn_layout.addWidget(btn_exit, 1)
@@ -221,15 +200,13 @@ class PosOpeningDialog(QDialog):
 
         # ── RIGHT PANEL — Numpad ─────────────
         right = QWidget()
-        right.setStyleSheet("background: #f8fafc; border-radius: 14px;")
+        right.setStyleSheet(f"background: {colors['bg_tertiary']}; border-radius: 12px;")
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(12, 12, 12, 12)
         right_layout.setSpacing(10)
 
         numpad_lbl = QLabel("MIQDOR KIRITING")
-        numpad_lbl.setStyleSheet(
-            "font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
-        )
+        numpad_lbl.setStyleSheet(styles["opening_section_label"])
         right_layout.addWidget(numpad_lbl)
 
         self.numpad = TouchNumpad()
@@ -338,7 +315,7 @@ class PosOpeningDialog(QDialog):
 
             row = QHBoxLayout()
             lbl = QLabel(mode)
-            lbl.setStyleSheet("font-size: 14px; font-weight: 600; color: #334155;")
+            lbl.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {self.colors['text_primary']};")
 
             inp = ClickableLineEdit()
             inp.setValidator(QDoubleValidator(0.0, 999999999.0, 2))

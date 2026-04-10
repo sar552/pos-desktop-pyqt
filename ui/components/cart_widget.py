@@ -106,7 +106,12 @@ class CartWidget(QWidget):
         self.customer_clear_btn.setFixedSize(36, 36)
         self.customer_clear_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.customer_clear_btn.setToolTip("Customer tanlovini tozalash")
-        self.customer_clear_btn.setStyleSheet(styles["cart_button"])
+        self.customer_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.customer_clear_btn.setStyleSheet(f"""
+            QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['error']}; border: 1.5px solid {colors['error']}; border-radius: 8px; font-weight: 800; font-size: 14px; padding: 0; }}
+            QPushButton:hover {{ background: {colors.get('error_bg', colors['bg_tertiary'])}; }}
+            QPushButton:pressed {{ background: {colors['error']}; color: white; }}
+        """)
         self.customer_clear_btn.clicked.connect(self._clear_customer_selection)
         customer_row.addWidget(self.customer_clear_btn)
 
@@ -114,7 +119,12 @@ class CartWidget(QWidget):
         self.customer_add_btn.setFixedSize(36, 36)
         self.customer_add_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.customer_add_btn.setToolTip("Yangi customer qo'shish")
-        self.customer_add_btn.setStyleSheet(styles["cart_button"])
+        self.customer_add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.customer_add_btn.setStyleSheet(f"""
+            QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['accent']}; border: 1.5px solid {colors['accent']}; border-radius: 8px; font-weight: 800; font-size: 16px; padding: 0; }}
+            QPushButton:hover {{ background: {colors.get('accent_light', colors['bg_tertiary'])}; }}
+            QPushButton:pressed {{ background: {colors['accent']}; color: white; }}
+        """)
         self.customer_add_btn.clicked.connect(self._open_add_customer_form)
         customer_row.addWidget(self.customer_add_btn)
         customer_vbox.addWidget(cust_label)
@@ -1876,9 +1886,11 @@ class CartWidget(QWidget):
             minus_btn = QPushButton("−")
             minus_btn.setFixedSize(30, 30)
             minus_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            minus_btn.setStyleSheet(
-                f"background: transparent; color: {colors['error']}; border: 1px solid {colors['error']}; border-radius: 6px; font-weight: 800; font-size: 16px;"
-            )
+            minus_btn.setStyleSheet(f"""
+                QPushButton {{ background: transparent; color: {colors['error']}; border: 1px solid {colors['error']}; border-radius: 6px; font-weight: 800; font-size: 16px; padding: 0; }}
+                QPushButton:hover {{ background: {colors.get('error_bg', colors['bg_tertiary'])}; }}
+                QPushButton:pressed {{ background: {colors['error']}; color: white; }}
+            """)
             minus_btn.clicked.connect(lambda _, c=code: self.update_qty(c, -1))
             
             qty_lbl = QLineEdit(str(item['qty']))
@@ -1895,9 +1907,11 @@ class CartWidget(QWidget):
             plus_btn = QPushButton("+")
             plus_btn.setFixedSize(30, 30)
             plus_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            plus_btn.setStyleSheet(
-                f"background: transparent; color: {colors['success']}; border: 1px solid {colors['success']}; border-radius: 6px; font-weight: 800; font-size: 16px;"
-            )
+            plus_btn.setStyleSheet(f"""
+                QPushButton {{ background: transparent; color: {colors['success']}; border: 1px solid {colors['success']}; border-radius: 6px; font-weight: 800; font-size: 16px; padding: 0; }}
+                QPushButton:hover {{ background: {colors.get('success_bg', colors['bg_tertiary'])}; }}
+                QPushButton:pressed {{ background: {colors['success']}; color: white; }}
+            """)
             plus_btn.clicked.connect(lambda _, c=code: self.update_qty(c, 1))
             
             qty_layout.addStretch()
