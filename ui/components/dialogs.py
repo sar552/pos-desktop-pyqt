@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal
 from ui.theme_manager import ThemeManager
+from core.i18n import tr
 
 
 class ClickableLineEdit(QLineEdit):
@@ -131,7 +132,7 @@ class ConfirmDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
 
-        no_btn = QPushButton(no_text)
+        no_btn = QPushButton(tr(no_text))
         no_btn.setMinimumHeight(38)
         no_btn.setStyleSheet(
             f"QPushButton{{background:{colors['bg_tertiary']};color:{colors['text_secondary']};font-weight:700;"
@@ -140,7 +141,7 @@ class ConfirmDialog(QDialog):
         )
         no_btn.clicked.connect(self.reject)
 
-        yes_btn = QPushButton(yes_text)
+        yes_btn = QPushButton(tr(yes_text))
         yes_btn.setMinimumHeight(38)
         yes_btn.setStyleSheet(
             f"QPushButton{{background:{yes_color};color:white;font-weight:700;"
@@ -200,7 +201,7 @@ class SettingsDialog(QDialog):
 
         btn_row = QHBoxLayout()
         
-        cancel_btn = QPushButton("Bekor qilish")
+        cancel_btn = QPushButton(tr("Bekor qilish"))
         cancel_btn.setFixedHeight(40)
         cancel_btn.setStyleSheet(
             f"QPushButton {{ background: transparent; color: {colors['text_secondary']}; font-weight: 600; border: none; font-size: 14px; }}"
@@ -208,7 +209,7 @@ class SettingsDialog(QDialog):
         )
         cancel_btn.clicked.connect(self.reject)
         
-        save_btn = QPushButton("Saqlash")
+        save_btn = QPushButton(tr("Saqlash"))
         save_btn.setFixedHeight(40)
         save_btn.setStyleSheet(
             f"QPushButton {{ background: {colors['accent']}; color: white; font-weight: 600; border-radius: 6px; border: none; font-size: 14px; padding: 0 20px; }}"

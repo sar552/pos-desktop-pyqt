@@ -13,15 +13,16 @@ from core.config import load_config
 from core.logger import get_logger
 from database.models import PendingInvoice, PosShift, PosProfile, db
 from core.printer import print_receipt
-from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit
 from ui.component_styles import get_component_styles
 from ui.theme_manager import ThemeManager
+from core.i18n import tr
 
 logger = get_logger(__name__)
 
 class CheckoutWorker(QThread):
-    finished = pyqtSignal(bool, str)
+    # success, message, was_offline_saved
+    finished = pyqtSignal(bool, str, bool)
 
     def __init__(self, invoice_data: dict, payments: list, offline_id: str, api: FrappeAPI):
         super().__init__()
@@ -32,14 +33,11 @@ class CheckoutWorker(QThread):
 
     def run(self):
         try:
-            # POSAwesome submit_invoice API ishlatish
-            # Invoice payload tayyorlash
             invoice_payload = dict(self.invoice_data)
             invoice_payload["doctype"] = "Sales Invoice"
             invoice_payload["is_pos"] = 1
             invoice_payload["update_stock"] = 1
-            
-            # Payments to'g'ri formatda
+
             formatted_payments = []
             for p in self.payments:
                 formatted_payments.append({
@@ -48,49 +46,61 @@ class CheckoutWorker(QThread):
                     "type": p.get("type", "Cash"),
                 })
             invoice_payload["payments"] = formatted_payments
-            
-            # data payload (bo'sh dict yoki qo'shimcha ma'lumotlar)
-            data_payload = {
-                "payments": formatted_payments,
-            }
+
+            data_payload = {"payments": formatted_payments}
             if invoice_payload.get("due_date"):
                 data_payload["due_date"] = invoice_payload.get("due_date")
             if invoice_payload.get("is_credit_sale"):
                 data_payload["is_credit_sale"] = 1
             if invoice_payload.get("is_partly_paid"):
                 data_payload["is_partly_paid"] = 1
-            
-            # POSAwesome API: submit_invoice(invoice, data, submit_in_background)
-            # invoice va data JSON string bo'lishi kerak
-            success, response = self.api.call_method(
+
+            result = self.api.call_method(
                 "posawesome.posawesome.api.invoices.submit_invoice",
                 {
                     "invoice": json.dumps(invoice_payload),
                     "data": json.dumps(data_payload),
-                    "submit_in_background": 0
-                }
+                    "submit_in_background": 0,
+                },
             )
+            success = bool(result[0])
+            response = result[1]
+            status_code = result[2] if len(result) > 2 else 0
 
-            if success and response:
-                if isinstance(response, dict):
-                    doc_name = response.get("name", "")
-                    self.finished.emit(True, f"To'lov muvaffaqiyatli! #{doc_name}")
+            # 200 OK + bo'sh response — server qabul qilgan, lekin nom yo'q.
+            if success:
+                doc_name = response.get("name", "") if isinstance(response, dict) else ""
+                if doc_name:
+                    self.finished.emit(True, f"To'lov muvaffaqiyatli! #{doc_name}", False)
                 else:
-                    self.finished.emit(True, "To'lov muvaffaqiyatli yakunlandi!")
+                    self.finished.emit(True, "To'lov muvaffaqiyatli yakunlandi!", False)
                 return
-            else:
-                # Server xatosi - oflayn saqlash
-                logger.error(f"Invoice submit xatosi: {response}")
-                self._save_offline(str(response))
-                
-        except Exception as e:
-            logger.error(f"Checkout exception: {e}")
-            self._save_offline(str(e))
 
-    def _save_offline(self, error):
+            # Server tashladi.  Validatsiya/permission xatolari — offline'ga
+            # saqlamaymiz (chunki qayta yuborish baribir muvaffaqiyatsiz bo'ladi).
+            # Tarmoq/timeout/server xatolari — offline saqlash mantiqiy.
+            from database.invoice_processor import is_permanent_error
+            error_str = str(response)
+            if is_permanent_error(error_str, status_code):
+                logger.error("Invoice submit permanent xatosi (HTTP %s): %s", status_code, error_str)
+                self.finished.emit(False, error_str, False)
+                return
+
+            logger.error("Invoice submit transient xatosi (HTTP %s): %s", status_code, error_str)
+            saved = self._save_offline(error_str)
+            self.finished.emit(False, error_str, saved)
+        except Exception as e:
+            logger.error("Checkout exception: %s", e)
+            saved = self._save_offline(str(e))
+            self.finished.emit(False, str(e), saved)
+
+    def _save_offline(self, error: str) -> bool:
+        """Persist the invoice for later sync.  Returns True if saved."""
         try:
             db.connect(reuse_if_open=True)
-            if not PendingInvoice.select().where(PendingInvoice.offline_id == self.offline_id).exists():
+            if not PendingInvoice.select().where(
+                PendingInvoice.offline_id == self.offline_id
+            ).exists():
                 save_data = dict(self.invoice_data)
                 save_data["_payments"] = self.payments
                 PendingInvoice.create(
@@ -99,10 +109,10 @@ class CheckoutWorker(QThread):
                     status="Pending",
                     error_message=str(error),
                 )
-            self.finished.emit(False, "Server bilan aloqa yo'qligi sababli chek oflayn saqlandi!")
+            return True
         except Exception as e:
-            logger.error(f"Oflayn saqlashda xatolik: {e}")
-            self.finished.emit(False, f"Oflayn saqlashda xatolik: {e}")
+            logger.error("Oflayn saqlashda xatolik: %s", e)
+            return False
         finally:
             if not db.is_closed():
                 db.close()
@@ -153,9 +163,9 @@ class CheckoutWindow(QDialog):
             self.move(c_geo.topLeft())
 
     def init_ui(self):
-        self.setWindowTitle("To'lov")
-        self.resize(1080, 760)
-        self.setMinimumSize(980, 720)
+        self.setWindowTitle(tr("To'lov"))
+        self.resize(1340, 760)
+        self.setMinimumSize(1240, 720)
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         styles = get_component_styles()
@@ -168,39 +178,42 @@ class CheckoutWindow(QDialog):
         main_h_layout.setSpacing(20)
 
         left_panel = QFrame()
+        left_panel.setObjectName("coLeftPanel")
         left_panel.setStyleSheet(
-            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 20px;"
+            f"QFrame#coLeftPanel {{ background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 20px; }}"
         )
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(18, 18, 18, 18)
         left_layout.setSpacing(16)
 
         right_panel = QFrame()
+        right_panel.setObjectName("coRightPanel")
         right_panel.setStyleSheet(
-            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 20px;"
+            f"QFrame#coRightPanel {{ background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 20px; }}"
         )
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(18, 18, 18, 18)
         right_layout.setSpacing(16)
 
-        left_header = QLabel("To'lov xulosasi")
+        left_header = QLabel(tr("To'lov xulosasi"))
         left_header.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
         left_layout.addWidget(left_header)
 
-        left_subtitle = QLabel("Summalar va qarzga sotish shu yerda boshqariladi.")
+        left_subtitle = QLabel(tr("Summalar va qarzga sotish shu yerda boshqariladi."))
         left_subtitle.setStyleSheet(f"font-size: 12px; color: {colors['text_tertiary']};")
         left_layout.addWidget(left_subtitle)
         
         # Jami summa ko'rsatkichi
         summary_frame = QFrame()
+        summary_frame.setObjectName("coSummaryFrame")
         summary_frame.setStyleSheet(
-            f"background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+            f"QFrame#coSummaryFrame {{ background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 16px; }}"
         )
         summary_layout = QVBoxLayout(summary_frame)
         summary_layout.setContentsMargins(18, 18, 18, 18)
         summary_layout.setSpacing(10)
 
-        summary_title = QLabel("Payment Summary")
+        summary_title = QLabel(tr("Payment Summary"))
         summary_title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {colors['text_tertiary']};")
         summary_title.setAlignment(Qt.AlignmentFlag.AlignLeft)
         summary_layout.addWidget(summary_title)
@@ -237,7 +250,7 @@ class CheckoutWindow(QDialog):
         )
         self.lbl_balance.setAlignment(Qt.AlignmentFlag.AlignLeft)
         
-        self.lbl_change = QLabel("Qaytim: 0 UZS")
+        self.lbl_change = QLabel(tr("Qaytim: 0 UZS"))
         self.lbl_change.setMinimumHeight(40)
         self.lbl_change.setStyleSheet(
             f"font-size: 15px; font-weight: 700; color: {colors['success']}; "
@@ -254,14 +267,15 @@ class CheckoutWindow(QDialog):
         left_layout.addWidget(summary_frame)
 
         credit_frame = QFrame()
+        credit_frame.setObjectName("coCreditFrame")
         credit_frame.setStyleSheet(
-            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+            f"QFrame#coCreditFrame {{ background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 16px; }}"
         )
         credit_layout = QVBoxLayout(credit_frame)
         credit_layout.setContentsMargins(16, 14, 16, 14)
         credit_layout.setSpacing(10)
 
-        self.credit_sale_checkbox = QCheckBox("Qarzga sotish")
+        self.credit_sale_checkbox = QCheckBox(tr("Qarzga sotish"))
         self.credit_sale_checkbox.setStyleSheet(f"""
             QCheckBox {{
                 font-size: 14px;
@@ -283,7 +297,7 @@ class CheckoutWindow(QDialog):
 
         due_row = QHBoxLayout()
         due_row.setSpacing(10)
-        due_label = QLabel("Muddat")
+        due_label = QLabel(tr("Muddat"))
         due_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {colors['text_tertiary']};")
         self.credit_due_date = QDateEdit()
         self.credit_due_date.setCalendarPopup(True)
@@ -304,21 +318,22 @@ class CheckoutWindow(QDialog):
         left_layout.addWidget(credit_frame)
         left_layout.addStretch()
 
-        right_header = QLabel("Payment qilish")
+        right_header = QLabel(tr("Payment qilish"))
         right_header.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
         right_layout.addWidget(right_header)
 
-        right_subtitle = QLabel("Summani payment methodlar bo'yicha shu tomonda taqsimlaysiz.")
+        right_subtitle = QLabel(tr("Summani payment methodlar bo'yicha shu tomonda taqsimlaysiz."))
         right_subtitle.setStyleSheet(f"font-size: 12px; color: {colors['text_tertiary']};")
         right_layout.addWidget(right_subtitle)
         
-        methods_title = QLabel("Payment Methods")
+        methods_title = QLabel(tr("Payment Methods"))
         methods_title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {colors['text_tertiary']};")
         right_layout.addWidget(methods_title)
 
         payment_widget = QFrame()
+        payment_widget.setObjectName("coPaymentWidget")
         payment_widget.setStyleSheet(
-            f"background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+            f"QFrame#coPaymentWidget {{ background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 16px; }}"
         )
         self.payment_layout = QGridLayout(payment_widget)
         self.payment_layout.setContentsMargins(18, 18, 18, 18)
@@ -347,7 +362,7 @@ class CheckoutWindow(QDialog):
             """)
             method_header_layout.addWidget(lbl, 1)
 
-            fill_btn = QPushButton("Fill")
+            fill_btn = QPushButton(tr("Fill"))
             fill_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             fill_btn.setMinimumHeight(46)
             fill_btn.setStyleSheet(f"""
@@ -369,7 +384,9 @@ class CheckoutWindow(QDialog):
             )
             val = QDoubleValidator(0.0, 999999999.0, 2)
             inp.setValidator(val)
-            
+            # Yondagi doimiy numpad bor — global ekran klaviaturasi chiqmasin.
+            inp.setProperty("disable_virtual_keyboard", True)
+
             inp.clicked.connect(lambda i=inp: self._set_active_input(i))
             inp.textChanged.connect(lambda _text, m=method: self._on_payment_input_changed(m))
             
@@ -385,8 +402,9 @@ class CheckoutWindow(QDialog):
         right_layout.addWidget(payment_widget)
 
         actions_frame = QFrame()
+        actions_frame.setObjectName("coActionsFrame")
         actions_frame.setStyleSheet(
-            f"background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+            f"QFrame#coActionsFrame {{ background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 16px; }}"
         )
         actions_layout = QVBoxLayout(actions_frame)
         actions_layout.setContentsMargins(16, 16, 16, 16)
@@ -395,7 +413,7 @@ class CheckoutWindow(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
         
-        btn_clear = QPushButton("Tozalash")
+        btn_clear = QPushButton(tr("Tozalash"))
         btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_clear.setMinimumHeight(54)
         btn_clear.setStyleSheet(styles["payment_button_secondary"])
@@ -404,7 +422,7 @@ class CheckoutWindow(QDialog):
         btn_layout.addWidget(btn_clear)
         actions_layout.addLayout(btn_layout)
         
-        self.btn_pay = QPushButton("To'lash (Enter)")
+        self.btn_pay = QPushButton(tr("To'lash (Enter)"))
         self.btn_pay.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_pay.setMinimumHeight(64)
         self.btn_pay.setStyleSheet(
@@ -414,7 +432,7 @@ class CheckoutWindow(QDialog):
         self.btn_pay.clicked.connect(self._process_payment)
         actions_layout.addWidget(self.btn_pay)
 
-        actions_hint = QLabel("Maslahat: kerakli methodga `Fill` bosing yoki summani qo'lda taqsimlang.")
+        actions_hint = QLabel(tr("Maslahat: kerakli methodga `Fill` bosing yoki summani qo'lda taqsimlang."))
         actions_hint.setWordWrap(True)
         actions_hint.setStyleSheet(f"font-size: 12px; color: {colors['text_tertiary']};")
         actions_layout.addWidget(actions_hint)
@@ -422,12 +440,79 @@ class CheckoutWindow(QDialog):
         right_layout.addWidget(actions_frame)
         right_layout.addStretch()
         
+        numpad_panel = self._build_checkout_numpad()
+
         main_h_layout.addWidget(left_panel, stretch=5)
         main_h_layout.addWidget(right_panel, stretch=6)
+        main_h_layout.addWidget(numpad_panel, stretch=3)
         if methods:
             self._reset_payment_distribution()
         self._refresh_credit_sale_availability()
         self._refresh_summary_labels()
+
+    def _build_checkout_numpad(self) -> QFrame:
+        """O'ng chetdagi doimiy raqamli numpad ustuni.
+
+        Tugmalar `_on_numpad_key` kutgan kalitlarni yuboradi: raqamlar, '.',
+        'C' (tozalash), '<-' (o'chirish), '+50K' (tez qo'shish).
+        """
+        colors = self.colors
+        panel = QFrame()
+        panel.setObjectName("coNumpadPanel")
+        panel.setStyleSheet(
+            f"QFrame#coNumpadPanel {{ background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 20px; }}"
+        )
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel(tr("Raqamlar"))
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
+        layout.addWidget(title)
+
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        # (label, key, row, col, rowspan, colspan)
+        keys = [
+            ("7", "7", 0, 0), ("8", "8", 0, 1), ("9", "9", 0, 2),
+            ("4", "4", 1, 0), ("5", "5", 1, 1), ("6", "6", 1, 2),
+            ("1", "1", 2, 0), ("2", "2", 2, 1), ("3", "3", 2, 2),
+            ("C", "C", 3, 0), ("0", "0", 3, 1), (".", ".", 3, 2),
+            (tr("⌫ O'CHIRISH"), "<-", 4, 0, 1, 3),
+            ("+50 000", "+50K", 5, 0, 1, 3),
+        ]
+        for spec in keys:
+            label, key = spec[0], spec[1]
+            btn = self._make_np_btn(label, key)
+            if len(spec) == 4:
+                grid.addWidget(btn, spec[2], spec[3])
+            else:
+                grid.addWidget(btn, spec[2], spec[3], spec[4], spec[5])
+        layout.addLayout(grid)
+        layout.addStretch()
+        return panel
+
+    def _make_np_btn(self, label: str, key: str) -> QPushButton:
+        colors = self.colors
+        btn = QPushButton(label)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn.setMinimumHeight(58)
+        if key == "<-":
+            tone = f"background:{colors['bg_tertiary']}; color:{colors['error']}; font-size:15px; font-weight:800;"
+        elif key == "C":
+            tone = f"background:{colors['bg_tertiary']}; color:{colors['warning']}; font-size:20px; font-weight:800;"
+        elif key == "+50K":
+            tone = f"background:{colors['bg_tertiary']}; color:{colors['accent']}; font-size:16px; font-weight:800;"
+        else:
+            tone = f"background:{colors['input_bg']}; color:{colors['text_primary']}; font-size:22px; font-weight:700;"
+        btn.setStyleSheet(f"""
+            QPushButton {{ {tone} border:1px solid {colors['border']}; border-radius:12px; }}
+            QPushButton:hover {{ border-color:{colors['accent']}; }}
+            QPushButton:pressed {{ background:{colors['accent']}; color:white; }}
+        """)
+        btn.clicked.connect(lambda _, k=key: self._on_numpad_key(k))
+        return btn
 
     def _set_active_input(self, input_widget):
         colors = self.colors
@@ -523,15 +608,15 @@ class CheckoutWindow(QDialog):
         if self._is_guest_customer():
             self.credit_sale_checkbox.setChecked(False)
             self.credit_sale_checkbox.setEnabled(False)
-            self.credit_sale_checkbox.setToolTip("Guest Customer uchun qarzga sotish mumkin emas")
-            self.credit_hint_label.setText("Guest Customer uchun qarzga yoki qisman to'lash bloklangan.")
+            self.credit_sale_checkbox.setToolTip(tr("Guest Customer uchun qarzga sotish mumkin emas"))
+            self.credit_hint_label.setText(tr("Guest Customer uchun qarzga yoki qisman to'lash bloklangan."))
             self.credit_due_date.setEnabled(False)
             return
 
         self.credit_sale_checkbox.setEnabled(True)
         self.credit_sale_checkbox.setToolTip("")
         self.credit_hint_label.setText(
-            "Checkbox yoqilsa qolgan summa discount emas, outstanding qarz bo'lib saqlanadi."
+            tr("Checkbox yoqilsa qolgan summa discount emas, outstanding qarz bo'lib saqlanadi.")
         )
         self.credit_due_date.setEnabled(self.credit_sale_checkbox.isChecked())
 
@@ -641,23 +726,23 @@ class CheckoutWindow(QDialog):
                     can_submit = self.allow_credit_sale
                 else:
                     can_submit = self.allow_partial_payment
-                self.lbl_balance.setText(f"Qarz: {shortage:,.0f} UZS")
-                self.lbl_change.setText("Qaytim: 0 UZS")
+                self.lbl_balance.setText(f"{tr('Qarz')}: {shortage:,.0f} UZS")
+                self.lbl_change.setText(tr("Qaytim: 0 UZS"))
                 self._set_pay_button_enabled(can_submit)
             elif shortage > 0:
                 if self._can_apply_underpayment_discount(shortage):
                     self.extra_discount_amount = shortage
-                    self.lbl_balance.setText("Qoldiq: 0 UZS")
-                    self.lbl_change.setText("Qaytim: 0 UZS")
+                    self.lbl_balance.setText(tr("Qoldiq: 0 UZS"))
+                    self.lbl_change.setText(tr("Qaytim: 0 UZS"))
                     self._set_pay_button_enabled(True)
                 else:
-                    self.lbl_balance.setText(f"Qoldiq: {shortage:,.0f} UZS")
-                    self.lbl_change.setText("Qaytim: 0 UZS")
+                    self.lbl_balance.setText(f"{tr('Qoldiq')}: {shortage:,.0f} UZS")
+                    self.lbl_change.setText(tr("Qaytim: 0 UZS"))
                     self._set_pay_button_enabled(False)
             else:
                 diff = paid - payable_total
-                self.lbl_balance.setText("Qoldiq: 0 UZS")
-                self.lbl_change.setText(f"Qaytim: {diff:,.0f} UZS")
+                self.lbl_balance.setText(tr("Qoldiq: 0 UZS"))
+                self.lbl_change.setText(f"{tr('Qaytim')}: {diff:,.0f} UZS")
                 self._set_pay_button_enabled(True)
 
             self._refresh_summary_labels()
@@ -691,9 +776,9 @@ class CheckoutWindow(QDialog):
 
     def _refresh_summary_labels(self):
         total_discount = self._current_invoice_discount_amount()
-        self.lbl_total.setText(f"Subtotal: {self.net_total_amount:,.0f} UZS")
-        self.lbl_discount.setText(f"Chegirma: {total_discount:,.0f} UZS")
-        self.lbl_payable.setText(f"To'lanadi: {max(self.net_total_amount - total_discount, 0.0):,.0f} UZS")
+        self.lbl_total.setText(f"{tr('Subtotal')}: {self.net_total_amount:,.0f} UZS")
+        self.lbl_discount.setText(f"{tr('Chegirma')}: {total_discount:,.0f} UZS")
+        self.lbl_payable.setText(f"{tr('To\'lanadi')}: {max(self.net_total_amount - total_discount, 0.0):,.0f} UZS")
 
     def _set_pay_button_enabled(self, enabled: bool):
         colors = self.colors
@@ -832,7 +917,7 @@ class CheckoutWindow(QDialog):
         self._submitted_payments = list(payments)
 
         self.btn_pay.setEnabled(False)
-        self.btn_pay.setText("Kuting...")
+        self.btn_pay.setText(tr("Kuting..."))
         
         self.worker = CheckoutWorker(invoice_data, payments, self.offline_id, self.api)
         self.worker.finished.connect(self._on_checkout_finished)
@@ -855,15 +940,50 @@ class CheckoutWindow(QDialog):
             if not db.is_closed():
                 db.close()
 
-    def _on_checkout_finished(self, success, msg):
+    def _on_checkout_finished(self, success: bool, msg: str, offline_saved: bool):
+        """Show real feedback; print only on success; keep dialog open on hard error."""
+        from ui.components.dialogs import InfoDialog
+
         receipt_data = dict(self.order_data)
         receipt_data.update({
             "paid_amount": sum(p["amount"] for p in self._submitted_payments),
-            "offline_id": self.offline_id
+            "offline_id": self.offline_id,
         })
-        print_receipt(self, receipt_data, self._submitted_payments)
-        self.checkout_completed.emit()
-        self.accept()
+
+        if success:
+            try:
+                print_receipt(self, receipt_data, self._submitted_payments)
+            except Exception as e:
+                logger.error("Chek chop etishda xato: %s", e)
+            self.checkout_completed.emit()
+            self.accept()
+            return
+
+        if offline_saved:
+            # Server javob bermadi, lekin chek pending'ga saqlandi.
+            # Kassir hozircha chekni chop etishi mumkin — pending sinxron qilingach
+            # bo'sh nom (#PENDING) bilan ko'rsatamiz.
+            try:
+                print_receipt(self, receipt_data, self._submitted_payments)
+            except Exception as e:
+                logger.error("Oflayn chek chop etishda xato: %s", e)
+            InfoDialog(
+                self,
+                tr("Server javob bermadi"),
+                tr("Chek mahalliy bazaga saqlandi va internet kelganda yuboriladi."),
+                kind="warning",
+            ).exec()
+            self.checkout_completed.emit()
+            self.accept()
+            return
+
+        # Haqiqiy xato — chek chop etilmaydi, dialog ochiq qoladi.
+        InfoDialog(
+            self, tr("To'lov amalga oshmadi"), msg or tr("Noma'lum xato"),
+            kind="error",
+        ).exec()
+        self.btn_pay.setEnabled(True)
+        self.btn_pay.setText(tr("To'lash (Enter)"))
         
     def payments_list(self):
         payments = []

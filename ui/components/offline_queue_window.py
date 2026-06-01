@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from database.models import PendingInvoice, db
 from core.logger import get_logger
+from core.i18n import tr
 
 logger = get_logger(__name__)
 
@@ -13,7 +14,7 @@ logger = get_logger(__name__)
 class OfflineQueueWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Yuborilmagan (Offline) Cheklar")
+        self.setWindowTitle(tr("Yuborilmagan (Offline) Cheklar"))
         self.setMinimumSize(550, 400)
         self.resize(700, 500)
         self.init_ui()
@@ -24,23 +25,23 @@ class OfflineQueueWindow(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
-        header = QLabel("Internet yo'qligida yaratilgan cheklar ro'yxati:")
+        header = QLabel(tr("Internet yo'qligida yaratilgan cheklar ro'yxati:"))
         header.setStyleSheet("font-size: 18px; font-weight: bold; color: #374151;")
         layout.addWidget(header)
 
-        info_text = QLabel("Ushbu cheklar internet tiklanishi bilan avtomatik ravishda serverga yuboriladi.")
+        info_text = QLabel(tr("Ushbu cheklar internet tiklanishi bilan avtomatik ravishda serverga yuboriladi."))
         info_text.setStyleSheet("color: #6b7280; font-style: italic;")
         layout.addWidget(info_text)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Vaqt", "Mijoz", "Summa", "Tur"])
+        self.table.setHorizontalHeaderLabels([tr("Vaqt"), tr("Mijoz"), tr("Summa"), tr("Tur")])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
 
-        close_btn = QPushButton("YOPISH")
+        close_btn = QPushButton(tr("YOPISH"))
         close_btn.setMinimumHeight(44)
         close_btn.setStyleSheet("""
             QPushButton { background-color: #f3f4f6; color: #374151; font-weight: bold; border-radius: 8px; }

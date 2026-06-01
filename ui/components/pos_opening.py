@@ -14,8 +14,31 @@ from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit
 from ui.component_styles import get_component_styles
 from ui.theme_manager import ThemeManager
+from core.i18n import tr
 
 logger = get_logger(__name__)
+
+
+class _OpeningDialogDataWorker(QThread):
+    """Fetch POS Opening dialog defaults off the GUI thread."""
+
+    finished_signal = pyqtSignal(dict)
+
+    def __init__(self, api: FrappeAPI):
+        super().__init__()
+        self.api = api
+
+    def run(self):
+        try:
+            success, response = self.api.call_method(
+                "posawesome.posawesome.api.shifts.get_opening_dialog_data"
+            )
+            if success and isinstance(response, dict):
+                self.finished_signal.emit(response)
+                return
+        except Exception as e:
+            logger.debug("Opening dialog data background xatosi: %s", e)
+        self.finished_signal.emit({})
 
 
 class OpeningWorker(QThread):
@@ -92,11 +115,6 @@ class PosOpeningDialog(QDialog):
         self.profile_style_active = styles["opening_input_active"]
         self.profile_style_idle = styles["opening_input_idle"]
 
-        if not self.dialog_data:
-            success, response = self.api.call_method("posawesome.posawesome.api.shifts.get_opening_dialog_data")
-            if success and isinstance(response, dict):
-                self.dialog_data = response
-
         self.profiles = self.dialog_data.get("pos_profiles_data", [])
         self.companies = self.dialog_data.get("companies", [])
         self.payment_methods = self.dialog_data.get("payments_method", [])
@@ -104,6 +122,26 @@ class PosOpeningDialog(QDialog):
         self.init_ui()
         self._populate_company_and_profile()
         QTimer.singleShot(50, self._center_on_parent)
+
+        # Dialog ma'lumotlari hali yo'q bo'lsa — background'da yuklab,
+        # kelganda re-populate qilamiz.  Bu MainWindow cache miss bo'lsa
+        # GUI muzlamasligi uchun.
+        if not self.dialog_data:
+            self._dialog_data_worker = _OpeningDialogDataWorker(self.api)
+            self._dialog_data_worker.finished_signal.connect(self._on_dialog_data_loaded)
+            self._dialog_data_worker.start()
+
+    def _on_dialog_data_loaded(self, data: dict):
+        if not data:
+            return
+        self.dialog_data = data
+        self.profiles = data.get("pos_profiles_data", []) or self.profiles
+        self.companies = data.get("companies", []) or self.companies
+        self.payment_methods = data.get("payments_method", []) or self.payment_methods
+        try:
+            self._populate_company_and_profile()
+        except Exception as e:
+            logger.debug("Re-populate xatosi: %s", e)
 
     def _center_on_parent(self):
         if self.parent():
@@ -113,7 +151,7 @@ class PosOpeningDialog(QDialog):
             self.move(c_geo.topLeft())
 
     def init_ui(self):
-        self.setWindowTitle("Kassa ochish")
+        self.setWindowTitle(tr("Kassa ochish"))
         self.setMinimumSize(640, 480)
         self.resize(780, 560)
         self.setModal(True)
@@ -141,7 +179,7 @@ class PosOpeningDialog(QDialog):
         header.setStyleSheet(styles["opening_header"])
         h_layout = QVBoxLayout(header)
 
-        title = QLabel("KASSA OCHISH")
+        title = QLabel(tr("KASSA OCHISH"))
         title.setStyleSheet(f"color: rgba(255,255,255,0.7); font-size: 11px; font-weight: 700; letter-spacing: 2px;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h_layout.addWidget(title)
@@ -159,7 +197,7 @@ class PosOpeningDialog(QDialog):
         left_layout.addWidget(header)
 
         # Payment mode inputs
-        pay_label = QLabel("BOSHLANG'ICH SUMMALAR")
+        pay_label = QLabel(tr("BOSHLANG'ICH SUMMALAR"))
         pay_label.setStyleSheet(styles["opening_section_label"])
         left_layout.addWidget(pay_label)
 
@@ -176,17 +214,17 @@ class PosOpeningDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
-        btn_exit = QPushButton("Chiqish")
+        btn_exit = QPushButton(tr("Chiqish"))
         btn_exit.setMinimumHeight(44)
         btn_exit.setStyleSheet(styles["opening_btn_secondary"])
         btn_exit.clicked.connect(self._on_exit)
 
-        btn_logout = QPushButton("Logout")
+        btn_logout = QPushButton(tr("Logout"))
         btn_logout.setMinimumHeight(44)
         btn_logout.setStyleSheet(styles["opening_btn_warning"])
         btn_logout.clicked.connect(self._on_logout)
 
-        self.btn_open = QPushButton("KASSANI OCHISH")
+        self.btn_open = QPushButton(tr("KASSANI OCHISH"))
         self.btn_open.setMinimumHeight(44)
         self.btn_open.setStyleSheet(styles["opening_btn_primary"])
         self.btn_open.clicked.connect(self._process_opening)
@@ -205,7 +243,7 @@ class PosOpeningDialog(QDialog):
         right_layout.setContentsMargins(12, 12, 12, 12)
         right_layout.setSpacing(10)
 
-        numpad_lbl = QLabel("MIQDOR KIRITING")
+        numpad_lbl = QLabel(tr("MIQDOR KIRITING"))
         numpad_lbl.setStyleSheet(styles["opening_section_label"])
         right_layout.addWidget(numpad_lbl)
 
@@ -319,6 +357,8 @@ class PosOpeningDialog(QDialog):
 
             inp = ClickableLineEdit()
             inp.setValidator(QDoubleValidator(0.0, 999999999.0, 2))
+            # O'ng tomonda doimiy numpad bor — global ekran klaviaturasi chiqmasin.
+            inp.setProperty("disable_virtual_keyboard", True)
             inp.setPlaceholderText("0")
             inp.setText("0")
             inp.setMinimumWidth(140)
@@ -376,7 +416,7 @@ class PosOpeningDialog(QDialog):
 
     def _process_opening(self):
         self.btn_open.setEnabled(False)
-        self.btn_open.setText("Kassa ochilmoqda...")
+        self.btn_open.setText(tr("Kassa ochilmoqda..."))
 
         balance_details = []
         for mode, inp in self.payment_inputs.items():
@@ -400,14 +440,14 @@ class PosOpeningDialog(QDialog):
 
     def _on_opening_finished(self, success: bool, message: str, opening_entry: str):
         self.btn_open.setEnabled(True)
-        self.btn_open.setText("KASSANI OCHISH")
+        self.btn_open.setText(tr("KASSANI OCHISH"))
 
         if success:
             self.opening_completed.emit(opening_entry)
             self.accept()
         elif "Server xatosi" in message:
             from ui.components.dialogs import InfoDialog
-            InfoDialog(self, "Xatolik", message, kind="error").exec()
+            InfoDialog(self, tr("Xatolik"), message, kind="error").exec()
         else:
             # Oflayn — lokal ochildi, POS ga ruxsat beramiz
             logger.warning("Kassa oflayn ochildi: %s", message)

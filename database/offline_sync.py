@@ -1,10 +1,14 @@
-import time
+"""Background sweep that retries pending offline invoices on a fixed cadence."""
+
+import threading
+
 from PyQt6.QtCore import QThread, pyqtSignal
+
 from core.api import FrappeAPI
-from core.logger import get_logger
 from core.constants import OFFLINE_SYNC_INTERVAL
-from database.models import PendingInvoice, db
+from core.logger import get_logger
 from database.invoice_processor import process_pending_invoice
+from database.models import PendingInvoice, db
 
 logger = get_logger(__name__)
 
@@ -15,15 +19,13 @@ class OfflineSyncWorker(QThread):
     def __init__(self, api: FrappeAPI):
         super().__init__()
         self.api = api
-        self.running = True
+        self._stop_event = threading.Event()
 
     def run(self):
-        while self.running:
+        while not self._stop_event.is_set():
             self._sync_pending_invoices()
-            for _ in range(OFFLINE_SYNC_INTERVAL):
-                if not self.running:
-                    break
-                time.sleep(1)
+            # Cooperative wait — `stop()` interrupts immediately.
+            self._stop_event.wait(timeout=OFFLINE_SYNC_INTERVAL)
 
     def _sync_pending_invoices(self):
         try:
@@ -37,18 +39,23 @@ class OfflineSyncWorker(QThread):
             self.sync_status.emit(f"Oflayn cheklar topildi: {count} ta. Yuborilmoqda...")
 
             for invoice in pending:
+                if self._stop_event.is_set():
+                    return
                 status, message = process_pending_invoice(self.api, invoice)
                 invoice.status = status
                 invoice.error_message = message
                 invoice.save()
 
                 if status == "Synced":
-                    self.sync_status.emit(f"Chek #{invoice.id} muvaffaqiyatli serverga yuborildi.")
+                    self.sync_status.emit(
+                        f"Chek #{invoice.id} muvaffaqiyatli serverga yuborildi."
+                    )
                 elif status == "Failed":
-                    self.sync_status.emit(f"Chek #{invoice.id} server xatosi (qayta urinilmaydi): {message}")
+                    self.sync_status.emit(
+                        f"Chek #{invoice.id} server xatosi (qayta urinilmaydi): {message}"
+                    )
                 else:
                     self.sync_status.emit(f"Chek #{invoice.id} da xatolik: {message}")
-
         except Exception as e:
             logger.error("Oflayn sinxronizatsiya xatosi: %s", e)
             self.sync_status.emit(f"Oflayn sinxronizatsiyada xatolik: {e}")
@@ -57,4 +64,4 @@ class OfflineSyncWorker(QThread):
                 db.close()
 
     def stop(self):
-        self.running = False
+        self._stop_event.set()

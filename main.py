@@ -1,14 +1,15 @@
 import sys
-import os
 
 from core.paths import BASE_DIR
 # Add project root to sys.path
 sys.path.insert(0, BASE_DIR)
 
 from PyQt6.QtWidgets import QApplication
+
 from core.api import FrappeAPI
-from core.logger import get_logger
 from core.config import clear_credentials
+from core.logger import get_logger
+from database.models import db
 from ui.login_window import LoginWindow
 from ui.main_window import MainWindow
 from ui.theme_manager import ThemeManager
@@ -20,17 +21,13 @@ def main():
     app = QApplication(sys.argv)
     ThemeManager.initialize(app)
 
-    # Bitta shared API instance yaratamiz
     shared_api = FrappeAPI()
-
     windows = {"main": None, "login": None}
 
     def show_login():
         if windows["main"]:
             windows["main"].close()
             windows["main"] = None
-        
-        # API instance'ni Login oynasiga beramiz
         windows["login"] = LoginWindow(shared_api)
         windows["login"].login_successful.connect(show_main)
         windows["login"].show()
@@ -39,11 +36,20 @@ def main():
         if windows["login"]:
             windows["login"].close()
             windows["login"] = None
-            
-        # API instance'ni Asosiy oynaga beramiz
+        if windows["main"]:
+            # Mavjud oynani yopamiz (til o'zgarganda qayta qurish uchun).
+            windows["main"].close()
+            windows["main"].deleteLater()
+            windows["main"] = None
         windows["main"] = MainWindow(shared_api)
         windows["main"].logout_requested.connect(handle_logout)
+        windows["main"].relaunch_requested.connect(handle_relaunch)
         windows["main"].show()
+
+    def handle_relaunch():
+        # Til o'zgarganda asosiy oynani yangi tilda qaytadan quramiz.
+        logger.info("Asosiy oyna qayta yuklanmoqda (til o'zgardi)")
+        show_main()
 
     def handle_logout():
         logger.info("Foydalanuvchi tizimdan chiqdi")
@@ -57,7 +63,16 @@ def main():
         show_login()
 
     logger.info("Ilova ishga tushdi")
-    sys.exit(app.exec())
+    try:
+        exit_code = app.exec()
+    finally:
+        # Ilova yopilganda SQLite ulanishini toza qilib yopamiz.
+        try:
+            if not db.is_closed():
+                db.close()
+        except Exception as e:
+            logger.debug("DB yopishda xato: %s", e)
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

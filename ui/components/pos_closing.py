@@ -21,6 +21,7 @@ from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit, InfoDialog
 from ui.component_styles import get_component_styles
 from ui.theme_manager import ThemeManager
+from core.i18n import tr
 
 logger = get_logger(__name__)
 
@@ -415,7 +416,7 @@ class PosClosingDialog(QDialog):
             self.move(c_geo.topLeft())
 
     def init_ui(self):
-        self.setWindowTitle("Kassa yopish")
+        self.setWindowTitle(tr("Kassa yopish"))
         self.setMinimumSize(860, 640)
         self.resize(1040, 760)
         self.setModal(True)
@@ -444,7 +445,7 @@ class PosClosingDialog(QDialog):
         title_section = QVBoxLayout()
         title_section.setSpacing(6)
         
-        title = QLabel("Close Shift")
+        title = QLabel(tr("Close Shift"))
         title.setStyleSheet(f"""
             font-size: 24px; 
             font-weight: 600; 
@@ -452,7 +453,7 @@ class PosClosingDialog(QDialog):
             background: transparent;
         """)
         
-        self.info_label = QLabel("Loading data...")
+        self.info_label = QLabel(tr("Loading data..."))
         self.info_label.setStyleSheet(f"""
             font-size: 13px; 
             color: {colors['text_tertiary']}; 
@@ -491,7 +492,7 @@ class PosClosingDialog(QDialog):
         self.left_layout.setContentsMargins(0, 0, 0, 0)
         self.left_layout.setSpacing(32)
 
-        self.loading_label = QLabel("Loading shift data...")
+        self.loading_label = QLabel(tr("Loading shift data..."))
         self.loading_label.setStyleSheet(f"""
             font-size: 14px; 
             color: {colors['text_tertiary']}; 
@@ -541,7 +542,7 @@ class PosClosingDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
 
-        btn_cancel = QPushButton("Cancel")
+        btn_cancel = QPushButton(tr("Cancel"))
         btn_cancel.setMinimumHeight(44)
         btn_cancel.setMaximumHeight(44)
         btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -562,7 +563,7 @@ class PosClosingDialog(QDialog):
         """)
         btn_cancel.clicked.connect(self.reject)
 
-        self.btn_close = QPushButton("Close Shift")
+        self.btn_close = QPushButton(tr("Close Shift"))
         self.btn_close.setMinimumHeight(44)
         self.btn_close.setMaximumHeight(44)
         self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -608,7 +609,7 @@ class PosClosingDialog(QDialog):
         right_layout.setContentsMargins(20, 20, 20, 20)
         right_layout.setSpacing(16)
 
-        numpad_lbl = QLabel("NUMPAD")
+        numpad_lbl = QLabel(tr("NUMPAD"))
         numpad_lbl.setStyleSheet(f"""
             font-size: 10px; 
             font-weight: 600; 
@@ -627,7 +628,7 @@ class PosClosingDialog(QDialog):
 
     def _load_closing_data(self):
         if not self.opening_entry:
-            self.loading_label.setText("Ochiq kassa topilmadi.")
+            self.loading_label.setText(tr("Ochiq kassa topilmadi."))
             return
 
         self.data_worker = ClosingDataWorker(self.api, self.opening_entry)
@@ -723,12 +724,12 @@ class PosClosingDialog(QDialog):
         summary_grid.setVerticalSpacing(16)
 
         cards = [
-            ("Cheklar soni", str(self.overview.get("total_invoices", 0)), f"Shift: {self.opening_entry}"),
-            ("Jami savdo", self._fmt(self.closing_shift_doc.get("grand_total", 0), company_currency), "Grand Total"),
-            ("Sof savdo", self._fmt(self.closing_shift_doc.get("net_total", 0), company_currency), "Net Total"),
-            ("Jami qty", f"{float(self.closing_shift_doc.get('total_quantity', 0) or 0):,.2f}".replace(",", " "), "Umumiy miqdor"),
+            (tr("Cheklar soni"), str(self.overview.get("total_invoices", 0)), f"Shift: {self.opening_entry}"),
+            (tr("Jami savdo"), self._fmt(self.closing_shift_doc.get("grand_total", 0), company_currency), tr("Grand Total")),
+            (tr("Sof savdo"), self._fmt(self.closing_shift_doc.get("net_total", 0), company_currency), tr("Net Total")),
+            (tr("Jami qty"), f"{float(self.closing_shift_doc.get('total_quantity', 0) or 0):,.2f}".replace(",", " "), tr("Umumiy miqdor")),
             (
-                "Kredit sotuv",
+                tr("Kredit sotuv"),
                 self._fmt(self.overview.get("credit_invoices", {}).get("company_currency_total", 0), company_currency),
                 f"Cheklar: {self.overview.get('credit_invoices', {}).get('count', 0)}",
             ),
@@ -740,10 +741,10 @@ class PosClosingDialog(QDialog):
             (
                 "Qaytim",
                 self._fmt(self.overview.get("change_returned", {}).get("company_currency_total", 0), company_currency),
-                "Mijozlarga qaytarilgan summa",
+                tr("Mijozlarga qaytarilgan summa"),
             ),
             (
-                "Kassa kutilgan qoldiq",
+                tr("Kassa kutilgan qoldiq"),
                 self._fmt(self.overview.get("cash_expected", {}).get("company_currency_total", 0), company_currency),
                 self.overview.get("cash_expected", {}).get("mode_of_payment", ""),
             ),
@@ -768,7 +769,7 @@ class PosClosingDialog(QDialog):
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(16)
 
-            title = QLabel("💳 TO'LOVLAR KESIMI")
+            title = QLabel(tr("💳 TO'LOVLAR KESIMI"))
             title.setStyleSheet(f"""
                 font-size: 11px; 
                 font-weight: 600; 
@@ -820,7 +821,7 @@ class PosClosingDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(20)
 
-        title = QLabel("📊 PAYMENT RECONCILIATION")
+        title = QLabel(tr("📊 PAYMENT RECONCILIATION"))
         title.setStyleSheet(f"""
             font-size: 11px; 
             font-weight: 600; 
@@ -831,7 +832,7 @@ class PosClosingDialog(QDialog):
 
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 12, 0, 8)
-        for text, width in [("Payment Method", 180), ("Opening", 120), ("Expected", 120), ("Closing Amount", 160)]:
+        for text, width in [(tr("Payment Method"), 180), (tr("Opening"), 120), (tr("Expected"), 120), (tr("Closing Amount"), 160)]:
             lbl = QLabel(text)
             lbl.setMinimumWidth(width)
             lbl.setStyleSheet(f"""
@@ -891,6 +892,8 @@ class PosClosingDialog(QDialog):
 
             inp = ClickableLineEdit()
             inp.setValidator(QDoubleValidator(-999999999.0, 999999999.0, 2))
+            # O'ng tomonda doimiy numpad bor — global ekran klaviaturasi chiqmasin.
+            inp.setProperty("disable_virtual_keyboard", True)
             inp.setText(f"{float(closing_amount):.2f}".rstrip("0").rstrip("."))
             inp.setMinimumWidth(160)
             inp.setMaximumWidth(220)
@@ -932,7 +935,7 @@ class PosClosingDialog(QDialog):
 
         total_invoices = self.overview.get("total_invoices", 0)
         period_start = self.opening_doc.get("period_start_date") or self.closing_shift_doc.get("period_start_date") or ""
-        self.info_label.setText(f"Jami cheklar: {total_invoices}")
+        self.info_label.setText(f"{tr('Jami cheklar')}: {total_invoices}")
         self.meta_label.setText(f"{self.opening_entry} | {period_start}")
 
         content = QWidget()
@@ -961,7 +964,7 @@ class PosClosingDialog(QDialog):
             total_diff += abs(diff)
 
         if total_diff == 0:
-            self.diff_label.setText("✓  No difference — reconciliation matches")
+            self.diff_label.setText(tr("✓  No difference — reconciliation matches"))
             self.diff_label.setStyleSheet(f"""
                 font-size: 13px;
                 font-weight: 500;
@@ -972,7 +975,7 @@ class PosClosingDialog(QDialog):
                 border-radius: 6px;
             """)
         else:
-            self.diff_label.setText(f"Total difference: {self._fmt(total_diff, company_currency)}")
+            self.diff_label.setText(f"{tr('Total difference')}: {self._fmt(total_diff, company_currency)}")
             self.diff_label.setStyleSheet(f"""
                 font-size: 13px;
                 font-weight: 500;
@@ -997,7 +1000,7 @@ class PosClosingDialog(QDialog):
                 rec["closing_amount"] = 0
 
         self.btn_close.setEnabled(False)
-        self.btn_close.setText("Closing shift...")
+        self.btn_close.setText(tr("Closing shift..."))
 
         self.closing_worker = ClosingWorker(self.api, self.closing_shift_doc)
         self.closing_worker.finished.connect(self._on_closing_finished)
@@ -1005,7 +1008,7 @@ class PosClosingDialog(QDialog):
 
     def _on_closing_finished(self, success: bool, message: str):
         self.btn_close.setEnabled(True)
-        self.btn_close.setText("KASSANI YOPISH")
+        self.btn_close.setText(tr("KASSANI YOPISH"))
 
         if success:
             # Kassa yopish chekini chop etish
@@ -1015,7 +1018,7 @@ class PosClosingDialog(QDialog):
             return
 
         logger.error("Kassa yopish xatosi: %s", message)
-        InfoDialog(self, "Xatolik", message, kind="error").exec()
+        InfoDialog(self, tr("Xatolik"), message, kind="error").exec()
 
     def _print_closing_receipt(self):
         """Kassa yopish chekini printerga yuborish."""

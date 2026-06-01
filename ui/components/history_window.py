@@ -10,6 +10,7 @@ from core.logger import get_logger
 from core.constants import HISTORY_FETCH_LIMIT
 from ui.component_styles import get_component_styles
 from ui.theme_manager import ThemeManager
+from core.i18n import tr
 
 logger = get_logger(__name__)
 
@@ -220,14 +221,14 @@ class TransactionDetailDialog(QDialog):
         layout.addWidget(sep)
 
         # Items table
-        lbl = QLabel("MAHSULOTLAR")
+        lbl = QLabel(tr("MAHSULOTLAR"))
         lbl.setStyleSheet(
             f"font-size: 10px; font-weight: 700; color: {colors['text_tertiary']}; letter-spacing: 1px;"
         )
         layout.addWidget(lbl)
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Mahsulot", "Soni", "Summa"])
+        self.table.setHorizontalHeaderLabels([tr("Mahsulot"), tr("Soni"), tr("Summa")])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setShowGrid(False)
@@ -246,7 +247,7 @@ class TransactionDetailDialog(QDialog):
         layout.addWidget(self.table)
 
         # Payments
-        pay_lbl = QLabel("TO'LOV TURLARI")
+        pay_lbl = QLabel(tr("TO'LOV TURLARI"))
         pay_lbl.setStyleSheet(
             f"font-size: 10px; font-weight: 700; color: {colors['text_tertiary']}; letter-spacing: 1px;"
         )
@@ -262,7 +263,7 @@ class TransactionDetailDialog(QDialog):
 
         layout.addStretch()
 
-        close_btn = QPushButton("Yopish")
+        close_btn = QPushButton(tr("Yopish"))
         close_btn.setMinimumHeight(40)
         close_btn.setStyleSheet(f"""
             QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
@@ -279,7 +280,7 @@ class TransactionDetailDialog(QDialog):
 
     def _on_loaded(self, success: bool, doc: dict):
         if not success:
-            QMessageBox.warning(self, "Xato", "Tafsilotlarni yuklab bo'lmadi.")
+            QMessageBox.warning(self, tr("Xato"), tr("Tafsilotlarni yuklab bo'lmadi."))
             return
 
         items = doc.get("items", [])
@@ -314,7 +315,7 @@ class TransactionDetailDialog(QDialog):
                 row_l.addWidget(amt)
                 self.payments_layout.addWidget(row_w)
         else:
-            no = QLabel("To'lov ma'lumotlari mavjud emas.")
+            no = QLabel(tr("To'lov ma'lumotlari mavjud emas."))
             colors = ThemeManager.get_theme_colors()
             no.setStyleSheet(f"color: {colors['text_tertiary']}; font-size: 12px;")
             self.payments_layout.addWidget(no)
@@ -327,7 +328,7 @@ class CancelReasonDialog(QDialog):
     def __init__(self, parent, invoice_id: str):
         super().__init__(parent)
         self.invoice_id = invoice_id
-        self.setWindowTitle("Bekor qilish sababi")
+        self.setWindowTitle(tr("Bekor qilish sababi"))
         self.setMinimumSize(460, 220)
         self.resize(520, 240)
         styles = get_component_styles()
@@ -347,7 +348,7 @@ class CancelReasonDialog(QDialog):
 
         # Input display
         self.input = QLineEdit()
-        self.input.setPlaceholderText("Sabab yozing...")
+        self.input.setPlaceholderText(tr("Sabab yozing..."))
         self.input.setMinimumHeight(40)
         self.input.setStyleSheet(f"""
             QLineEdit {{
@@ -363,7 +364,7 @@ class CancelReasonDialog(QDialog):
         # Buttons
         btn_row = QHBoxLayout()
 
-        cancel_btn = QPushButton("Bekor")
+        cancel_btn = QPushButton(tr("Bekor"))
         cancel_btn.setMinimumHeight(40)
         cancel_btn.setStyleSheet(f"""
             QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
@@ -373,7 +374,7 @@ class CancelReasonDialog(QDialog):
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
 
-        confirm_btn = QPushButton("✓  Tasdiqlash")
+        confirm_btn = QPushButton(tr("✓  Tasdiqlash"))
         confirm_btn.setMinimumHeight(40)
         confirm_btn.setStyleSheet(f"""
             QPushButton {{ background: {colors['error']}; color: white;
@@ -444,16 +445,16 @@ class HistoryWindow(QWidget):
         # ── Header row ──────────────────────
         hdr_row = QHBoxLayout()
 
-        self.title_label = QLabel("Shift bo'yicha Sales Invoice lar")
+        self.title_label = QLabel(tr("Shift bo'yicha Sales Invoice lar"))
         self.title_label.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
         hdr_row.addWidget(self.title_label)
 
-        self.hint_label = QLabel("(2× bosing — tafsilot)")
+        self.hint_label = QLabel(tr("(2× bosing — tafsilot)"))
         self.hint_label.setStyleSheet(f"font-size: 11px; color: {colors['text_tertiary']}; font-style: italic;")
         hdr_row.addWidget(self.hint_label)
         hdr_row.addStretch()
 
-        self.refresh_btn = QPushButton("⟳  Yangilash")
+        self.refresh_btn = QPushButton(tr("⟳  Yangilash"))
         self.refresh_btn.setMinimumHeight(38)
         self.refresh_btn.setMaximumHeight(48)
         self.refresh_btn.setStyleSheet(f"""
@@ -487,7 +488,7 @@ class HistoryWindow(QWidget):
 
         # ── Table ────────────────────────────
         self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(["ID", "Sana", "Vaqt", "Mijoz", "Holat", "Summa", "Amal"])
+        self.table.setHorizontalHeaderLabels([tr("ID"), tr("Sana"), tr("Vaqt"), tr("Mijoz"), tr("Holat"), tr("Summa"), tr("Amal")])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
@@ -564,12 +565,12 @@ class HistoryWindow(QWidget):
             self.table.setItem(i, 5, amt)
 
             if status_tone == "cancelled":
-                lbl = QLabel("Bekor qilingan")
+                lbl = QLabel(tr("Bekor qilingan"))
                 lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 lbl.setStyleSheet(f"color: {colors['error']}; font-weight: 600; font-size: 11px;")
                 self.table.setCellWidget(i, 6, lbl)
             else:
-                action_text = "O'chirish" if status_tone == "draft" else "Bekor qilish"
+                action_text = tr("O'chirish") if status_tone == "draft" else tr("Bekor qilish")
                 btn = QPushButton(action_text)
                 btn.setStyleSheet(f"""
                     QPushButton {{
@@ -600,13 +601,13 @@ class HistoryWindow(QWidget):
         if status_key == "paid":
             return "Paid", "paid"
         if status_key in {"partly paid", "partially paid"}:
-            return "Qisman to'langan", "partial"
+            return tr("Qisman to'langan"), "partial"
         if status_key in {"unpaid", "overdue"}:
             return "To'lanmagan", "unpaid"
         if outstanding <= 0:
             return "Paid", "paid"
         if paid_amount > 0:
-            return "Qisman to'langan", "partial"
+            return tr("Qisman to'langan"), "partial"
         return "To'lanmagan", "unpaid"
 
     def _build_status_badge(self, item: dict) -> QLabel:
@@ -647,7 +648,7 @@ class HistoryWindow(QWidget):
         if status_tone == "draft":
             answer = QMessageBox.question(
                 self,
-                "Draft chekni o'chirish",
+                tr("Draft chekni o'chirish"),
                 f"{invoice_id} draft chekni o'chirmoqchimisiz?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
@@ -666,5 +667,5 @@ class HistoryWindow(QWidget):
         self.cancel_worker.start()
 
     def _on_cancel_finished(self, success: bool, message: str):
-        QMessageBox.information(self, "Natija", message)
+        QMessageBox.information(self, tr("Natija"), message)
         self.load_history()

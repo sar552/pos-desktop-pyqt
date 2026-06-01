@@ -1,7 +1,9 @@
+import time
+
 from PyQt6.QtWidgets import (
-    QApplication, QLineEdit, QComboBox, QDialog,
+    QApplication, QLineEdit,
     QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget,
-    QPushButton, QSplitter, QTabWidget,
+    QPushButton, QSplitter, QTabWidget, QComboBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap
@@ -14,6 +16,8 @@ from core.company_logo import get_cached_company_logo_path
 from core.logger import get_logger
 from core.constants import MONITOR_INTERVAL_MS
 from core.config import load_config
+from core.i18n import tr, i18n, SUPPORTED_LANGUAGES
+from core.barcode_listener import BarcodeManager
 from ui.components.item_browser import ItemBrowser
 from ui.components.cart_widget import CartWidget
 from ui.components.checkout_window import CheckoutWindow
@@ -132,6 +136,7 @@ class PosOpeningCheckWorker(QThread):
 
 class MainWindow(QMainWindow):
     logout_requested = pyqtSignal()
+    relaunch_requested = pyqtSignal()  # til o'zgarganda oynani qayta qurish
 
     def __init__(self, api: FrappeAPI):
         super().__init__()
@@ -215,7 +220,7 @@ class MainWindow(QMainWindow):
         self.status_dot.setFixedSize(12, 12)
         self.status_dot.setStyleSheet(f"background-color: {colors['text_tertiary']}; border-radius: 6px;")
 
-        self.status_text = QLabel("Checking...")
+        self.status_text = QLabel(tr("Checking..."))
         self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['text_secondary']}; font-size: 12px;")
 
         top_bar.addWidget(self.status_dot)
@@ -254,7 +259,7 @@ class MainWindow(QMainWindow):
 
         # New Sale Button — success color
         self.add_sale_btn = _tb_btn(
-            "+ Yangi sotuv", colors['success'], "white", 
+            tr("+ Yangi sotuv"), colors['success'], "white",
             hover="#059669"
         )
         self.add_sale_btn.clicked.connect(self.add_new_sale_tab)
@@ -262,27 +267,27 @@ class MainWindow(QMainWindow):
 
         # History Button — accent variant
         self.history_btn = _tb_btn(
-            "Tarix", colors['accent'], "white", hover=colors['accent_hover']
+            tr("Tarix"), colors['accent'], "white", hover=colors['accent_hover']
         )
         self.history_btn.clicked.connect(self.show_history)
         top_bar.addWidget(self.history_btn)
 
         self.payments_btn = _tb_btn(
-            "Payments", colors['accent'], "white", hover=colors['accent_hover']
+            tr("Payments"), colors['accent'], "white", hover=colors['accent_hover']
         )
         self.payments_btn.clicked.connect(self.show_payments_window)
         top_bar.addWidget(self.payments_btn)
 
         # Sync Button — accent color
         self.sync_btn = _tb_btn(
-            "Sinxronlash", colors['accent'], "white", hover=colors['accent_hover']
+            tr("Sinxronlash"), colors['accent'], "white", hover=colors['accent_hover']
         )
         self.sync_btn.clicked.connect(self.start_sync)
         top_bar.addWidget(self.sync_btn)
 
         # Printer Settings Button — muted
         self.printer_btn = _tb_btn(
-            "Printer", colors['text_secondary'], "white", hover=colors['text_primary']
+            tr("Printer"), colors['text_secondary'], "white", hover=colors['text_primary']
         )
         self.printer_btn.clicked.connect(self.show_printer_settings)
         top_bar.addWidget(self.printer_btn)
@@ -293,13 +298,39 @@ class MainWindow(QMainWindow):
         self.theme_btn = _tb_btn(
             theme_icon, colors['text_secondary'], "white", hover=colors['text_primary']
         )
-        self.theme_btn.setToolTip("Mavzu o'zgartirish (Light/Dark)")
+        self.theme_btn.setToolTip(tr("Mavzu o'zgartirish (Light/Dark)"))
         self.theme_btn.clicked.connect(self.toggle_theme)
         top_bar.addWidget(self.theme_btn)
 
+        # Til tanlash — logout qilmasdan tilni o'zgartirish
+        self.lang_combo = QComboBox()
+        self.lang_combo.setMinimumHeight(36)
+        self.lang_combo.setMaximumHeight(44)
+        self.lang_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        for code, name in SUPPORTED_LANGUAGES.items():
+            self.lang_combo.addItem(f"🌐 {name}", code)
+        _ci = self.lang_combo.findData(i18n.language)
+        if _ci >= 0:
+            self.lang_combo.setCurrentIndex(_ci)
+        self.lang_combo.setStyleSheet(f"""
+            QComboBox {{
+                background: {colors['bg_secondary']}; color: {colors['text_primary']};
+                border: 1px solid {colors['border']}; border-radius: 8px;
+                padding: 0 10px; font-size: 12px; font-weight: 600;
+            }}
+            QComboBox::drop-down {{ border: none; width: 18px; }}
+            QComboBox QAbstractItemView {{
+                background: {colors['bg_secondary']}; color: {colors['text_primary']};
+                selection-background-color: {colors['accent']};
+            }}
+        """)
+        self.lang_combo.setToolTip(tr("Til"))
+        self.lang_combo.currentIndexChanged.connect(self._on_language_changed)
+        top_bar.addWidget(self.lang_combo)
+
         # Kassa ochish Button — success
         self.open_shift_btn = _tb_btn(
-            "Kassa ochish", colors['success'], "white", hover="#059669"
+            tr("Kassa ochish"), colors['success'], "white", hover="#059669"
         )
         self.open_shift_btn.clicked.connect(lambda: self._show_pos_opening_dialog({}))
         top_bar.addWidget(self.open_shift_btn)
@@ -307,10 +338,18 @@ class MainWindow(QMainWindow):
 
         # Kassa yopish Button — error/destructive
         self.close_shift_btn = _tb_btn(
-            "Kassa yopish", colors['error'], "white", hover="#dc2626"
+            tr("Kassa yopish"), colors['error'], "white", hover="#dc2626"
         )
         self.close_shift_btn.clicked.connect(self.show_pos_closing)
         top_bar.addWidget(self.close_shift_btn)
+
+        # Logout (tizimdan chiqish) — tasdiqlash so'raydi, keyin login oynasiga qaytadi
+        self.logout_btn = _tb_btn(
+            tr("🔓 Chiqish"), colors['warning'], "white", hover="#d97706"
+        )
+        self.logout_btn.setToolTip(tr("Tizimdan chiqish (boshqa kassir kirishi uchun)"))
+        self.logout_btn.clicked.connect(self.request_logout)
+        top_bar.addWidget(self.logout_btn)
 
         main_layout.addLayout(top_bar)
 
@@ -380,7 +419,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.history_panel)
 
         # Footer
-        self.status_label = QLabel("Tayyor.")
+        self.status_label = QLabel(tr("Tayyor."))
         self.statusBar().addWidget(self.status_label)
 
         
@@ -388,29 +427,14 @@ class MainWindow(QMainWindow):
         self.global_keyboard = None
         self._current_focused_input = None
         QApplication.instance().focusChanged.connect(self._on_focus_changed)
+        # Yoziladigan maydon allaqachon fokusda bo'lsa, qayta bosilganda
+        # focusChanged ishlamaydi — shuning uchun bosishni alohida kuzatamiz
+        # (klaviatura yopilgandan keyin ham qayta ochilishi uchun).
+        QApplication.instance().installEventFilter(self)
 
         from PyQt6.QtGui import QShortcut, QKeySequence
         self.kb_shortcut = QShortcut(QKeySequence("F11"), self)
         self.kb_shortcut.activated.connect(self._toggle_global_keyboard)
-
-
-        # Bottom Keyboard Button
-        self.keyboard_btn = QPushButton("⌨️ Elektron Klaviatura (F11)")
-        self.keyboard_btn.setMinimumHeight(26)
-        self.keyboard_btn.setMaximumHeight(36)
-        self.keyboard_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.keyboard_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
-                font-weight: 600; font-size: 12px;
-                border-radius: 6px; padding: 0 16px; margin: 2px;
-                border: 1px solid {colors['border']};
-            }}
-            QPushButton:hover {{ background: {colors['bg_hover']}; color: {colors['text_primary']}; }}
-            QPushButton:pressed {{ background: {colors['border']}; }}
-        """)
-        self.keyboard_btn.clicked.connect(self._toggle_global_keyboard)
-        self.statusBar().addPermanentWidget(self.keyboard_btn)
 
 
         # Initial Sale Tab
@@ -435,10 +459,183 @@ class MainWindow(QMainWindow):
         # POS Opening check — kassa ochiqligini tekshirish
         self._check_pos_opening()
 
+        # --- Professional Barcode Management ---
+        self.barcode_manager = BarcodeManager(self)
+        self.barcode_manager.barcode_scanned.connect(self._handle_external_barcode)
+        self.barcode_manager.scanner_error.connect(self._on_scanner_error)
+        self.barcode_manager.input_polluted.connect(self._clean_polluted_input)
+
+        # HID filter — faqat MainWindow hayoti davomida. Login oynasi kalit'larni ushlamaydi.
+        self.barcode_manager.install_keyboard_filter(QApplication.instance())
+
+        # COM Portlarni sozlash
+        self._reload_barcode_ports()
+
+    def _reload_barcode_ports(self):
+        """Apply COM/Serial scanner config; auto-detect ports if none configured.
+
+        For HID (USB-keyboard) skanerlar hech qanday sozlama kerak emas —
+        global event filter avtomatik tutadi.  Serial skanerlar uchun
+        config.json'dagi `barcode_ports` ishlatiladi; agar bo'sh bo'lsa,
+        OS'dagi mavjud serial portlarni avtomatik aniqlab ko'ramiz.
+        """
+        cfg = load_config()
+        ports = list(cfg.get("barcode_ports") or [])
+        # Migration: eski yakka `barcode_port` kalitini ham qo'shib qo'yamiz.
+        single_port = cfg.get("barcode_port")
+        if single_port and single_port not in ports:
+            ports.append(single_port)
+
+        # Avtomatik aniqlash — faqat config'da port yo'q bo'lsa.
+        if not ports:
+            ports = self._auto_detect_serial_scanners()
+
+        self.barcode_manager.setup_scanners(ports)
+        self.barcode_manager.reload_config()
+
+    @staticmethod
+    def _auto_detect_serial_scanners() -> list:
+        """Probe OS serial ports that look like USB-Serial scanners.
+
+        We only include obviously safe candidates (USB/ACM bridges).  Native
+        COM1/ttyS0 ports are skipped to avoid disturbing mice, modems, or
+        industrial RS-232 devices.
+        """
+        try:
+            from serial.tools import list_ports
+        except ImportError:
+            return []
+        try:
+            ports_info = list(list_ports.comports())
+        except Exception as e:
+            logger.debug("Serial port aniqlashda xato: %s", e)
+            return []
+
+        detected = []
+        for p in ports_info:
+            name = (getattr(p, "device", "") or "").upper()
+            desc = (getattr(p, "description", "") or "").lower()
+            # USB-Serial bridges (Linux: ttyUSB*/ttyACM*, Windows: USB description)
+            if (
+                "USB" in name
+                or "ACM" in name
+                or "usb" in desc
+                or "scanner" in desc
+                or "hid" in desc
+            ):
+                detected.append({"port": p.device, "baudrate": 9600})
+        if detected:
+            logger.info("Serial skanerlar avtomatik aniqlandi: %s", detected)
+        return detected
+
+    def _on_scanner_error(self, port: str, message: str):
+        """Show a non-blocking status-bar warning when a Serial scanner fails."""
+        text = f"⚠️ Skaner {port}: {message}"
+        logger.warning(text)
+        if hasattr(self, "status_label"):
+            self.status_label.setText(text)
+
+    def _clean_polluted_input(self, widget, barcode: str):
+        """Remove a barcode prefix that leaked into any QLineEdit.
+
+        The first-key-delay normally prevents leaks, but if focus is on a
+        QLineEdit during the burst (or some chars sneak through), the tail of
+        the widget's text will match a prefix of the emitted barcode.  We
+        strip that tail, and as a safety net we also scan all visible
+        QLineEdits.
+        """
+        from PyQt6.QtWidgets import QLineEdit
+        if not barcode:
+            return
+
+        def trim_if_matches(le: QLineEdit) -> bool:
+            try:
+                current = le.text() or ""
+            except RuntimeError:
+                return False  # widget destroyed
+            if not current:
+                return False
+            for length in range(min(len(current), len(barcode)), 0, -1):
+                tail = current[-length:]
+                if barcode.startswith(tail):
+                    # Signallarni bloklaymiz — `textChanged` filterni qayta
+                    # ishga tushirmasin.
+                    blocker = le.blockSignals(True)
+                    try:
+                        le.setText(current[:-length])
+                    finally:
+                        le.blockSignals(blocker)
+                    return True
+            return False
+
+        cleaned_any = False
+        # 1. Listener bergan aniq nishon.
+        if isinstance(widget, QLineEdit):
+            cleaned_any |= trim_if_matches(widget)
+
+        # 2. Safety net: barcha ko'rinadigan QLineEditlarni ham tekshiramiz.
+        try:
+            for w in QApplication.allWidgets():
+                if not isinstance(w, QLineEdit) or w is widget:
+                    continue
+                if not w.isVisible():
+                    continue
+                cleaned_any |= trim_if_matches(w)
+        except Exception as e:
+            logger.debug("allWidgets() skanida xato: %s", e)
+
+        if cleaned_any:
+            logger.debug("Skaner prefix'i %r inputdan tozalandi.", barcode[:4])
+
+    def _handle_external_barcode(self, barcode):
+        """Tashqi skanerdan (Serial yoki Global Keyboard) kelgan barcodeni qayta ishlash."""
+        barcode = (barcode or "").strip()
+        if not barcode:
+            return
+
+        # --- Deduplication (Double-entry protection) ---
+        current_time = time.time()
+        last_time = getattr(self, "_last_barcode_time", 0)
+        last_barcode = getattr(self, "_last_barcode", "")
+
+        # 200ms — skanerlar ba'zan bir uzatishni 2 marta yuboradi, lekin
+        # kassir atayin ikki marta o'tkazganini bloklamaymiz.
+        if barcode == last_barcode and (current_time - last_time) < 0.2:
+            logger.debug("Dublikat barcode inkor qilindi: %s", barcode)
+            return
+
+        self._last_barcode = barcode
+        self._last_barcode_time = current_time
+
+        logger.info("Tashqi barcode skanerlandi: %s", barcode)
+
+        cart_count_before = self._active_cart_item_count()
+        # MUHIM: barcode'ni LEFT search inputga YOZMAYMIZ — submit_search uni
+        # argument sifatida oladi.  Aks holda cart_updated → reservations →
+        # load_items(search_input.text()) zanjiri LEFT ro'yxatni shu barcode
+        # bo'yicha filterlab qoldiradi.
+        self.item_browser.submit_search(barcode, add_to_cart=True)
+
+        if self._active_cart_item_count() > cart_count_before:
+            self.status_label.setText(f"✅ Skanerlandi: {barcode}")
+        else:
+            self.status_label.setText(
+                f"❌ '{barcode}' barcode bo'yicha tovar topilmadi"
+            )
+
+    def _active_cart_item_count(self) -> int:
+        cart = self.sales_tabs.currentWidget() if hasattr(self, "sales_tabs") else None
+        if cart is None or not hasattr(cart, "items"):
+            return 0
+        try:
+            return sum(int(it.get("qty", 0)) for it in cart.items.values())
+        except Exception:
+            return len(getattr(cart, "items", {}) or {})
+
     def request_exit(self):
         dlg = ConfirmDialog(
-            self, "Chiqish", "Dasturdan chiqishni xohlaysizmi?",
-            icon="🚪", yes_text="Chiqish", yes_color="#ef4444",
+            self, tr("Chiqish"), tr("Dasturdan chiqishni xohlaysizmi?"),
+            icon="🚪", yes_text=tr("Chiqish"), yes_color="#ef4444",
         )
         dlg.exec()
         if dlg.result_accepted:
@@ -446,13 +643,43 @@ class MainWindow(QMainWindow):
 
     def request_logout(self):
         dlg = ConfirmDialog(
-            self, "Tizimdan chiqish",
-            "Tizimdan chiqishni xohlaysizmi?\nBarcha hisob ma'lumotlari tozalanadi.",
-            icon="🔓", yes_text="Chiqish", yes_color="#f59e0b",
+            self, tr("Tizimdan chiqish"),
+            tr("Tizimdan chiqishni xohlaysizmi?\nBarcha hisob ma'lumotlari tozalanadi."),
+            icon="🔓", yes_text=tr("Chiqish"), yes_color="#f59e0b",
         )
         dlg.exec()
         if dlg.result_accepted:
             self.logout_requested.emit()
+
+    def _on_language_changed(self, _index):
+        code = self.lang_combo.currentData()
+        if not code or code == i18n.language:
+            return
+        # Savatda tovar bo'lsa — qayta qurishda yo'qoladi, ogohlantiramiz.
+        has_items = False
+        for i in range(self.sales_tabs.count()):
+            w = self.sales_tabs.widget(i)
+            if getattr(w, "items", None):
+                has_items = True
+                break
+        if has_items:
+            dlg = ConfirmDialog(
+                self, tr("Til"),
+                tr("Til o'zgartirilsinmi? Oyna qayta yuklanadi va savatdagi tovarlar yo'qoladi."),
+                icon="🌐", yes_text=tr("Ha"), yes_color="#f59e0b",
+            )
+            dlg.exec()
+            if not dlg.result_accepted:
+                # Bekor qilindi — combo'ni eski tilga qaytaramiz.
+                _ci = self.lang_combo.findData(i18n.language)
+                if _ci >= 0:
+                    self.lang_combo.blockSignals(True)
+                    self.lang_combo.setCurrentIndex(_ci)
+                    self.lang_combo.blockSignals(False)
+                return
+        i18n.set_language(code)
+        # Butun oyna yangi tilda qayta quriladi (hamma matn yangilanadi).
+        self.relaunch_requested.emit()
 
     def _update_company_badge(self, company: str = "", pos_profile: str = ""):
         colors = ThemeManager.get_theme_colors()
@@ -508,29 +735,50 @@ class MainWindow(QMainWindow):
         self._update_offline_queue_count()
 
     def _check_server_status(self):
-        # Background thread'da tekshirish — GUI muzlamasligi uchun
-        if hasattr(self, '_connectivity_worker') and self._connectivity_worker.isRunning():
-            return  # oldingi tekshiruv hali tugamagan
-        self._connectivity_worker = ConnectivityCheckWorker(self.api)
-        self._connectivity_worker.finished.connect(self._update_connectivity_ui)
-        self._connectivity_worker.start()
+        """Spawn a connectivity check off the GUI thread; never overlap two."""
+        existing = getattr(self, "_connectivity_worker", None)
+        if existing is not None:
+            try:
+                still_running = existing.isRunning()
+            except RuntimeError:
+                # Underlying C++ object was already deleted — clear our handle.
+                self._connectivity_worker = None
+                still_running = False
+            if still_running:
+                return
+
+        worker = ConnectivityCheckWorker(self.api)
+        worker.finished.connect(self._update_connectivity_ui)
+        # Bo'shatilganda Python reference'ni ham tozalaymiz — keyingi safar
+        # `isRunning()`'ga o'lik C++ ob'ektga ulanmaslik uchun.
+        worker.finished.connect(lambda *_: self._on_connectivity_worker_done(worker))
+        self._connectivity_worker = worker
+        worker.start()
+
+    def _on_connectivity_worker_done(self, worker):
+        if getattr(self, "_connectivity_worker", None) is worker:
+            self._connectivity_worker = None
+        try:
+            worker.deleteLater()
+        except RuntimeError:
+            pass
 
     def _update_connectivity_ui(self, is_online: bool):
         colors = ThemeManager.get_theme_colors()
         if is_online:
             self.status_dot.setStyleSheet(f"background-color: {colors['success']}; border-radius: 6px;")
-            self.status_text.setText("ONLINE")
+            self.status_text.setText(tr("ONLINE"))
             self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['success']}; font-size: 12px;")
         else:
             self.status_dot.setStyleSheet(f"background-color: {colors['error']}; border-radius: 6px;")
-            self.status_text.setText("OFFLINE")
+            self.status_text.setText(tr("OFFLINE"))
             self.status_text.setStyleSheet(f"font-weight: bold; color: {colors['error']}; font-size: 12px;")
 
     def _update_offline_queue_count(self):
         try:
             db.connect(reuse_if_open=True)
             count = PendingInvoice.select().where(PendingInvoice.status == "Pending").count()
-            self.offline_btn.setText(f"Offline: {count}")
+            self.offline_btn.setText(f"{tr('Offline')}: {count}")
             colors = ThemeManager.get_theme_colors()
 
             if count > 0:
@@ -561,18 +809,17 @@ class MainWindow(QMainWindow):
         new_cart.checkout_requested.connect(self.on_checkout)
         new_cart.price_list_changed.connect(self.item_browser.set_price_list)
         new_cart.cart_updated.connect(self._sync_item_browser_cart_view)
-        new_cart.item_search_changed.connect(self.item_browser.set_search_text)
-        new_cart.item_search_submitted.connect(self.item_browser.submit_search)
-        tab_index = self.sales_tabs.addTab(new_cart, f"Sotuv {tab_count + 1}")
+        tab_index = self.sales_tabs.addTab(new_cart, f"{tr('Sotuv')} {tab_count + 1}")
         self.sales_tabs.setCurrentIndex(tab_index)
         self._sync_item_browser_cart_view()
 
     def _on_tab_changed(self, index: int):
         cart = self.sales_tabs.widget(index)
-        if cart:
-            self.item_browser.set_price_list(cart.price_list_combo.currentText())
-            if hasattr(cart, "search_item_input"):
-                self.item_browser.set_search_text(cart.search_item_input.text(), trigger=True)
+        if cart and hasattr(cart, "price_list_combo"):
+            new_pl = cart.price_list_combo.currentText()
+            # Faqat haqiqatan boshqa price list bo'lsa ro'yxatni qayta yuklaymiz.
+            if getattr(self.item_browser, "current_price_list", "") != new_pl:
+                self.item_browser.set_price_list(new_pl)
         self._sync_item_browser_cart_view()
 
     def _get_active_cart_reservations(self) -> dict:
@@ -599,8 +846,8 @@ class MainWindow(QMainWindow):
             cart = self.sales_tabs.widget(index)
             if cart and cart.items:
                 dlg = ConfirmDialog(
-                    self, "Vkladkani yopish",
-                    "Savatda tovarlar bor. Baribir yopmoqchimisiz?",
+                    self, tr("Vkladkani yopish"),
+                    tr("Savatda tovarlar bor. Baribir yopmoqchimisiz?"),
                     icon="⚠️", yes_text="Ha, yopish", yes_color="#ef4444",
                 )
                 dlg.exec()
@@ -609,24 +856,28 @@ class MainWindow(QMainWindow):
             self.sales_tabs.removeTab(index)
             self._sync_item_browser_cart_view()
         else:
-            InfoDialog(self, "Diqqat", "Kamida bitta sotuv oynasi ochiq bo'lishi kerak.", kind="warning").exec()
+            InfoDialog(self, tr("Diqqat"), tr("Kamida bitta sotuv oynasi ochiq bo'lishi kerak."), kind="warning").exec()
 
     def add_item_to_active_cart(self, item_code: str, item_name: str, price: float, currency: str):
         active_cart = self.sales_tabs.currentWidget()
         if active_cart:
-            active_cart.add_item(item_code, item_name, price, currency)
+            # MUHIM: matnni avval tozalaymiz — cart.add_item() cart_updated
+            # signali orqali set_reserved_quantities -> load_items(text) zanjirini
+            # ishga tushiradi.  Text bo'sh bo'lsagina butun ro'yxat ko'rinadi.
+            self.item_browser.set_search_text("", trigger=False)
             if hasattr(active_cart, "clear_item_search"):
                 active_cart.clear_item_search()
-            self.item_browser.set_search_text("", trigger=True)
+            active_cart.add_item(item_code, item_name, price, currency)
             self._sync_item_browser_cart_view()
 
     def add_item_payload_to_active_cart(self, payload: dict):
         active_cart = self.sales_tabs.currentWidget()
         if active_cart:
-            active_cart.apply_item_payload(payload)
+            # Yuqoridagi kabi: matnni emit'dan/apply'dan oldin tozalaymiz.
+            self.item_browser.set_search_text("", trigger=False)
             if hasattr(active_cart, "clear_item_search"):
                 active_cart.clear_item_search()
-            self.item_browser.set_search_text("", trigger=True)
+            active_cart.apply_item_payload(payload)
             self._sync_item_browser_cart_view()
 
     def on_checkout(self, order_data: dict):
@@ -705,7 +956,7 @@ class MainWindow(QMainWindow):
     def start_sync(self):
         self.sync_btn.setEnabled(False)
         self._auto_sync = False  # qo'lda bosdi — dialog ko'rsatilsin
-        self.status_label.setText("Sinxronizatsiya boshlandi...")
+        self.status_label.setText(tr("Sinxronizatsiya boshlandi..."))
         self._start_sync_worker()
 
     def _start_sync_worker(self):
@@ -742,14 +993,14 @@ class MainWindow(QMainWindow):
         if self._auto_sync:
             self._auto_sync = False
             if not success:
-                self.status_label.setText(f"Sinxronizatsiya xatosi: {message}")
+                self.status_label.setText(f"{tr('Sinxronizatsiya xatosi')}: {message}")
             else:
-                self.status_label.setText("Sinxronizatsiya muvaffaqiyatli!")
+                self.status_label.setText(tr("Sinxronizatsiya muvaffaqiyatli!"))
         else:
             if success:
-                InfoDialog(self, "Muvaffaqiyatli", message, kind="success").exec()
+                InfoDialog(self, tr("Muvaffaqiyatli"), message, kind="success").exec()
             else:
-                InfoDialog(self, "Xatolik", message, kind="error").exec()
+                InfoDialog(self, tr("Xatolik"), message, kind="error").exec()
 
     # ── POS Opening / Closing ──────────────────────────────
     def _check_pos_opening(self):
@@ -760,18 +1011,25 @@ class MainWindow(QMainWindow):
         self.opening_check_worker.start()
 
     def _on_opening_check_done(self, has_opening: bool, opening_entry: str, dialog_data: dict = None):
+        # Worker'dan kelgan dialog_data'ni cache qilamiz — keyin "Kassa ochish"
+        # tugmasi bosilganda yana API'ga bormaslik uchun.
+        if isinstance(dialog_data, dict) and dialog_data:
+            self._cached_opening_dialog = dialog_data
         if has_opening:
             self.opening_entry = opening_entry
             self._set_pos_enabled(True)
-            self.status_label.setText("Kassa ochiq.")
+            self.status_label.setText(tr("Kassa ochiq."))
         else:
             self._show_pos_opening_dialog(dialog_data or {})
 
     def _show_pos_opening_dialog(self, dialog_data: dict):
         if not dialog_data:
+            dialog_data = getattr(self, "_cached_opening_dialog", None) or {}
+        if not dialog_data:
             success, response = self.api.call_method("posawesome.posawesome.api.shifts.get_opening_dialog_data")
             if success and isinstance(response, dict):
                 dialog_data = response
+                self._cached_opening_dialog = dialog_data
         dlg = PosOpeningDialog(self, self.api, dialog_data)
         dlg.opening_completed.connect(self._on_pos_opened)
         dlg.exit_requested.connect(self._on_opening_exit)
@@ -789,20 +1047,20 @@ class MainWindow(QMainWindow):
     def _on_pos_opened(self, opening_entry: str):
         self.opening_entry = opening_entry
         self._set_pos_enabled(True)
-        self.status_label.setText("Kassa ochildi!")
+        self.status_label.setText(tr("Kassa ochildi!"))
 
     def show_pos_closing(self):
         if not self.opening_entry:
             InfoDialog(
-                self, "Kassa topilmadi",
-                "Ochiq kassa topilmadi.",
+                self, tr("Kassa topilmadi"),
+                tr("Ochiq kassa topilmadi."),
                 kind="warning",
             ).exec()
             return
 
         dlg = ConfirmDialog(
-            self, "Kassani yopish",
-            "Kassani yopmoqchimisiz?\nBarcha to'lovlar hisoblanadi.",
+            self, tr("Kassani yopish"),
+            tr("Kassani yopmoqchimisiz?\nBarcha to'lovlar hisoblanadi."),
             icon="🔒", yes_text="Ha, yopish", yes_color="#dc2626",
         )
         dlg.exec()
@@ -815,13 +1073,14 @@ class MainWindow(QMainWindow):
 
     def _on_pos_closed(self):
         self.opening_entry = None
+        self._cached_opening_dialog = None  # eski qoldiqlardan tozalaymiz
         self._set_pos_enabled(False)
-        self.status_label.setText("Kassa yopildi.")
+        self.status_label.setText(tr("Kassa yopildi."))
 
         # Muvaffaqiyat xabari
         InfoDialog(
-            self, "Kassa yopildi",
-            "Kassa muvaffaqiyatli yopildi.\nDavom etish uchun yangi kassa oching.",
+            self, tr("Kassa yopildi"),
+            tr("Kassa muvaffaqiyatli yopildi.\nDavom etish uchun yangi kassa oching."),
             kind="success",
         ).exec()
 
@@ -840,19 +1099,107 @@ class MainWindow(QMainWindow):
             self.sales_tabs.setEnabled(enabled)
 
     
-    def _on_focus_changed(self, old_widget, new_widget):
-        if hasattr(self, 'global_keyboard') and new_widget:
-            # Check safely to prevent circular reference or crash
-            if isinstance(new_widget, QLineEdit):
-                if new_widget.property("disable_virtual_keyboard"):
-                    self._current_focused_input = None
+    def eventFilter(self, obj, event):
+        """Yoziladigan maydon bosilganini kuzatadi.
+
+        focusChanged faqat fokus o'zgarganda ishlaydi; maydon allaqachon
+        fokusda bo'lsa (masalan klaviatura yopilgandan keyin) qayta bosish
+        klaviaturani ochmaydi. Shu sababli bosishni ham ushlaymiz.
+        """
+        try:
+            from PyQt6.QtCore import QEvent
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if isinstance(obj, QLineEdit):
+                    self._maybe_reopen_keyboard(obj)
+                else:
+                    # Yoziladigan maydondan tashqariga bosildi — klaviaturani
+                    # yopamiz (klaviaturaning o'z tugmalari bundan mustasno).
+                    self._maybe_close_keyboard(obj)
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
+
+    def _maybe_close_keyboard(self, obj):
+        kb = getattr(self, 'global_keyboard', None)
+        if kb is None:
+            return
+        try:
+            if not kb.isVisible():
+                return
+            # Klaviaturaning o'zini (yoki ichidagi widgetni) bossa — yopmaymiz.
+            if obj is kb or kb.isAncestorOf(obj):
+                return
+        except RuntimeError:
+            self.global_keyboard = None
+            return
+        kb.hide()
+        self._current_focused_input = None
+
+    def _maybe_reopen_keyboard(self, line_edit):
+        # Klaviaturaning o'z ichidagi maydonni bosish — e'tibor bermaymiz.
+        kb = getattr(self, 'global_keyboard', None)
+        if kb is not None:
+            try:
+                if line_edit is kb or kb.isAncestorOf(line_edit):
                     return
-                if getattr(self.global_keyboard, 'input_field', None) != new_widget:
-                    self._current_focused_input = new_widget
-                    try:
-                        new_widget.destroyed.connect(self._clear_destroyed_focused_input)
-                    except Exception:
-                        pass
+            except RuntimeError:
+                self.global_keyboard = None
+        if line_edit.property("disable_virtual_keyboard"):
+            return
+        if not line_edit.isEnabled() or line_edit.isReadOnly():
+            return
+        self._current_focused_input = line_edit
+        # Fokus o'rnashishi uchun keyingi event-loop siklida ochamiz.
+        QTimer.singleShot(0, lambda le=line_edit: self._reopen_keyboard_for(le))
+
+    def _reopen_keyboard_for(self, line_edit):
+        try:
+            line_edit.objectName()
+        except RuntimeError:
+            return
+        self._show_keyboard_for(line_edit)
+
+    def _on_focus_changed(self, old_widget, new_widget):
+        """Yoziladigan maydonga fokus tushganda klaviatura avtomatik ochiladi
+        (telefondagidek). Skaner/qidiruv maydonida esa yashiriladi."""
+        if new_widget is None:
+            return
+
+        kb = getattr(self, 'global_keyboard', None)
+        # Klaviaturaning o'z ichidagi widgetlarga fokus o'tsa — e'tibor bermaymiz.
+        if kb is not None:
+            try:
+                if new_widget is kb or kb.isAncestorOf(new_widget):
+                    return
+            except RuntimeError:
+                self.global_keyboard = None
+                kb = None
+
+        if not isinstance(new_widget, QLineEdit):
+            # Fokus yoziladigan maydondan tashqariga (tugma, jadval, bo'sh joy)
+            # o'tdi — klaviaturani avtomatik yopamiz (telefondagidek).
+            self._current_focused_input = None
+            if kb is not None and kb.isVisible():
+                kb.hide()
+            return
+
+        if new_widget.property("disable_virtual_keyboard"):
+            # Skaner/qidiruv maydoni — klaviatura yo'ldan olib turilsin.
+            self._current_focused_input = None
+            if kb is not None and kb.isVisible():
+                kb.hide()
+            return
+
+        if not new_widget.isEnabled() or new_widget.isReadOnly():
+            return
+
+        # Yoziladigan maydon — klaviaturani ochamiz/moslaymiz.
+        self._current_focused_input = new_widget
+        try:
+            new_widget.destroyed.connect(self._clear_destroyed_focused_input)
+        except Exception:
+            pass
+        self._show_keyboard_for(new_widget)
 
     def _clear_destroyed_focused_input(self, *_args):
         self._current_focused_input = None
@@ -869,26 +1216,82 @@ class MainWindow(QMainWindow):
             self._current_focused_input = None
             return None
 
-    def _toggle_global_keyboard(self):
-        if getattr(self, 'global_keyboard', None) is None or not self.global_keyboard.isVisible():
-            focused_input = self._get_live_focused_input()
-            if focused_input is None:
-                return
-            current_text = ""
+    @staticmethod
+    def _is_numeric_input(line_edit) -> bool:
+        """Maydon faqat raqam qabul qiladimi — kichik numpad ko'rsatish uchun."""
+        from PyQt6.QtGui import QIntValidator, QDoubleValidator
+        # 1) Aniq belgilab qo'yilgan bo'lsa — ustuvor.
+        prop = line_edit.property("numeric_keyboard")
+        if prop is not None:
+            return bool(prop)
+        # 2) Raqamli validator bo'lsa — raqamli maydon.
+        if isinstance(line_edit.validator(), (QIntValidator, QDoubleValidator)):
+            return True
+        # 3) Input method hints raqam deb belgilangan bo'lsa.
+        try:
+            from PyQt6.QtCore import Qt as _Qt
+            hints = line_edit.inputMethodHints()
+            if hints & (_Qt.InputMethodHint.ImhDigitsOnly | _Qt.InputMethodHint.ImhPreferNumbers):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _show_keyboard_for(self, line_edit):
+        """Berilgan maydon uchun klaviaturani ochadi yoki moslaydi.
+
+        Faqat raqam yoziladigan maydonga kichik numpad, qolganlarga to'liq
+        klaviatura chiqadi. Modal dialoglarda ham ishlashi uchun klaviatura
+        fokuslangan maydonning oynasiga (window) bola qilib yaratiladi —
+        aks holda modal dialog uni bloklab qo'yadi.
+        """
+        try:
+            text = line_edit.text()
+        except RuntimeError:
+            return
+        title = line_edit.placeholderText() or "Klaviatura"
+        host = line_edit.window() or self
+        want_numeric = self._is_numeric_input(line_edit)
+
+        kb = getattr(self, 'global_keyboard', None)
+        # Klaviatura boshqa oynaga tegishli yoki rejimi (raqamli/to'liq) mos
+        # bo'lmasa — qayta yaratamiz (rejim qurilishda belgilanadi).
+        if kb is not None:
             try:
-                current_text = focused_input.text()
+                needs_rebuild = (kb.parent() is not host) or (kb.is_numeric != want_numeric)
             except RuntimeError:
-                self._current_focused_input = None
-                return
-            
-            self.global_keyboard = TouchKeyboard(self, initial_text=current_text, title="Elektron Klaviatura")
-            self.global_keyboard.text_changed.connect(self._on_global_keyboard_text_changed)
-            # Show below the main window or floating
-            self.global_keyboard.show()
+                needs_rebuild = True
+                kb = None
+            if kb is not None and needs_rebuild:
+                try:
+                    kb.close()
+                    kb.deleteLater()
+                except Exception:
+                    pass
+                kb = None
+                self.global_keyboard = None
+
+        if kb is None:
+            kb = TouchKeyboard(host, initial_text=text, title=title, is_numeric=want_numeric)
+            kb.text_changed.connect(self._on_global_keyboard_text_changed)
+            self.global_keyboard = kb
         else:
-            self.global_keyboard.close()
-            self.global_keyboard = None
-            
+            kb.set_target(text, title)
+
+        if not kb.isVisible():
+            kb.show()
+
+    def _toggle_global_keyboard(self):
+        """F11 / status-bar tugmasi: klaviaturani qo'lda ochish-yopish."""
+        kb = getattr(self, 'global_keyboard', None)
+        if kb is not None and kb.isVisible():
+            kb.hide()
+            return
+        focused_input = self._get_live_focused_input()
+        if focused_input is None:
+            return
+        self._show_keyboard_for(focused_input)
+
     def _on_global_keyboard_text_changed(self, text):
         focused_input = self._get_live_focused_input()
         if focused_input is None:
@@ -897,7 +1300,7 @@ class MainWindow(QMainWindow):
             focused_input.setText(text)
         except RuntimeError:
             self._current_focused_input = None
-    
+
     def _apply_central_widget_theme(self, widget):
         """Apply theme to central widget"""
         colors = ThemeManager.get_theme_colors()
@@ -1009,6 +1412,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self.monitor_timer.stop()
         self.offline_sync_worker.stop()
+        if hasattr(self, 'barcode_manager'):
+            # stop_all() endi HID filter-ni ham olib tashlaydi.
+            self.barcode_manager.stop_all()
         if not self.offline_sync_worker.wait(2000):
             logger.warning("Offline sync worker 2 sekund ichida to'xtamadi")
         super().closeEvent(event)

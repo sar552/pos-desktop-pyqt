@@ -1,32 +1,33 @@
 import json
-import sched
-import time
-from threading import Thread
-from database.models import PendingInvoice, PosShift, db
+
 from core.api import FrappeAPI
 from core.logger import get_logger
+from database.models import PendingInvoice, PosShift, db
 
 logger = get_logger(__name__)
 
 # ──────────────────────────────────────────────────
 #  Permanent error detection
 # ──────────────────────────────────────────────────
-PERMANENT_KEYWORDS = [
+# HTTP status codes that mean the invoice will never succeed on retry.
+PERMANENT_STATUS_CODES = {400, 403, 404, 417, 422}
+
+# Backstop string-based detection (legacy) — kept for non-HTTP exceptions.
+PERMANENT_KEYWORDS = (
     "validationerror",
     "permissionerror",
     "doesnotexisterror",
     "mandatoryerror",
     "invalidcolumnname",
-    "server xatosi (417)",
-    "server xatosi (403)",
-    "server xatosi (404)",
     "does not exist",
     "not found",
-]
+)
 
 
-def is_permanent_error(error_msg: str) -> bool:
-    msg_lower = error_msg.lower()
+def is_permanent_error(error_msg: str, status_code: int = 0) -> bool:
+    if status_code and status_code in PERMANENT_STATUS_CODES:
+        return True
+    msg_lower = (error_msg or "").lower()
     return any(kw in msg_lower for kw in PERMANENT_KEYWORDS)
 
 
@@ -130,66 +131,33 @@ def process_pending_invoice(api: FrappeAPI, invoice: PendingInvoice) -> tuple[st
         data_payload["is_partly_paid"] = 1
     
     try:
-        success, response = api.call_method(
+        result = api.call_method(
             "posawesome.posawesome.api.invoices.submit_invoice",
             {
                 "invoice": json.dumps(payload),
                 "data": json.dumps(data_payload),
-                "submit_in_background": 0
-            }
+                "submit_in_background": 0,
+            },
         )
-        
+        # ApiResponse: (success, payload, status_code).  Legacy 2-tuple unpack
+        # would lose the status code, so we index directly.
+        success = bool(result[0])
+        response = result[1]
+        status_code = result[2] if len(result) > 2 else 0
+
         if success and isinstance(response, dict):
             doc_name = response.get("name", "")
-            logger.info(f"Oflayn chek muvaffaqiyatli sinxronlandi: {invoice.offline_id} -> {doc_name}")
-            return 'Synced', doc_name
-        else:
-            error_str = str(response)
-            logger.error(f"Sinxronlashda xato: {error_str}")
-            
-            if is_permanent_error(error_str):
-                return 'Failed', error_str
-            return 'Pending', error_str
-            
-    except Exception as e:
-        logger.error(f"Invoice sinxronizatsiya exception: {e}")
-        return 'Pending', str(e)
+            logger.info(
+                "Oflayn chek muvaffaqiyatli sinxronlandi: %s -> %s",
+                invoice.offline_id, doc_name,
+            )
+            return "Synced", doc_name
 
-class InvoiceProcessor:
-    def __init__(self, api: FrappeAPI):
-        self.api = api
-        self.scheduler = sched.scheduler(time.time, time.sleep)
-        self.running = False
-        
-    def start(self):
-        if not self.running:
-            self.running = True
-            logger.info("Invoice processor is starting in background...")
-            t = Thread(target=self._run_loop, daemon=True)
-            t.start()
-            
-    def stop(self):
-        self.running = False
-        
-    def _run_loop(self):
-        while self.running:
-            try:
-                self.process_pending_invoices()
-            except Exception as e:
-                logger.error(f"Error in processor loop: {e}")
-            time.sleep(15)  # Har 15 soniyada urunib ko'rish
-            
-    def process_pending_invoices(self):
-        db.connect(reuse_if_open=True)
-        try:
-            pending = PendingInvoice.select().where(PendingInvoice.status == 'Pending')
-            
-            for invoice in pending:
-                status, message = process_pending_invoice(self.api, invoice)
-                invoice.status = status
-                invoice.error_message = message
-                invoice.save()
-                    
-        finally:
-            if not db.is_closed():
-                db.close()
+        error_str = str(response)
+        logger.error("Sinxronlashda xato (HTTP %s): %s", status_code, error_str)
+        if is_permanent_error(error_str, status_code):
+            return "Failed", error_str
+        return "Pending", error_str
+    except Exception as e:
+        logger.error("Invoice sinxronizatsiya exception: %s", e)
+        return "Pending", str(e)

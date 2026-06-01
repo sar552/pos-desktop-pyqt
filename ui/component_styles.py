@@ -43,6 +43,12 @@ def get_component_styles():
                 border: 2px solid {colors['accent']};
                 background: {colors['input_focus_bg']};
             }}
+            QLineEdit QPushButton {{
+                border: none;
+                background: transparent;
+                padding: 0;
+                margin-right: 5px;
+            }}
         """,
 
         "cart_combo": f"""
@@ -106,6 +112,21 @@ def get_component_styles():
                 background: {colors['accent']};
                 color: white;
             }}
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 8px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {colors['border']};
+                border-radius: 4px;
+                min-height: 28px;
+            }}
+            QScrollBar::handle:vertical:hover {{ background: {colors['text_tertiary']}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px; background: none; border: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
         """,
 
         "cart_table": f"""
@@ -207,6 +228,12 @@ def get_component_styles():
             QLineEdit:focus {{
                 border: 2px solid {colors['accent']};
                 background: {colors['input_focus_bg']};
+            }}
+            QLineEdit QPushButton {{
+                border: none;
+                background: transparent;
+                padding: 0;
+                margin-right: 8px;
             }}
         """,
 

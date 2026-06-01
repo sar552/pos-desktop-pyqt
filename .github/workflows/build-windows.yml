@@ -1,0 +1,48 @@
+name: Build Windows EXE
+
+# Qachon ishga tushadi: main'ga push, qo'lda (workflow_dispatch), yoki teg (v*)
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm pos.spec
+
+      - name: Zip the build
+        run: Compress-Archive -Path dist/POKIZA-POS/* -DestinationPath POKIZA-POS-windows.zip
+
+      - name: Upload artifact (har build'da yuklanadi)
+        uses: actions/upload-artifact@v4
+        with:
+          name: POKIZA-POS-windows
+          path: POKIZA-POS-windows.zip
+          retention-days: 30
+
+      - name: Create Release (faqat v* teg bo'lsa)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: POKIZA-POS-windows.zip

@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import QWidget, QGridLayout, QPushButton, QVBoxLayout
 from PyQt6.QtCore import pyqtSignal, QSize
 from ui.theme_manager import ThemeManager
+from core.i18n import tr
 
 class TouchNumpad(QWidget):
     digit_clicked = pyqtSignal(str)
@@ -85,7 +86,7 @@ class TouchNumpad(QWidget):
             btn = QPushButton()
             
             if text == 'BACK':
-                btn.setText("⌫ O'CHIRISH")
+                btn.setText(tr("⌫ O'CHIRISH"))
                 btn.setStyleSheet(back_style)
             elif text == 'C':
                 btn.setText("C")

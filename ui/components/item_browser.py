@@ -5,19 +5,61 @@ import json
 from PyQt6.QtWidgets import QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 import requests
 from PyQt6.QtWidgets import (
-    QScroller,
+    QScroller, QApplication,
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QPushButton, QScrollArea, QGridLayout, QLabel, QSizePolicy, QFrame,
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QSize, QThread, QObject, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPainterPath
 from database.models import Item, ItemPrice, db
+from peewee import fn
 from core.api import FrappeAPI
 from core.config import load_config
 from core.feedback import SoundFeedback
+from ui.components.keyboard import TouchKeyboard
 from core.logger import get_logger
 from core.constants import ITEM_LOAD_LIMIT, IMAGE_TIMEOUT
+from core.i18n import tr
 logger = get_logger(__name__)
+
+
+class _OnlineBarcodeLookupWorker(QThread):
+    """Resolve an unknown barcode on the server, off the GUI thread."""
+
+    finished_signal = pyqtSignal(str, object)  # (search, payload-or-None)
+
+    def __init__(self, api, barcode: str, price_list: str, currency: str):
+        super().__init__()
+        self.api = api
+        self.barcode = barcode
+        self.price_list = price_list
+        self.currency = currency
+
+    def run(self):
+        payload = None
+        try:
+            if self.api and self.api.is_configured():
+                success, response = self.api.call_method(
+                    "posawesome.posawesome.api.items.get_items_from_barcode",
+                    {
+                        "selling_price_list": self.price_list,
+                        "currency": self.currency,
+                        "barcode": self.barcode,
+                    },
+                )
+                if success and isinstance(response, dict) and response.get("item_code"):
+                    payload = {
+                        "item_code": response.get("item_code"),
+                        "item_name": response.get("item_name") or response.get("item_code"),
+                        "rate": float(response.get("price_list_rate") or response.get("rate") or 0),
+                        "currency": response.get("currency") or self.currency,
+                        "qty": response.get("scale_qty") or 1,
+                        "uom": response.get("uom"),
+                        "manual_rate": response.get("scale_price") is not None,
+                    }
+        except Exception as e:
+            logger.debug("Online barcode resolve xatosi: %s", e)
+        self.finished_signal.emit(self.barcode, payload)
 
 
 class ImageLoader(QThread):
@@ -65,8 +107,30 @@ class ItemButton(QFrame):
         self._original_pixmap = None
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._apply_normal_style()
+        # Standart va o'zgarmas o'lcham (Natural look uchun)
+        self.setFixedWidth(180)
+        self.setFixedHeight(240)
+        
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        
+        # Consolidate styling into a single scoped stylesheet with pseudo-states
+        # to prevent layout recalculations and flickering on events.
+        self.setObjectName("ItemCard")
+        self.setStyleSheet(f"""
+            QFrame#ItemCard {{
+                background: {self.colors['bg_secondary']};
+                border: 1.5px solid {self.colors['border']};
+                border-radius: 12px;
+            }}
+            QFrame#ItemCard:hover {{
+                background: {self.colors['bg_tertiary']};
+                border-color: {self.colors['accent']};
+            }}
+            QFrame#ItemCard:pressed {{
+                background: {self.colors['selection_bg']};
+                border-color: {self.colors['accent_hover']};
+            }}
+        """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -74,22 +138,20 @@ class ItemButton(QFrame):
 
         # --- Rasm qismi (karta yuqori qismi) ---
         self.image_container = QWidget()
-        self.image_container.setMinimumHeight(100)
-        self.image_container.setMaximumHeight(132)
+        self.image_container.setFixedHeight(120)
         self.image_container.setStyleSheet(f"""
             background: {self.colors['bg_tertiary']};
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
+            border-top-left-radius: 12px;
+            border-top-right-radius: 12px;
         """)
 
         img_inner = QVBoxLayout(self.image_container)
-        img_inner.setContentsMargins(10, 8, 10, 8)
+        img_inner.setContentsMargins(0, 0, 0, 0)
         img_inner.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.image_label = QLabel()
-        self.image_label.setMinimumSize(108, 78)
-        self.image_label.setMaximumSize(132, 96)
-        self.image_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.image_label.setFixedSize(120, 90)
+        self.image_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet(f"""
             background: {self.colors['bg_secondary']};
@@ -112,8 +174,8 @@ class ItemButton(QFrame):
         info_container = QWidget()
         info_container.setStyleSheet(f"""
             background: {self.colors['bg_secondary']};
-            border-bottom-left-radius: 14px;
-            border-bottom-right-radius: 14px;
+            border-bottom-left-radius: 12px;
+            border-bottom-right-radius: 12px;
         """)
         info_layout = QVBoxLayout(info_container)
         info_layout.setContentsMargins(10, 10, 10, 12)
@@ -156,45 +218,25 @@ class ItemButton(QFrame):
 
         
         # Stock Info
-        stock_label = QLabel(f"{stock_qty:g} {uom}")
-        stock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        stock_label.setStyleSheet(
+        self._uom = uom
+        self.stock_label = QLabel(f"{stock_qty:g} {uom}")
+        self.stock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.stock_label.setStyleSheet(
             f"color: {self.colors['text_tertiary']}; font-size: 11px; font-weight: bold; background: transparent; border: none;"
         )
-        
+
         info_layout.addWidget(name_label)
         info_layout.addWidget(price_label)
-        info_layout.addWidget(stock_label)
+        info_layout.addWidget(self.stock_label)
         layout.addWidget(info_container)
 
+    def set_stock_qty(self, qty: float):
+        """In-place update of the stock badge — no widget re-creation."""
+        try:
+            self.stock_label.setText(f"{float(qty):g} {self._uom}")
+        except Exception:
+            pass
 
-
-    def _apply_normal_style(self):
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: {self.colors['bg_secondary']};
-                border: 1px solid {self.colors['border']};
-                border-radius: 8px;
-            }}
-        """)
-
-    def _apply_hover_style(self):
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: {self.colors['bg_tertiary']};
-                border: 1px solid {self.colors['accent']};
-                border-radius: 8px;
-            }}
-        """)
-
-    def _apply_pressed_style(self):
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: {self.colors['selection_bg']};
-                border: 1px solid {self.colors['accent_hover']};
-                border-radius: 8px;
-            }}
-        """)
 
     def _set_pixmap(self, pixmap: QPixmap):
         """Yuklangan rasmni image_label'ga o'rnatish"""
@@ -232,21 +274,16 @@ class ItemButton(QFrame):
         super().resizeEvent(event)
 
     def enterEvent(self, event):
-        self._apply_hover_style()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._apply_normal_style()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._apply_pressed_style()
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self._apply_normal_style()
             self.clicked.emit()
         super().mouseReleaseEvent(event)
 
@@ -278,6 +315,8 @@ class ItemBrowser(QWidget):
         self.init_ui()
         self.load_categories()
         self.load_items()
+        # Search klaviaturasi tashqariga bosilganda avtomatik yopilishi uchun.
+        QApplication.instance().installEventFilter(self)
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -292,18 +331,42 @@ class ItemBrowser(QWidget):
 
         # Top row: Search input
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("🔍  Search Items...")
+        self.search_input.setPlaceholderText(tr("🔍  Search Items..."))
         self.search_input.setMinimumHeight(38)
         self.search_input.setMaximumHeight(52)
         self.search_input.setProperty("disable_virtual_keyboard", True)
         self.search_input.setStyleSheet(styles["item_search"])
+        self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self.filter_items)
         self.search_input.returnPressed.connect(lambda: self.submit_search(self.search_input.text()))
-        main_layout.addWidget(self.search_input)
+
+        # Skanersiz monoblokda nom bo'yicha qidirish uchun ekran klaviaturasi tugmasi.
+        self.search_kb_btn = QPushButton("⌨")
+        self.search_kb_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.search_kb_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.search_kb_btn.setFixedWidth(52)
+        self.search_kb_btn.setMinimumHeight(38)
+        self.search_kb_btn.setMaximumHeight(52)
+        self.search_kb_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
+                border: 1px solid {colors['border']}; border-radius: 10px; font-size: 20px;
+            }}
+            QPushButton:hover {{ background: {colors['bg_hover']}; color: {colors['accent']}; }}
+            QPushButton:pressed {{ background: {colors['accent']}; color: white; }}
+        """)
+        self.search_kb_btn.clicked.connect(self._toggle_search_keyboard)
+        self._search_kb = None
+
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+        search_row.addWidget(self.search_input, 1)
+        search_row.addWidget(self.search_kb_btn)
+        main_layout.addLayout(search_row)
         
         # Top Settings Header (optional visible mostly in List View context in UI, but we can show always)
         header_row = QHBoxLayout()
-        self.settings_btn = QPushButton("SETTINGS")
+        self.settings_btn = QPushButton(tr("SETTINGS"))
         self.settings_btn.setStyleSheet(
             f"color: {colors['accent']}; font-weight: bold; font-size: 11px; background: transparent; border: none; text-align: left;"
         )
@@ -312,7 +375,7 @@ class ItemBrowser(QWidget):
         self.sync_label = QLabel("Last sync: 00:00:00 PM")
         self.sync_label.setStyleSheet(f"color: {colors['text_tertiary']}; font-size: 11px;")
         self.sync_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.reload_btn = QPushButton("RELOAD ITEMS")
+        self.reload_btn = QPushButton(tr("RELOAD ITEMS"))
         self.reload_btn.setStyleSheet(
             f"color: {colors['accent']}; font-weight: bold; font-size: 11px; background: transparent; border: none; text-align: right;"
         )
@@ -344,7 +407,7 @@ class ItemBrowser(QWidget):
         # LIST VIEW
         self.items_table = QTableWidget()
         self.items_table.setColumnCount(4)
-        self.items_table.setHorizontalHeaderLabels(["NAME", "QTY", "RATE", "UOM"])
+        self.items_table.setHorizontalHeaderLabels([tr("NAME"), tr("QTY"), tr("RATE"), tr("UOM")])
         self.items_table.verticalHeader().setVisible(False)
         self.items_table.verticalHeader().setDefaultSectionSize(50)
         self.items_table.setShowGrid(False)
@@ -386,30 +449,21 @@ class ItemBrowser(QWidget):
         # Bottom Bar: View Toggles & Badges
         bottom_bar = QHBoxLayout()
         
-        self.btn_list_view = QPushButton("LIST")
+        self.btn_list_view = QPushButton(tr("LIST"))
         self.btn_list_view.setMinimumHeight(34)
         self.btn_list_view.setMaximumHeight(44)
         self.btn_list_view.clicked.connect(lambda: self.set_view_mode("list"))
         
-        self.btn_card_view = QPushButton("CARD")
+        self.btn_card_view = QPushButton(tr("CARD"))
         self.btn_card_view.setMinimumHeight(34)
         self.btn_card_view.setMaximumHeight(44)
         self.btn_card_view.clicked.connect(lambda: self.set_view_mode("card"))
         
         self._update_toggle_styles()
-        
-        self.offers_label = QLabel("0 OFFERS")
-        self.offers_label.setStyleSheet(f"color: {colors['warning']}; font-weight: bold; font-size: 11px;")
-        self.coupons_label = QLabel("0 COUPONS")
-        self.coupons_label.setStyleSheet(f"color: {colors['accent']}; font-weight: bold; font-size: 11px;")
-        
+
         bottom_bar.addWidget(self.btn_list_view)
         bottom_bar.addWidget(self.btn_card_view)
         bottom_bar.addStretch()
-        bottom_bar.addWidget(self.offers_label)
-        bottom_bar.addSpacing(30)
-        bottom_bar.addWidget(self.coupons_label)
-        bottom_bar.addSpacing(10)
 
         main_layout.addLayout(bottom_bar)
 
@@ -475,10 +529,6 @@ class ItemBrowser(QWidget):
             )
         if hasattr(self, "items_table"):
             self.items_table.setStyleSheet(self._items_table_style())
-        if hasattr(self, "offers_label"):
-            self.offers_label.setStyleSheet(f"color: {colors['warning']}; font-weight: bold; font-size: 11px;")
-        if hasattr(self, "coupons_label"):
-            self.coupons_label.setStyleSheet(f"color: {colors['accent']}; font-weight: bold; font-size: 11px;")
 
         self._update_toggle_styles()
 
@@ -532,7 +582,7 @@ class ItemBrowser(QWidget):
             is_stock = bool(p_data.get("is_stock_item", 1))
             if is_stock and not allow_negative and st_qty <= 0:
                 SoundFeedback.error()
-                InfoDialog(self, "Xatolik", f"{name} omborda qolmagan!", kind="warning").exec()
+                InfoDialog(self, tr("Xatolik"), f"{name} omborda qolmagan!", kind="warning").exec()
                 return
         self.item_selected.emit(code, name, rate, currency)
 
@@ -553,7 +603,65 @@ class ItemBrowser(QWidget):
             return
 
         self.reserved_quantities = normalized
-        self.load_items(self.search_input.text())
+        self._refresh_badges_in_place()
+
+    def _refresh_badges_in_place(self):
+        """Update stock badges on existing cards/rows without rebuilding the grid.
+
+        Falls back to a full `load_items` only when the displayed item set
+        could change (e.g. `hide_zero_stock` would hide newly-zero items).
+        """
+        from PyQt6.QtWidgets import QTableWidgetItem
+        hide_zero = bool(self.settings.get("hide_zero_stock", {}).get("value"))
+
+        needs_full_reload = False
+
+        # 1. Grid view: walk existing ItemButton widgets.
+        for i in range(self.items_grid.count()):
+            w = self.items_grid.itemAt(i).widget() if self.items_grid.itemAt(i) else None
+            if not isinstance(w, ItemButton):
+                continue
+            actual = self._actual_qty_for_code(w.item_code)
+            effective = self._get_effective_stock_qty(w.item_code, actual)
+            if hide_zero and effective <= 0:
+                needs_full_reload = True
+                break
+            display = int(effective) if self.settings["hide_decimals"]["value"] else effective
+            w.set_stock_qty(display)
+
+        # 2. Table view (List mode): update qty column.
+        if not needs_full_reload and hasattr(self, "items_table"):
+            for row in range(self.items_table.rowCount()):
+                name_item = self.items_table.item(row, 0)
+                if name_item is None:
+                    continue
+                code = name_item.data(Qt.ItemDataRole.UserRole)
+                if not code:
+                    continue
+                actual = self._actual_qty_for_code(code)
+                effective = self._get_effective_stock_qty(code, actual)
+                if hide_zero and effective <= 0:
+                    needs_full_reload = True
+                    break
+                display = int(effective) if self.settings["hide_decimals"]["value"] else effective
+                self.items_table.setItem(row, 1, QTableWidgetItem(f"{display:g}"))
+
+        if needs_full_reload:
+            self.load_items(self.search_input.text())
+
+    def _actual_qty_for_code(self, item_code: str) -> float:
+        """Lookup the cached `actual_qty` for an item without re-reading the DB."""
+        try:
+            db.connect(reuse_if_open=True)
+            row = Item.get_or_none(Item.item_code == item_code)
+            if not row or not row.posawesome_data:
+                return 0.0
+            return float(json.loads(row.posawesome_data).get("actual_qty", 0) or 0)
+        except Exception:
+            return 0.0
+        finally:
+            if not db.is_closed():
+                db.close()
 
     def _get_effective_stock_qty(self, item_code: str, actual_qty: float) -> float:
         reserved_qty = float(self.reserved_quantities.get(item_code, 0) or 0)
@@ -585,7 +693,7 @@ class ItemBrowser(QWidget):
         # Yuqori qator: yozilgan matn + yopish tugmasi
         top_row = QHBoxLayout()
 
-        self.kb_display = QLabel("Qidiruv...")
+        self.kb_display = QLabel(tr("Qidiruv..."))
         self.kb_display.setStyleSheet(f"""
             font-size: 16px;
             font-weight: 600;
@@ -710,7 +818,7 @@ class ItemBrowser(QWidget):
         try:
             db.connect(reuse_if_open=True)
             cats = [r.item_group for row in Item.select(Item.item_group).distinct() if (r := row).item_group]
-            self._add_cat_btn("Barchasi", True)
+            self._add_cat_btn(tr("Barchasi"), True)
             for c in sorted(cats):
                 self._add_cat_btn(c)
         finally:
@@ -752,7 +860,7 @@ class ItemBrowser(QWidget):
         
         if is_stock and not allow_negative and st_qty <= 0:
             SoundFeedback.error()
-            InfoDialog(self, "Xatolik", f"{item.item_name} omborda qolmagan (0 qt)!", kind="warning").exec()
+            InfoDialog(self, tr("Xatolik"), f"{item.item_name} omborda qolmagan (0 qt)!", kind="warning").exec()
             return
             
         self.item_selected.emit(item.item_code, item.item_name, float(price), currency)
@@ -861,19 +969,30 @@ class ItemBrowser(QWidget):
         normalized = str(search or "").strip()
         if not normalized:
             return None, None
+        
         scale_data = self._parse_scale_barcode_local(normalized)
         target_code = str(scale_data.get("item_code") if scale_data else normalized).strip()
+        
         try:
             db.connect(reuse_if_open=True)
+            
+            # 1. Global qidiruv (item_code bo'yicha)
+            item = Item.select().where(fn.LOWER(Item.item_code) == target_code.lower()).first()
+            if item:
+                return item, scale_data
+            
+            # 2. Global qidiruv (barcode bo'yicha)
+            item = Item.select().where(fn.LOWER(Item.barcode) == normalized.lower()).first()
+            if item:
+                return item, scale_data
+                
+            # 3. JSON barcodelarni tekshirish (sekinroq, lekin kerak)
             query = Item.select()
-            if self.current_category:
-                query = query.where(Item.item_group == self.current_category)
             for item in query:
-                if item.item_code == target_code:
-                    return item, scale_data
                 barcodes = self._extract_item_barcodes(item)
-                if normalized in barcodes:
+                if any(normalized.lower() == b.lower() for b in barcodes):
                     return item, scale_data
+                    
             return None, scale_data
         finally:
             if not db.is_closed():
@@ -906,32 +1025,62 @@ class ItemBrowser(QWidget):
             logger.debug("Barcode server resolve xatosi: %s", e)
             return None
 
-    def submit_search(self, search: str):
+    def submit_search(self, search: str, add_to_cart: bool = True):
         search = str(search or "").strip()
         if not search:
             return
 
-        item, scale_data = self._find_local_item_for_search(search)
-        if item:
-            price, currency = self._resolve_display_price(item)
-            payload = {
-                "item_code": item.item_code,
-                "item_name": item.item_name,
-                "rate": scale_data.get("price") if scale_data and scale_data.get("price") is not None else price,
-                "currency": currency,
-                "qty": scale_data.get("qty") if scale_data and scale_data.get("qty") is not None else 1,
-                "manual_rate": bool(scale_data and scale_data.get("price") is not None),
-            }
+        if add_to_cart:
+            item, scale_data = self._find_local_item_for_search(search)
+            if item:
+                price, currency = self._resolve_display_price(item)
+                payload = {
+                    "item_code": item.item_code,
+                    "item_name": item.item_name,
+                    "rate": scale_data.get("price") if scale_data and scale_data.get("price") is not None else price,
+                    "currency": currency,
+                    "qty": scale_data.get("qty") if scale_data and scale_data.get("qty") is not None else 1,
+                    "manual_rate": bool(scale_data and scale_data.get("price") is not None),
+                }
+                # MUHIM: emit'dan oldin tozalaymiz — chunki signal sinxron
+                # ketma-ketlikda cart_updated -> set_reserved_quantities ->
+                # load_items(search_input.text()) zanjirini ishga tushiradi.
+                self.set_search_text("", trigger=False)
+                self.search_resolved.emit(payload)
+                return
+
+            # Lokal bazada topilmadi — serverdan online so'raymiz, lekin GUI
+            # muzlamasligi uchun background thread'da.
+            self._start_online_barcode_lookup(search)
+            return
+
+        # Filter only mode (add_to_cart=False)
+        self.load_items(search)
+        if self.items_table.rowCount() == 0 and self.items_grid.count() == 0:
+            SoundFeedback.error()
+
+    def _start_online_barcode_lookup(self, search: str):
+        """Resolve a barcode via the server without blocking the GUI."""
+        existing = getattr(self, "_online_lookup_worker", None)
+        if existing is not None and existing.isRunning():
+            return  # avvalgi so'rov hali tugamagan
+
+        worker = _OnlineBarcodeLookupWorker(
+            self.api,
+            barcode=search,
+            price_list=self.current_price_list or load_config().get("price_list") or "Standard Selling",
+            currency=load_config().get("currency") or "UZS",
+        )
+        self._online_lookup_worker = worker
+        worker.finished_signal.connect(self._on_online_barcode_resolved)
+        worker.start()
+
+    def _on_online_barcode_resolved(self, search: str, payload: dict | None):
+        if payload:
+            self.set_search_text("", trigger=False)
             self.search_resolved.emit(payload)
-            self.set_search_text("", trigger=True)
             return
-
-        online_payload = self._resolve_online_barcode(search)
-        if online_payload:
-            self.search_resolved.emit(online_payload)
-            self.set_search_text("", trigger=True)
-            return
-
+        # Topilmadi — tovushli signal + lokal qidiruvni ko'rsatamiz
         self.load_items(search)
         if self.items_table.rowCount() == 0 and self.items_grid.count() == 0:
             SoundFeedback.error()
@@ -939,7 +1088,7 @@ class ItemBrowser(QWidget):
 
     def open_settings(self):
         from ui.components.dialogs import SettingsDialog
-        dlg = SettingsDialog(self, "Jadvallar Sozlanmalari", self.settings)
+        dlg = SettingsDialog(self, tr("Jadvallar Sozlanmalari"), self.settings)
         if dlg.exec():
             res = dlg.get_results()
             for k in res:
@@ -984,6 +1133,9 @@ class ItemBrowser(QWidget):
         if hasattr(self, 'items_table'):
             self.items_table.setRowCount(0)
 
+        # Grid sozlamalarini qat'iylashtirish
+        self.items_grid.setSpacing(15)
+        
         columns = self._calc_grid_columns()
         self._last_columns = columns
 
@@ -993,8 +1145,12 @@ class ItemBrowser(QWidget):
         try:
             db.connect(reuse_if_open=True)
             query = Item.select()
-            if self.current_category:
+            
+            # Agar qidiruv bo'lsa - hamma kategoriyadan qidiramiz (Global search)
+            # Agar qidiruv bo'masa - tanlangan kategoriya bo'yicha filtrlaymiz
+            if self.current_category and not search:
                 query = query.where(Item.item_group == self.current_category)
+                
             items_iter = query if search else query.limit(ITEM_LOAD_LIMIT)
 
             row, col = 0, 0
@@ -1029,8 +1185,8 @@ class ItemBrowser(QWidget):
                 if col >= columns:
                     col = 0
                     row += 1
-                    
-                # 2. Update Table (List View)
+
+                # 2. Update Table (List View) — same iteration
                 if hasattr(self, 'items_table'):
                     self.items_table.insertRow(table_row)
                     
@@ -1066,3 +1222,68 @@ class ItemBrowser(QWidget):
 
     def filter_items(self, t):
         self.load_items(t)
+
+    def _toggle_search_keyboard(self):
+        """Qidiruv maydoni uchun ekran klaviaturasini ochadi/yopadi.
+
+        Mahsulot qidiruvida avtomatik klaviatura o'chirilgan (skaner uchun),
+        shu sababli bu tugma orqali qo'lda ochiladi. Yozilgan harf darhol
+        search_input ga tushib, ro'yxatni filtrlaydi.
+        """
+        kb = self._search_kb
+        if kb is not None:
+            try:
+                if kb.isVisible():
+                    kb.hide()
+                    return
+            except RuntimeError:
+                self._search_kb = None
+                kb = None
+        if kb is None:
+            kb = TouchKeyboard(
+                self.window(),
+                initial_text=self.search_input.text(),
+                title=tr("Mahsulot qidirish"),
+                is_numeric=False,
+            )
+            kb.text_changed.connect(self.search_input.setText)
+            self._search_kb = kb
+        else:
+            kb.set_target(self.search_input.text(), tr("Mahsulot qidirish"))
+        kb.show()
+        kb.raise_()
+
+    def eventFilter(self, obj, event):
+        """Search klaviaturasi tashqariga bosilganda avtomatik yopiladi."""
+        try:
+            from PyQt6.QtCore import QEvent
+            if event.type() == QEvent.Type.MouseButtonPress:
+                self._maybe_close_search_kb(obj)
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
+
+    def _maybe_close_search_kb(self, obj):
+        kb = getattr(self, "_search_kb", None)
+        if kb is None:
+            return
+        try:
+            if not kb.isVisible():
+                return
+            # Klaviaturaning o'zini bossa — yopmaymiz (yozish davom etadi).
+            if obj is kb or kb.isAncestorOf(obj):
+                return
+        except RuntimeError:
+            self._search_kb = None
+            return
+        # Qidiruv maydoni yoki ⌨ tugmasini bossa — yopmaymiz.
+        si = getattr(self, "search_input", None)
+        btn = getattr(self, "search_kb_btn", None)
+        if obj is si or obj is btn:
+            return
+        try:
+            if si is not None and si.isAncestorOf(obj):
+                return
+        except Exception:
+            pass
+        kb.hide()

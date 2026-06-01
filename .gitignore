@@ -35,6 +35,8 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# Build uchun pos.spec kerak — saqlaymiz:
+!pos.spec
 
 # Installer logs
 pip-log.txt
@@ -196,3 +198,10 @@ pyrightconfig.json
 *.db-shm
 *.db-wal
 database/pos.db
+
+# Merge / backup leftovers
+*.orig
+*.rej
+*.bak
+database/pos.db
+database/*.db

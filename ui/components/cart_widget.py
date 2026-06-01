@@ -18,6 +18,7 @@ from ui.components.dialogs import InfoDialog
 from ui.component_styles import get_component_styles
 from ui.theme_manager import ThemeManager
 import json
+from core.i18n import tr
 
 logger = get_logger(__name__)
 
@@ -33,8 +34,6 @@ class CartWidget(QWidget):
     checkout_requested = pyqtSignal(dict)
     price_list_changed = pyqtSignal(str)
     cart_updated = pyqtSignal(dict)
-    item_search_changed = pyqtSignal(str)
-    item_search_submitted = pyqtSignal(str)
 
     def __init__(self, api: FrappeAPI | None = None):
         super().__init__()
@@ -91,15 +90,19 @@ class CartWidget(QWidget):
         # Customer Search
         customer_vbox = QVBoxLayout()
         customer_vbox.setSpacing(2)
-        cust_label = QLabel("Customer search")
+        cust_label = QLabel(tr("Customer search"))
         cust_label.setStyleSheet(styles["cart_label"])
         
         self.customer_input = QLineEdit()
-        self.customer_input.setPlaceholderText("Guest Customer")
+        self.customer_input.setPlaceholderText(tr("Guest Customer"))
         self.customer_input.installEventFilter(self)
+        # Customer-name yozayotganda HID skaner filtri tugmalarni ushlab qolmasin.
+        self.customer_input.setProperty("disable_barcode_capture", True)
         self.customer_input.setFixedHeight(40)
         self.customer_input.setStyleSheet(styles["cart_input"])
-        self.customer_input.textEdited.connect(self._on_customer_search_edited)
+        # textChanged (textEdited emas) — ekran klaviaturasi matnni setText()
+        # orqali yuboradi, u faqat textChanged ni chiqaradi.
+        self.customer_input.textChanged.connect(self._on_customer_search_edited)
         self.customer_input.returnPressed.connect(self._commit_customer_search)
         customer_row = QHBoxLayout()
         customer_row.setSpacing(6)
@@ -108,7 +111,7 @@ class CartWidget(QWidget):
         self.customer_clear_btn = QPushButton("✕")
         self.customer_clear_btn.setFixedSize(36, 36)
         self.customer_clear_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.customer_clear_btn.setToolTip("Customer tanlovini tozalash")
+        self.customer_clear_btn.setToolTip(tr("Customer tanlovini tozalash"))
         self.customer_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.customer_clear_btn.setStyleSheet(f"""
             QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['error']}; border: 1.5px solid {colors['error']}; border-radius: 8px; font-weight: 800; font-size: 14px; padding: 0; }}
@@ -121,7 +124,7 @@ class CartWidget(QWidget):
         self.customer_add_btn = QPushButton("+")
         self.customer_add_btn.setFixedSize(36, 36)
         self.customer_add_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.customer_add_btn.setToolTip("Yangi customer qo'shish")
+        self.customer_add_btn.setToolTip(tr("Yangi customer qo'shish"))
         self.customer_add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.customer_add_btn.setStyleSheet(f"""
             QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['accent']}; border: 1.5px solid {colors['accent']}; border-radius: 8px; font-weight: 800; font-size: 16px; padding: 0; }}
@@ -144,7 +147,7 @@ class CartWidget(QWidget):
         # Customer Group
         cg_vbox = QVBoxLayout()
         cg_vbox.setSpacing(2)
-        cg_label = QLabel("Customer Group")
+        cg_label = QLabel(tr("Customer Group"))
         cg_label.setStyleSheet(styles["cart_label"])
         self.cg_mock = QComboBox()
         self.cg_mock.setFixedHeight(40)
@@ -158,18 +161,12 @@ class CartWidget(QWidget):
         
         main_layout.addLayout(top_bar)
 
-        # --- Search & Price List ---
+        # --- Price List bar (cart search input removed — chap tomondagi qidiruv yetarli) ---
         search_bar = QHBoxLayout()
-        self.search_item_input = QLineEdit()
-        self.search_item_input.setPlaceholderText("Search items or barcode...")
-        self.search_item_input.setFixedHeight(40)
-        self.search_item_input.setStyleSheet(styles["cart_input"])
-        self.search_item_input.textChanged.connect(self.item_search_changed.emit)
-        self.search_item_input.returnPressed.connect(lambda: self.item_search_submitted.emit(self.search_item_input.text()))
-        
+
         pl_vbox = QVBoxLayout()
         pl_vbox.setSpacing(2)
-        pl_label = QLabel("Price List")
+        pl_label = QLabel(tr("Price List"))
         pl_label.setStyleSheet(styles["cart_label"])
         self.price_list_combo = QComboBox()
         self.price_list_combo.setFixedHeight(40)
@@ -177,15 +174,17 @@ class CartWidget(QWidget):
         pl_vbox.addWidget(pl_label)
         pl_vbox.addWidget(self.price_list_combo)
         self.price_list_combo.currentTextChanged.connect(self._on_pl_changed)
-        
-        self.columns_btn = QPushButton("COLUMNS")
+
+        self.columns_btn = QPushButton(tr("COLUMNS"))
         self.columns_btn.setStyleSheet(
             f"color: {colors['accent']}; font-weight: bold; font-size: 12px; margin-top: 15px; margin-left: 10px;"
         )
         self.columns_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.columns_btn.clicked.connect(self.open_columns_settings)
-        
-        search_bar.addWidget(self.search_item_input, 3)
+
+        # Eski search-input egallagan joy bo'sh qoladi — price list combo
+        # asl ensiz o'lchamida qolsin uchun stretch qo'yamiz.
+        search_bar.addStretch(3)
         search_bar.addLayout(pl_vbox, 1)
         search_bar.addWidget(self.columns_btn)
         main_layout.addLayout(search_bar)
@@ -193,7 +192,7 @@ class CartWidget(QWidget):
         # ── Table ────────────────
         self.table = QTableWidget()
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["NAME", "QTY", "RATE", "AMOUNT"])
+        self.table.setHorizontalHeaderLabels([tr("NAME"), tr("QTY"), tr("RATE"), tr("AMOUNT")])
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -207,8 +206,11 @@ class CartWidget(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         
-        # Make row height dynamic based on content
+        # Make row height dynamic based on content, but never tighter than
+        # the cell widgets (qty input ~32px, rate/amount ~34px) + nafas joyi.
+        # Aks holda widget'larning yumaloq chegarasi pastdan kesilib qoladi.
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setMinimumSectionSize(48)
         self.table.setWordWrap(True)
         self.table.setStyleSheet(styles["cart_table"])
 
@@ -250,7 +252,7 @@ class CartWidget(QWidget):
         
         t_vbox = QVBoxLayout()
         t_vbox.setSpacing(4)
-        t_lbl = QLabel("Total")
+        t_lbl = QLabel(tr("Total"))
         t_lbl.setStyleSheet(
             f"color: {colors['text_tertiary']}; font-size: 12px; font-weight: 600; letter-spacing: 0.5px;"
         )
@@ -264,7 +266,7 @@ class CartWidget(QWidget):
         t_vbox.addWidget(t_lbl)
         t_vbox.addWidget(self.total_label)
         
-        self.checkout_btn = QPushButton("PAY")
+        self.checkout_btn = QPushButton(tr("PAY"))
         self.checkout_btn.setFixedHeight(56)
         self.checkout_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.checkout_btn.setStyleSheet(f"""
@@ -292,10 +294,10 @@ class CartWidget(QWidget):
         row2 = QHBoxLayout()
         row2.setSpacing(10)
         
-        row2.addLayout(_stat_box("Total Qty", "total_qty_label"))
-        row2.addLayout(_stat_box("Items Discounts", "discounts_label"))
+        row2.addLayout(_stat_box(tr("Total Qty"), "total_qty_label"))
+        row2.addLayout(_stat_box(tr("Items Discounts"), "discounts_label"))
         
-        self.cancel_btn = QPushButton("CANCEL SALE")
+        self.cancel_btn = QPushButton(tr("CANCEL SALE"))
         self.cancel_btn.setFixedHeight(44)
         self.cancel_btn.setStyleSheet(f"""
             QPushButton {{
@@ -384,7 +386,7 @@ class CartWidget(QWidget):
 
     def _make_numpad_key(self, key):
         colors = ThemeManager.get_theme_colors()
-        label = 'TOZALASH' if key == 'CLR' else key
+        label = tr('TOZALASH') if key == 'CLR' else key
         btn = QPushButton(label)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn.setFixedHeight(52)
@@ -442,7 +444,7 @@ class CartWidget(QWidget):
 
         # Display + close
         top = QHBoxLayout()
-        self.kb_display = QLabel("Izoh...")
+        self.kb_display = QLabel(tr("Izoh..."))
         self.kb_display.setFixedHeight(38)
         self.kb_display.setStyleSheet(f"""
             font-size: 15px; font-weight: 600; color: {colors['text_secondary']};
@@ -480,7 +482,7 @@ class CartWidget(QWidget):
 
     def _make_kb_key(self, key):
         colors = ThemeManager.get_theme_colors()
-        label = '␣' if key == 'SPACE' else ('TOZALASH' if key == 'CLR' else key)
+        label = '␣' if key == 'SPACE' else (tr('TOZALASH') if key == 'CLR' else key)
         btn = QPushButton(label)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn.setFixedHeight(40)
@@ -580,8 +582,8 @@ class CartWidget(QWidget):
             QLineEdit:focus, QComboBox:focus {{
                 border-color: {colors['accent']};
             }}
-            QComboBox::drop-down { border: none; }
-            QComboBox::down-arrow { width: 14px; height: 14px; }
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox::down-arrow {{ width: 14px; height: 14px; }}
         """
 
     def apply_theme(self):
@@ -597,14 +599,24 @@ class CartWidget(QWidget):
             self.customer_results.setStyleSheet(styles["cart_list"])
         if hasattr(self, "cg_mock"):
             self.cg_mock.setStyleSheet(styles["cart_combo"])
-        if hasattr(self, "search_item_input"):
-            self.search_item_input.setStyleSheet(styles["cart_input"])
         if hasattr(self, "price_list_combo"):
             self.price_list_combo.setStyleSheet(styles["cart_combo"])
+        # Customer ✕ va + tugmalari init_ui da maxsus rangli (qizil/ko'k)
+        # stillangan.  Umumiy cart_button stil ularning rangini "yutib"
+        # yuboradi, shu sababli theme almashinuvida ham original inline stilni
+        # ranglar yangilanishi bilan qayta qo'llaymiz.
         if hasattr(self, "customer_clear_btn"):
-            self.customer_clear_btn.setStyleSheet(styles["cart_button"])
+            self.customer_clear_btn.setStyleSheet(f"""
+                QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['error']}; border: 1.5px solid {colors['error']}; border-radius: 8px; font-weight: 800; font-size: 14px; padding: 0; }}
+                QPushButton:hover {{ background: {colors.get('error_bg', colors['bg_tertiary'])}; }}
+                QPushButton:pressed {{ background: {colors['error']}; color: white; }}
+            """)
         if hasattr(self, "customer_add_btn"):
-            self.customer_add_btn.setStyleSheet(styles["cart_button"])
+            self.customer_add_btn.setStyleSheet(f"""
+                QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['accent']}; border: 1.5px solid {colors['accent']}; border-radius: 8px; font-weight: 800; font-size: 16px; padding: 0; }}
+                QPushButton:hover {{ background: {colors.get('accent_light', colors['bg_tertiary'])}; }}
+                QPushButton:pressed {{ background: {colors['accent']}; color: white; }}
+            """)
         if hasattr(self, "columns_btn"):
             self.columns_btn.setStyleSheet(
                 f"color: {colors['accent']}; font-weight: bold; font-size: 12px; margin-top: 15px; margin-left: 10px;"
@@ -821,7 +833,23 @@ class CartWidget(QWidget):
             selected_customer = (self.get_selected_customer_name() or "").strip()
             if default_customer and current_text == default_customer and selected_customer == default_customer:
                 QTimer.singleShot(0, obj.selectAll)
+            self._show_customer_popup()
+        if obj is self.customer_input and event.type() == QEvent.Type.MouseButtonPress:
+            # Maydon allaqachon fokusda bo'lsa FocusIn ishlamaydi — bosishda ham
+            # mijozlar ro'yxatini ochamiz.
+            QTimer.singleShot(0, self._show_customer_popup)
         return super().eventFilter(obj, event)
+
+    def _show_customer_popup(self):
+        """Customer maydoni bos/fokuslanganda mijozlar ro'yxatini ochadi.
+
+        Mijoz tanlangan bo'lsa — qayta tanlash uchun guruh bo'yicha to'liq
+        ro'yxat, aks holda yozilgan matn bo'yicha filtrlangan ro'yxat.
+        """
+        if self._selected_customer:
+            self._apply_customer_filters(typed_text="", show_popup=True)
+        else:
+            self._apply_customer_filters(show_popup=True)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -887,6 +915,22 @@ class CartWidget(QWidget):
             payload.setdefault("stock_uom", item.stock_uom)
             payload.setdefault("image", item.image)
             payload.setdefault("is_stock_item", int(bool(item.is_stock_item)))
+            
+            # Barcodelarni yig'ish
+            barcodes = []
+            if item.barcode:
+                barcodes.append(str(item.barcode).strip().lower())
+            
+            # JSON ichidagi barcodelar
+            for row in payload.get("item_barcode") or []:
+                if isinstance(row, dict) and row.get("barcode"):
+                    barcodes.append(str(row.get("barcode")).strip().lower())
+            for row in payload.get("barcodes") or []:
+                if row:
+                    barcodes.append(str(row).strip().lower())
+            
+            payload["all_barcodes"] = list(set(barcodes))
+            
             self._item_meta_cache[item_code] = payload
             return dict(payload)
         except Exception as e:
@@ -966,7 +1010,7 @@ class CartWidget(QWidget):
             left_qty = max(actual_qty - self._flt(self.items.get(item_code, {}).get("qty"), 0.0), 0.0)
             InfoDialog(
                 self,
-                "Xatolik",
+                tr("Xatolik"),
                 f"{item_name} uchun yetarli qoldiq yo'q.\nMavjud: {actual_qty:g}\nQolgan: {left_qty:g}",
                 kind="warning",
             ).exec()
@@ -1247,7 +1291,9 @@ class CartWidget(QWidget):
                 if matched:
                     self._select_customer_row(matched)
                 else:
+                    self.customer_input.blockSignals(True)
                     self.customer_input.setText(default_customer)
+                    self.customer_input.blockSignals(False)
             self._render_customer_results([])
         except Exception as e:
             logger.debug("Mijozlar yuklanmadi: %s", e)
@@ -1295,7 +1341,7 @@ class CartWidget(QWidget):
         current_value = self.cg_mock.currentData()
         self.cg_mock.blockSignals(True)
         self.cg_mock.clear()
-        self.cg_mock.addItem("All Groups", "all")
+        self.cg_mock.addItem(tr("All Groups"), "all")
         for group in sorted(groups):
             self.cg_mock.addItem(group, group)
 
@@ -1365,17 +1411,17 @@ class CartWidget(QWidget):
 
     def _open_add_customer_form(self):
         if not self.api or not self.api.is_configured():
-            InfoDialog(self, "Xatolik", "Customer qo'shish uchun serverga ulanish kerak.", kind="error").exec()
+            InfoDialog(self, tr("Xatolik"), tr("Customer qo'shish uchun serverga ulanish kerak."), kind="error").exec()
             return
 
         company = (load_config().get("company") or "").strip()
         if not company:
-            InfoDialog(self, "Xatolik", "Company topilmadi. Avval sinxronizatsiya qiling.", kind="error").exec()
+            InfoDialog(self, tr("Xatolik"), tr("Company topilmadi. Avval sinxronizatsiya qiling."), kind="error").exec()
             return
 
         colors = ThemeManager.get_theme_colors()
         dlg = QDialog(self)
-        dlg.setWindowTitle("Yangi Customer")
+        dlg.setWindowTitle(tr("Yangi Customer"))
         dlg.setModal(True)
         dlg.setMinimumWidth(420)
         dlg.setStyleSheet(f"background: {colors['bg_primary']}; color: {colors['text_primary']};")
@@ -1384,7 +1430,7 @@ class CartWidget(QWidget):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
 
-        title = QLabel("Yangi customer qo'shish")
+        title = QLabel(tr("Yangi customer qo'shish"))
         title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
         layout.addWidget(title)
 
@@ -1392,11 +1438,11 @@ class CartWidget(QWidget):
         company_info.setStyleSheet(f"font-size: 12px; color: {colors['text_secondary']};")
         layout.addWidget(company_info)
 
-        customer_type_info = QLabel("Customer Type: Company")
+        customer_type_info = QLabel(tr("Customer Type: Company"))
         customer_type_info.setStyleSheet(f"font-size: 12px; color: {colors['text_secondary']};")
         layout.addWidget(customer_type_info)
 
-        cg_label = QLabel("Customer Group")
+        cg_label = QLabel(tr("Customer Group"))
         cg_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {colors['text_secondary']};")
         layout.addWidget(cg_label)
 
@@ -1416,22 +1462,22 @@ class CartWidget(QWidget):
                     break
         layout.addWidget(cg_combo)
 
-        name_label = QLabel("Customer name")
+        name_label = QLabel(tr("Customer name"))
         name_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {colors['text_secondary']};")
         layout.addWidget(name_label)
 
         name_input = QLineEdit()
-        name_input.setPlaceholderText("Masalan: ABC Trade")
+        name_input.setPlaceholderText(tr("Masalan: ABC Trade"))
         name_input.setFixedHeight(40)
         name_input.setStyleSheet(get_component_styles()["cart_input"])
         layout.addWidget(name_input)
 
-        phone_label = QLabel("Phone number")
+        phone_label = QLabel(tr("Phone number"))
         phone_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {colors['text_secondary']};")
         layout.addWidget(phone_label)
 
         phone_input = QLineEdit()
-        phone_input.setPlaceholderText("Masalan: +998901234567")
+        phone_input.setPlaceholderText(tr("Masalan: +998901234567"))
         phone_input.setFixedHeight(40)
         phone_input.setStyleSheet(get_component_styles()["cart_input"])
         layout.addWidget(phone_input)
@@ -1439,12 +1485,12 @@ class CartWidget(QWidget):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
-        cancel_btn = QPushButton("Bekor qilish")
+        cancel_btn = QPushButton(tr("Bekor qilish"))
         cancel_btn.setMinimumHeight(38)
         cancel_btn.setStyleSheet(get_component_styles()["cart_button"])
         cancel_btn.clicked.connect(dlg.reject)
 
-        save_btn = QPushButton("Qo'shish")
+        save_btn = QPushButton(tr("Qo'shish"))
         save_btn.setMinimumHeight(38)
         save_btn.setStyleSheet(f"""
             QPushButton {{
@@ -1469,7 +1515,7 @@ class CartWidget(QWidget):
 
         customer_name = name_input.text().strip()
         if not customer_name:
-            InfoDialog(self, "Xatolik", "Customer name bo'sh bo'lmasligi kerak.", kind="warning").exec()
+            InfoDialog(self, tr("Xatolik"), tr("Customer name bo'sh bo'lmasligi kerak."), kind="warning").exec()
             return
         phone_number = phone_input.text().strip()
 
@@ -1477,7 +1523,7 @@ class CartWidget(QWidget):
         if not customer_group:
             customer_group = self._resolve_new_customer_group()
         if not customer_group:
-            InfoDialog(self, "Xatolik", "Customer Group topilmadi.", kind="error").exec()
+            InfoDialog(self, tr("Xatolik"), tr("Customer Group topilmadi."), kind="error").exec()
             return
 
         territory = self._resolve_new_customer_territory()
@@ -1502,7 +1548,7 @@ class CartWidget(QWidget):
         if not success or not isinstance(response, dict):
             InfoDialog(
                 self,
-                "Xatolik",
+                tr("Xatolik"),
                 f"Customer qo'shib bo'lmadi: {response}",
                 kind="error",
             ).exec()
@@ -1566,7 +1612,7 @@ class CartWidget(QWidget):
         self.load_customers()
         self._apply_customer_filters(typed_text="", selected_name=customer_code, show_popup=False)
         self._reprice_cart()
-        InfoDialog(self, "Muvaffaqiyatli", f"Customer qo'shildi: {inserted_name}", kind="success").exec()
+        InfoDialog(self, tr("Muvaffaqiyatli"), f"Customer qo'shildi: {inserted_name}", kind="success").exec()
 
     def _resolve_new_customer_group(self) -> str:
         selected_group = self._get_selected_customer_group()
@@ -1807,12 +1853,9 @@ class CartWidget(QWidget):
         self._reprice_cart()
 
     def clear_item_search(self):
-        if not hasattr(self, "search_item_input"):
-            return
-        self.search_item_input.blockSignals(True)
-        self.search_item_input.clear()
-        self.search_item_input.blockSignals(False)
-        self.item_search_changed.emit("")
+        # Cart-search input olib tashlangan; backward-compatibility uchun
+        # metod qoladi va shunchaki jadvalni yangilaydi.
+        self.refresh_table()
 
     def get_selected_customer_name(self) -> str:
         if self._selected_customer:
@@ -1910,7 +1953,7 @@ class CartWidget(QWidget):
 
     def open_columns_settings(self):
         from ui.components.dialogs import SettingsDialog
-        dlg = SettingsDialog(self, "Ustunlar sozlanmasi", self.col_settings)
+        dlg = SettingsDialog(self, tr("Ustunlar sozlanmasi"), self.col_settings)
         if dlg.exec():
             res = dlg.get_results()
             for k in res:
@@ -1929,10 +1972,22 @@ class CartWidget(QWidget):
         self.net_total_amount = 0.0
         self.item_discount_total = 0.0
 
-        for row, (code, item) in enumerate(self.items.items()):
-            self.table.insertRow(row)
+        # Cart-search input olib tashlangan — barcha qatorlarni ko'rsatamiz.
+        current_table_row = 0
+        for code, item in self.items.items():
+            # AMOUNT & Calculations
+            qty = self._flt(item.get('qty'), 0)
+            price_list_rate = self._flt(item.get('price_list_rate'), self._flt(item.get('price')))
+            line_discount = self._flt(item.get('discount_amount'))
+            rate = self._flt(item.get('rate'), self._flt(item.get('price')))
+            amt = qty * rate
 
+            total_qty += qty
+            self.gross_total_amount += qty * price_list_rate
+            self.item_discount_total += qty * line_discount
+            self.net_total_amount += amt
 
+            self.table.insertRow(current_table_row)
 
             # QTY with +/-
             qty_widget = QWidget()
@@ -1951,11 +2006,11 @@ class CartWidget(QWidget):
             """)
             minus_btn.clicked.connect(lambda _, c=code: self.update_qty(c, -1))
             
-            qty_lbl = QLineEdit(f"{self._flt(item.get('qty'), 0.0):g}")
+            qty_lbl = QLineEdit(f"{qty:g}")
             qty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             qty_lbl.setFixedSize(52, 32)
             qty_lbl.setValidator(QDoubleValidator(0.0, 9999999999.0, 3))
-            qty_lbl.setProperty("disable_virtual_keyboard", True)
+            # Raqamli validatori borligi uchun avto-numpad chiqadi.
             qty_lbl.setStyleSheet(
                 f"font-weight: 900; font-size: 15px; color: {colors['text_primary']}; "
                 f"background:{colors['input_bg']}; border:1px solid {colors['border']}; border-radius:8px; padding:2px 6px;"
@@ -1978,7 +2033,7 @@ class CartWidget(QWidget):
             qty_layout.addWidget(plus_btn)
             qty_layout.addStretch()
             qty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setCellWidget(row, 1, qty_widget)
+            self.table.setCellWidget(current_table_row, 1, qty_widget)
 
             # RATE
             rate_value = self._flt(item.get('price'), 0)
@@ -1989,8 +2044,8 @@ class CartWidget(QWidget):
                 rate_lbl = QLineEdit(f"{rate_value:.0f}")
                 rate_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 rate_lbl.setValidator(QDoubleValidator(0.0, 9999999999.0, 2))
-                rate_lbl.setPlaceholderText("Rate")
-                rate_lbl.setToolTip("Rate ni shu joyda o'zgartiring")
+                rate_lbl.setPlaceholderText(tr("Rate"))
+                rate_lbl.setToolTip(tr("Rate ni shu joyda o'zgartiring"))
                 rate_lbl.editingFinished.connect(lambda c=code, w=rate_lbl: self._commit_inline_rate(c, w))
                 rate_lbl.setMinimumWidth(rate_width)
                 rate_lbl.setFixedHeight(34)
@@ -2014,14 +2069,9 @@ class CartWidget(QWidget):
             rate_layout.addWidget(rate_lbl)
             rate_layout.addStretch()
             rate_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setCellWidget(row, 2, rate_widget)
+            self.table.setCellWidget(current_table_row, 2, rate_widget)
 
             # AMOUNT
-            qty = self._flt(item.get('qty'), 0)
-            price_list_rate = self._flt(item.get('price_list_rate'), self._flt(item.get('price')))
-            line_discount = self._flt(item.get('discount_amount'))
-            rate = self._flt(item.get('rate'), self._flt(item.get('price')))
-            amt = qty * rate
             amount_text = f"UZS {amt:,.0f}"
             amount_width = max(120, rate_metrics.horizontalAdvance(amount_text) + 36)
             amt_lbl = QLabel(amount_text)
@@ -2039,7 +2089,7 @@ class CartWidget(QWidget):
             amount_layout.addWidget(amt_lbl)
             amount_layout.addStretch()
             amount_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setCellWidget(row, 3, amount_widget)
+            self.table.setCellWidget(current_table_row, 3, amount_widget)
 
             # Name with compact delete button
             name_widget = QWidget()
@@ -2064,12 +2114,9 @@ class CartWidget(QWidget):
             
             name_layout.addWidget(del_btn)
             name_layout.addWidget(name_lbl, 1)
-            self.table.setCellWidget(row, 0, name_widget)
-
-            total_qty += qty
-            self.gross_total_amount += qty * price_list_rate
-            self.item_discount_total += qty * line_discount
-            self.net_total_amount += amt
+            self.table.setCellWidget(current_table_row, 0, name_widget)
+            
+            current_table_row += 1
 
         invoice_discount = min(max(self.invoice_discount_amount, 0.0), max(self.net_total_amount, 0.0))
         self.invoice_discount_amount = invoice_discount
@@ -2141,7 +2188,7 @@ class CartWidget(QWidget):
 
     def handle_checkout(self):
         if not self.items:
-            InfoDialog(self, "Xatolik", "Savat bo'sh!", kind="warning").exec()
+            InfoDialog(self, tr("Xatolik"), tr("Savat bo'sh!"), kind="warning").exec()
             return
 
         ticket_number = self.ticket_input.text().strip()

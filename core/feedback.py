@@ -11,9 +11,13 @@ logger = get_logger(__name__)
 
 class SoundFeedback:
     _timers = []
+    # Ovozli feedback o'chirilgan. Qayta yoqish uchun True qiling.
+    enabled = False
 
     @classmethod
     def success(cls):
+        if not cls.enabled:
+            return
         if sys.platform == "win32":
             cls._play_windows_pattern([(1046, 70), (1318, 90)])
             return
@@ -21,6 +25,8 @@ class SoundFeedback:
 
     @classmethod
     def error(cls):
+        if not cls.enabled:
+            return
         if sys.platform == "win32":
             cls._play_windows_pattern([(220, 120), (180, 170)])
             return

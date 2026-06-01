@@ -29,6 +29,7 @@ from database.models import Customer, PosProfile, db
 from ui.components.dialogs import ClickableLineEdit
 from ui.component_styles import get_component_styles
 from ui.theme_manager import ThemeManager
+from core.i18n import tr
 
 logger = get_logger(__name__)
 
@@ -233,6 +234,31 @@ class AutoReconcileWorker(QThread):
             self.finished.emit(False, {}, str(e))
 
 
+class _PaymentMethodCurrenciesWorker(QThread):
+    """Fetch the per-mode-of-payment account currencies in a background thread."""
+
+    finished_signal = pyqtSignal(dict)
+
+    def __init__(self, api: FrappeAPI, company: str, mode_names: list):
+        super().__init__()
+        self.api = api
+        self.company = company
+        self.mode_names = list(mode_names)
+
+    def run(self):
+        try:
+            success, response = self.api.call_method(
+                "posawesome.posawesome.api.payment_entry.get_payment_methods_accounts",
+                {"company": self.company, "mode_of_payments": self.mode_names},
+            )
+            if success and isinstance(response, dict):
+                self.finished_signal.emit(response)
+                return
+        except Exception as e:
+            logger.debug("Payment method currency fetch xatosi: %s", e)
+        self.finished_signal.emit({})
+
+
 class PaymentsWindow(QDialog):
     payment_processed = pyqtSignal()
 
@@ -270,7 +296,7 @@ class PaymentsWindow(QDialog):
             self._load_dashboard()
 
     def _build_ui(self):
-        self.setWindowTitle("Klient Sverka va To'lovlar")
+        self.setWindowTitle(tr("Klient Sverka va To'lovlar"))
         self.resize(1520, 920)
         self.setModal(True)
         
@@ -290,7 +316,7 @@ class PaymentsWindow(QDialog):
         top_layout.setContentsMargins(16, 16, 16, 16)
         top_layout.setSpacing(12)
 
-        header = QLabel("Klient Sverka va Payment")
+        header = QLabel(tr("Klient Sverka va Payment"))
         header.setStyleSheet(styles["dialog_title"])
         top_layout.addWidget(header)
 
@@ -298,14 +324,17 @@ class PaymentsWindow(QDialog):
         controls.setSpacing(10)
 
         customer_box = QVBoxLayout()
-        customer_label = QLabel("Customer")
+        customer_label = QLabel(tr("Customer"))
         customer_label.setStyleSheet(styles["dialog_label"])
         self.customer_input = ClickableLineEdit()
-        self.customer_input.setPlaceholderText("Customer tanlang...")
-        self.customer_input.setFixedHeight(40)
+        self.customer_input.setPlaceholderText(tr("Customer tanlang..."))
+        self.customer_input.setFixedHeight(50)
         self.customer_input.setStyleSheet(styles["payment_input"])
-        self.customer_input.textEdited.connect(self._on_customer_search_edited)
+        # textChanged (textEdited emas) — chunki ekran klaviaturasi matnni
+        # setText() orqali yuboradi, u faqat textChanged ni chiqaradi.
+        self.customer_input.textChanged.connect(self._on_customer_search_edited)
         self.customer_input.returnPressed.connect(self._commit_customer_search)
+        self.customer_input.clicked.connect(self._show_customer_list)
         customer_box.addWidget(customer_label)
         customer_box.addWidget(self.customer_input)
 
@@ -314,6 +343,8 @@ class PaymentsWindow(QDialog):
         self.customer_results.setMaximumHeight(220)
         self.customer_results.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.customer_results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Element ustidagi fokus to'rtburchagini (punktir ramka) olib tashlaydi.
+        self.customer_results.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.customer_results.setStyleSheet(styles["cart_list"])
         self.customer_results.itemClicked.connect(self._on_customer_item_clicked)
         customer_box.addWidget(self.customer_results)
@@ -325,7 +356,7 @@ class PaymentsWindow(QDialog):
         self.customer_clear_btn.clicked.connect(self._clear_customer)
         controls.addWidget(self.customer_clear_btn, alignment=Qt.AlignmentFlag.AlignBottom)
 
-        self.search_btn = QPushButton("Search")
+        self.search_btn = QPushButton(tr("Search"))
         self.search_btn.setMinimumHeight(40)
         self.search_btn.setStyleSheet(f"""
             QPushButton {{
@@ -337,7 +368,7 @@ class PaymentsWindow(QDialog):
         self.search_btn.clicked.connect(self._load_dashboard)
         controls.addWidget(self.search_btn, alignment=Qt.AlignmentFlag.AlignBottom)
 
-        self.auto_reconcile_btn = QPushButton("Auto Reconcile")
+        self.auto_reconcile_btn = QPushButton(tr("Auto Reconcile"))
         self.auto_reconcile_btn.setMinimumHeight(40)
         self.auto_reconcile_btn.setVisible(self.allow_reconcile_payments)
         self.auto_reconcile_btn.setStyleSheet(f"""
@@ -355,11 +386,11 @@ class PaymentsWindow(QDialog):
 
         summary = QGridLayout()
         summary.setHorizontalSpacing(12)
-        self.final_balance_label = self._make_summary_box("Qoldiq", "danger")
-        self.outstanding_total_label = self._make_summary_box("Qarzdor Invoice", "warning")
-        self.selected_invoice_total_label = self._make_summary_box("FIFO Yopiladi", "info")
-        self.selected_payment_total_label = self._make_summary_box("Qoladi", "success")
-        self.new_payment_total_label = self._make_summary_box("Kiritilgan To'lov", "accent")
+        self.final_balance_label = self._make_summary_box(tr("Qoldiq"), "danger")
+        self.outstanding_total_label = self._make_summary_box(tr("Qarzdor Invoice"), "warning")
+        self.selected_invoice_total_label = self._make_summary_box(tr("FIFO Yopiladi"), "info")
+        self.selected_payment_total_label = self._make_summary_box(tr("Qoladi"), "success")
+        self.new_payment_total_label = self._make_summary_box(tr("Kiritilgan To'lov"), "accent")
         summary.addWidget(self.final_balance_label, 0, 0)
         summary.addWidget(self.outstanding_total_label, 0, 1)
         summary.addWidget(self.selected_invoice_total_label, 0, 2)
@@ -378,12 +409,12 @@ class PaymentsWindow(QDialog):
         left_layout = QVBoxLayout(left_card)
         left_layout.setContentsMargins(14, 14, 14, 14)
         left_layout.setSpacing(10)
-        left_title = QLabel("Klient Sverka")
+        left_title = QLabel(tr("Klient Sverka"))
         left_title.setStyleSheet(f"font-size: 16px; font-weight: 800; color: {colors['text_primary']};")
         left_layout.addWidget(left_title)
 
         self.sverka_table = self._build_table(
-            ["Sana", "Turi", "Hujjat", "Debit", "Credit", "Balance", "Status"],
+            [tr("Sana"), tr("Turi"), tr("Hujjat"), tr("Debit"), tr("Credit"), tr("Balance"), tr("Status")],
             stretch_columns={2},
         )
         left_layout.addWidget(self.sverka_table)
@@ -397,16 +428,16 @@ class PaymentsWindow(QDialog):
         right_layout.setContentsMargins(14, 14, 14, 14)
         right_layout.setSpacing(10)
 
-        outstanding_title = QLabel("Qarzdor Invoicelar")
+        outstanding_title = QLabel(tr("Qarzdor Invoicelar"))
         outstanding_title.setStyleSheet(f"font-size: 15px; font-weight: 800; color: {colors['text_primary']};")
         right_layout.addWidget(outstanding_title)
         self.outstanding_table = self._build_table(
-            ["Hujjat"],
+            [tr("Hujjat")],
             stretch_columns={0},
         )
         right_layout.addWidget(self.outstanding_table, 3)
 
-        payment_methods_title = QLabel("Yangi Payment")
+        payment_methods_title = QLabel(tr("Yangi Payment"))
         payment_methods_title.setStyleSheet(f"font-size: 15px; font-weight: 800; color: {colors['text_primary']};")
         right_layout.addWidget(payment_methods_title)
 
@@ -422,7 +453,7 @@ class PaymentsWindow(QDialog):
 
         action_row = QHBoxLayout()
         action_row.setSpacing(10)
-        self.process_btn = QPushButton("Payment Qilish")
+        self.process_btn = QPushButton(tr("Payment Qilish"))
         self.process_btn.setMinimumHeight(46)
         self.process_btn.setStyleSheet(f"""
             QPushButton {{
@@ -435,7 +466,7 @@ class PaymentsWindow(QDialog):
         self.process_btn.clicked.connect(self._process_payment)
         action_row.addWidget(self.process_btn)
 
-        close_btn = QPushButton("Yopish")
+        close_btn = QPushButton(tr("Yopish"))
         close_btn.setMinimumHeight(46)
         close_btn.setStyleSheet(styles["payment_button_secondary"])
         close_btn.clicked.connect(self.reject)
@@ -629,6 +660,13 @@ class PaymentsWindow(QDialog):
             item = QListWidgetItem(self._format_customer_label(row))
             item.setData(Qt.ItemDataRole.UserRole, row.get("name"))
             self.customer_results.addItem(item)
+        # Ro'yxat balandligini element soniga moslaymiz — kam element bo'lsa
+        # keraksiz scrollbar chiqmaydi (maks. 220px gacha).
+        if rows:
+            row_h = self.customer_results.sizeHintForRow(0)
+            if row_h <= 0:
+                row_h = 36
+            self.customer_results.setFixedHeight(min(len(rows) * row_h + 18, 220))
         self.customer_results.setVisible(bool(rows))
 
     def _select_customer_row(self, row: dict):
@@ -660,6 +698,19 @@ class PaymentsWindow(QDialog):
 
         if typed_text is None:
             self._render_customer_results(filtered if show_popup else [])
+
+    def _show_customer_list(self, *_args):
+        """Search box bosilganda mijozlar ro'yxatini ochadi.
+
+        Mijoz allaqachon tanlangan bo'lsa — qayta tanlash uchun to'liq ro'yxat,
+        aks holda yozilgan matn bo'yicha filtrlangan ro'yxat ko'rsatiladi.
+        """
+        if self._selected_customer:
+            rows = list(self._all_customers)
+        else:
+            rows = self._filter_customer_rows(self.customer_input.text())
+        self._filtered_customers = rows
+        self._render_customer_results(rows)
 
     def _on_customer_search_edited(self, text: str):
         if self._customer_ui_updating:
@@ -712,18 +763,30 @@ class PaymentsWindow(QDialog):
         return typed
 
     def _load_payment_method_currencies(self):
+        """Kick off a background fetch — never blocks the UI thread."""
         if not self.api:
             return
         payments = self.profile_data.get("payments") or []
         mode_names = [row.get("mode_of_payment") for row in payments if row.get("mode_of_payment")]
         if not mode_names:
             return
-        success, response = self.api.call_method(
-            "posawesome.posawesome.api.payment_entry.get_payment_methods_accounts",
-            {"company": self.company, "mode_of_payments": mode_names},
-        )
-        if success and isinstance(response, dict):
-            self.payment_method_currencies = response
+        existing = getattr(self, "_pm_currency_worker", None)
+        if existing is not None and existing.isRunning():
+            return
+        worker = _PaymentMethodCurrenciesWorker(self.api, self.company, mode_names)
+        self._pm_currency_worker = worker
+        worker.finished_signal.connect(self._on_payment_method_currencies)
+        worker.start()
+
+    def _on_payment_method_currencies(self, mapping: dict):
+        if isinstance(mapping, dict):
+            self.payment_method_currencies = mapping
+            # Agar UI allaqachon qurilgan bo'lsa — qayta tuzamiz
+            if hasattr(self, "payment_method_inputs"):
+                try:
+                    self._build_payment_method_inputs()
+                except Exception as e:
+                    logger.debug("Payment method UI qayta qurishda xato: %s", e)
 
     def _build_payment_method_inputs(self):
         colors = self.colors
@@ -735,7 +798,7 @@ class PaymentsWindow(QDialog):
         self.payment_method_inputs = {}
 
         if not self.allow_make_new_payments:
-            note = QLabel("POS Profile'da yangi payment yaratish ruxsati yo'q.")
+            note = QLabel(tr("POS Profile'da yangi payment yaratish ruxsati yo'q."))
             note.setStyleSheet(f"color: {colors['text_tertiary']}; font-size: 12px;")
             self.payment_methods_layout.addWidget(note, 0, 0, 1, 2)
             return
@@ -772,11 +835,11 @@ class PaymentsWindow(QDialog):
 
     def _load_dashboard(self):
         if not self.api:
-            QMessageBox.warning(self, "API", "Server API ulanmagan.")
+            QMessageBox.warning(self, "API", tr("Server API ulanmagan."))
             return
         customer = self._selected_customer_name()
         if not customer:
-            QMessageBox.warning(self, "Customer", "Avval customer tanlang.")
+            QMessageBox.warning(self, tr("Customer"), tr("Avval customer tanlang."))
             return
         self.search_btn.setEnabled(False)
         self.worker = PaymentsDataWorker(
@@ -793,7 +856,7 @@ class PaymentsWindow(QDialog):
     def _on_dashboard_loaded(self, success: bool, payload: dict, error: str):
         self.search_btn.setEnabled(True)
         if not success:
-            QMessageBox.warning(self, "Xatolik", error or "Ma'lumotlarni yuklab bo'lmadi.")
+            QMessageBox.warning(self, tr("Xatolik"), error or tr("Ma'lumotlarni yuklab bo'lmadi."))
             return
         self.sales_invoices = payload.get("sales_invoices", [])
         self.payment_entries = payload.get("payment_entries", [])
@@ -950,13 +1013,13 @@ class PaymentsWindow(QDialog):
         max_payable = max(outstanding_total, 0.0)
         payment_applied = min(new_payment_total, max_payable)
         remaining_after_payment = max(max_payable - payment_applied, 0.0)
-        balance_text = f"Qoldiq (Qarzdor)\n{self._money(max_payable)}" if max_payable > 0 else "Qoldiq\n0 UZS"
+        balance_text = f"{tr('Qoldiq (Qarzdor)')}\n{self._money(max_payable)}" if max_payable > 0 else tr("Qoldiq\n0 UZS")
 
         self.final_balance_label.setText(balance_text)
-        self.outstanding_total_label.setText(f"Qarzdor Invoice\n{self._money(outstanding_total)}")
-        self.selected_invoice_total_label.setText(f"FIFO Yopiladi\n{self._money(payment_applied)}")
-        self.selected_payment_total_label.setText(f"Qoladi\n{self._money(remaining_after_payment)}")
-        self.new_payment_total_label.setText(f"Kiritilgan To'lov\n{self._money(new_payment_total)}")
+        self.outstanding_total_label.setText(f"{tr('Qarzdor Invoice')}\n{self._money(outstanding_total)}")
+        self.selected_invoice_total_label.setText(f"{tr('FIFO Yopiladi')}\n{self._money(payment_applied)}")
+        self.selected_payment_total_label.setText(f"{tr('Qoladi')}\n{self._money(remaining_after_payment)}")
+        self.new_payment_total_label.setText(f"{tr('Kiritilgan To\'lov')}\n{self._money(new_payment_total)}")
 
         has_customer = bool(self._selected_customer_name())
         has_action = new_payment_total > 0
@@ -965,11 +1028,11 @@ class PaymentsWindow(QDialog):
         self.process_btn.setVisible(has_customer)
         self.process_btn.setEnabled(has_customer and has_debt and has_action and not_overpaying)
         if has_customer and has_action and not not_overpaying and has_debt:
-            self.process_btn.setText(f"Maksimum {self._money(max_payable)}")
+            self.process_btn.setText(f"{tr('Maksimum')} {self._money(max_payable)}")
         elif has_customer and not has_debt:
-            self.process_btn.setText("Qarz yopilgan")
+            self.process_btn.setText(tr("Qarz yopilgan"))
         else:
-            self.process_btn.setText("Payment Qilish")
+            self.process_btn.setText(tr("Payment Qilish"))
 
     def _money(self, amount, currency: str | None = None) -> str:
         currency = currency or self.currency
@@ -1020,11 +1083,11 @@ class PaymentsWindow(QDialog):
         return float(outstanding_total)
     def _auto_reconcile(self):
         if not self.api:
-            QMessageBox.warning(self, "API", "Server API ulanmagan.")
+            QMessageBox.warning(self, "API", tr("Server API ulanmagan."))
             return
         customer = self._selected_customer_name()
         if not customer:
-            QMessageBox.warning(self, "Customer", "Avval customer tanlang.")
+            QMessageBox.warning(self, tr("Customer"), tr("Avval customer tanlang."))
             return
         if not self.allow_reconcile_payments:
             return
@@ -1042,22 +1105,22 @@ class PaymentsWindow(QDialog):
     def _on_auto_reconcile_finished(self, success: bool, payload: dict, error: str):
         self.auto_reconcile_btn.setEnabled(True)
         if not success:
-            QMessageBox.warning(self, "Xatolik", error or "Auto reconcile bajarilmadi.")
+            QMessageBox.warning(self, tr("Xatolik"), error or tr("Auto reconcile bajarilmadi."))
             return
         QMessageBox.information(
             self,
-            "Auto Reconcile",
-            payload.get("summary") or "Auto reconcile yakunlandi.",
+            tr("Auto Reconcile"),
+            payload.get("summary") or tr("Auto reconcile yakunlandi."),
         )
         self._load_dashboard()
 
     def _process_payment(self):
         if not self.api:
-            QMessageBox.warning(self, "API", "Server API ulanmagan.")
+            QMessageBox.warning(self, "API", tr("Server API ulanmagan."))
             return
         customer = self._selected_customer_name()
         if not customer:
-            QMessageBox.warning(self, "Customer", "Avval customer tanlang.")
+            QMessageBox.warning(self, tr("Customer"), tr("Avval customer tanlang."))
             return
 
         payment_methods = self._new_payment_methods()
@@ -1065,24 +1128,24 @@ class PaymentsWindow(QDialog):
         remaining_debt = max(self._get_effective_final_balance(), 0.0)
 
         if remaining_debt <= 0:
-            QMessageBox.information(self, "Qarz", "Bu customerda yopiladigan qarz yo'q.")
+            QMessageBox.information(self, tr("Qarz"), tr("Bu customerda yopiladigan qarz yo'q."))
             return
 
         if total_payment_methods <= 0:
-            QMessageBox.warning(self, "Payment", "To'lov summasini kiriting.")
+            QMessageBox.warning(self, tr("Payment"), tr("To'lov summasini kiriting."))
             return
 
         if total_payment_methods > remaining_debt + 0.0001:
             QMessageBox.warning(
                 self,
-                "Payment",
+                tr("Payment"),
                 f"To'lov qarzdan oshib ketdi. Maksimum: {self._money(remaining_debt)}",
             )
             return
 
         selected_invoices = self._fifo_outstanding_rows()
         if not selected_invoices:
-            QMessageBox.information(self, "Invoice", "Yopiladigan qarzdor invoice topilmadi.")
+            QMessageBox.information(self, tr("Invoice"), tr("Yopiladigan qarzdor invoice topilmadi."))
             return
 
         payload = {
@@ -1104,7 +1167,7 @@ class PaymentsWindow(QDialog):
         }
 
         self.process_btn.setEnabled(False)
-        self.process_btn.setText("Kuting...")
+        self.process_btn.setText(tr("Kuting..."))
         self.process_worker = ProcessPaymentWorker(self.api, payload)
         self.process_worker.finished.connect(self._on_payment_processed)
         self.process_worker.start()
@@ -1146,9 +1209,9 @@ class PaymentsWindow(QDialog):
 
     def _on_payment_processed(self, success: bool, payload: dict, error: str):
         self.process_btn.setEnabled(True)
-        self.process_btn.setText("Payment Qilish")
+        self.process_btn.setText(tr("Payment Qilish"))
         if not success:
-            QMessageBox.warning(self, "Xatolik", error or "Payment bajarilmadi.")
+            QMessageBox.warning(self, tr("Xatolik"), error or tr("Payment bajarilmadi."))
             return
 
         errors = payload.get("errors") or []
@@ -1168,7 +1231,7 @@ class PaymentsWindow(QDialog):
             try:
                 receipt_payload = self._build_payment_receipt_payload(new_entries)
                 if not print_payment_receipt(receipt_payload):
-                    print_issue = "Payment receipt printerdan chiqmadi."
+                    print_issue = tr("Payment receipt printerdan chiqmadi.")
             except Exception as print_error:
                 logger.error("Payment receipt print xatosi: %s", print_error)
                 print_issue = f"Payment receipt xatosi: {print_error}"
@@ -1177,8 +1240,8 @@ class PaymentsWindow(QDialog):
 
         QMessageBox.information(
             self,
-            "Payment",
-            "\n".join(message_lines) or "Payment muvaffaqiyatli bajarildi.",
+            tr("Payment"),
+            "\n".join(message_lines) or tr("Payment muvaffaqiyatli bajarildi."),
         )
 
         for inp in self.payment_method_inputs.values():

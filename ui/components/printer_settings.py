@@ -8,6 +8,7 @@ from core.api import FrappeAPI
 from core.config import load_config, save_config
 from core.printer import send_test_print, get_printer_issue, list_linux_printers
 from core.logger import get_logger
+from core.i18n import tr
 
 logger = get_logger(__name__)
 
@@ -140,7 +141,7 @@ class ProductionUnitSyncWorker(QThread):
                 f"Mavjud {existing_count} ta lokal production unit sozlamasi saqlab qolindi."
             )
 
-        return "Serverdan ma'lumot olib bo'lmadi"
+        return tr("Serverdan ma'lumot olib bo'lmadi")
 
 
 # ──────────────────────────────────────────────────
@@ -152,7 +153,7 @@ class PrinterSettingsDialog(QDialog):
         self.api = api
         self.available_printers = detect_printers()
         self.printer_rows = []  # list of {"combo": QComboBox, "key": str, "type": str}
-        self.setWindowTitle("Printer sozlamalari")
+        self.setWindowTitle(tr("Printer sozlamalari"))
         self.setMinimumSize(600, 480)
         self.setStyleSheet("background: white;")
         self._init_ui()
@@ -178,7 +179,7 @@ class PrinterSettingsDialog(QDialog):
         hdr_layout = QHBoxLayout(hdr)
         hdr_layout.setContentsMargins(20, 0, 20, 0)
 
-        title = QLabel("PRINTER SOZLAMALARI")
+        title = QLabel(tr("PRINTER SOZLAMALARI"))
         title.setStyleSheet(
             "font-size: 16px; font-weight: 800; color: white; "
             "letter-spacing: 1px; background: transparent;"
@@ -187,7 +188,7 @@ class PrinterSettingsDialog(QDialog):
         hdr_layout.addStretch()
 
         # Yangilash tugmasi
-        refresh_btn = QPushButton("⟳  Yangilash")
+        refresh_btn = QPushButton(tr("⟳  Yangilash"))
         refresh_btn.setMinimumHeight(34)
         refresh_btn.setMaximumHeight(44)
         refresh_btn.setStyleSheet("""
@@ -238,7 +239,7 @@ class PrinterSettingsDialog(QDialog):
         bottom_layout = QHBoxLayout(bottom)
         bottom_layout.setContentsMargins(20, 12, 20, 12)
 
-        save_btn = QPushButton("SAQLASH")
+        save_btn = QPushButton(tr("SAQLASH"))
         save_btn.setMinimumHeight(44)
         save_btn.setMaximumHeight(58)
         save_btn.setStyleSheet("""
@@ -269,7 +270,7 @@ class PrinterSettingsDialog(QDialog):
         config = load_config()
 
         # ── Mijoz printeri ──
-        section_lbl = QLabel("MIJOZ PRINTERI")
+        section_lbl = QLabel(tr("MIJOZ PRINTERI"))
         section_lbl.setStyleSheet(
             "font-size: 11px; font-weight: 700; color: #94a3b8; "
             "letter-spacing: 1px; background: transparent;"
@@ -283,7 +284,7 @@ class PrinterSettingsDialog(QDialog):
             cp = {"name": "Mijoz", "device": "", "type": "customer", "win_name": "", "mode": "auto"}
 
         self._add_printer_row(
-            label="Mijoz cheki",
+            label=tr("Mijoz cheki"),
             current_device=cp.get("device", ""),
             current_win_name=cp.get("win_name", ""),
             current_cups_name=cp.get("cups_name", ""),
@@ -300,7 +301,7 @@ class PrinterSettingsDialog(QDialog):
             sep.setStyleSheet("background: #e2e8f0; max-height: 1px; margin: 4px 0;")
             self.content_layout.addWidget(sep)
 
-            prod_lbl = QLabel("PRODUCTION PRINTERLAR")
+            prod_lbl = QLabel(tr("PRODUCTION PRINTERLAR"))
             prod_lbl.setStyleSheet(
                 "font-size: 11px; font-weight: 700; color: #94a3b8; "
                 "letter-spacing: 1px; background: transparent;"
@@ -321,7 +322,7 @@ class PrinterSettingsDialog(QDialog):
                 )
 
         if not prod_units:
-            no_units = QLabel("Production unitlar topilmadi. Yangilash tugmasini bosing.")
+            no_units = QLabel(tr("Production unitlar topilmadi. Yangilash tugmasini bosing."))
             no_units.setStyleSheet("color: #94a3b8; font-size: 13px; font-style: italic;")
             self.content_layout.addWidget(no_units)
 
@@ -386,7 +387,7 @@ class PrinterSettingsDialog(QDialog):
         """)
 
         # Birinchi item — tanlanmagan
-        combo.addItem("Tanlanmagan", {"device": "", "win_name": "", "cups_name": ""})
+        combo.addItem(tr("Tanlanmagan"), {"device": "", "win_name": "", "cups_name": ""})
 
         # Mavjud printerlar
         selected_idx = 0
@@ -426,7 +427,7 @@ class PrinterSettingsDialog(QDialog):
         mode_combo.setCurrentIndex(selected_mode_idx)
         row.addWidget(mode_combo)
 
-        test_btn = QPushButton("Sinov")
+        test_btn = QPushButton(tr("Sinov"))
         test_btn.setMinimumSize(70, 40)
         test_btn.setMaximumSize(100, 54)
         test_btn.setStyleSheet("""
@@ -456,7 +457,7 @@ class PrinterSettingsDialog(QDialog):
         from ui.components.dialogs import InfoDialog
         data = combo.currentData() or {"device": "", "win_name": "", "cups_name": ""}
         if not data.get("device") and not data.get("win_name") and not data.get("cups_name"):
-            InfoDialog(self, "Xato", "Avval printerni tanlang!", kind="warning").exec()
+            InfoDialog(self, tr("Xato"), tr("Avval printerni tanlang!"), kind="warning").exec()
             return
 
         printer_config = {
@@ -468,17 +469,17 @@ class PrinterSettingsDialog(QDialog):
         }
         issue = get_printer_issue(printer_config)
         if issue:
-            InfoDialog(self, "Printer muammosi", issue, kind="warning").exec()
+            InfoDialog(self, tr("Printer muammosi"), issue, kind="warning").exec()
             return
 
         success = send_test_print(printer_config)
         if success:
-            InfoDialog(self, "Muvaffaqiyatli", f"{name} — sinov cheki chop etildi!", kind="success").exec()
+            InfoDialog(self, tr("Muvaffaqiyatli"), f"{name} — sinov cheki chop etildi!", kind="success").exec()
         else:
-            InfoDialog(self, "Xato", f"{name} — printer javob bermadi.\nUlangan va yoqilganligini tekshiring.", kind="error").exec()
+            InfoDialog(self, tr("Xato"), f"{name} — printer javob bermadi.\nUlangan va yoqilganligini tekshiring.", kind="error").exec()
 
     def _on_refresh(self):
-        self.refresh_btn.setText("Yuklanmoqda...")
+        self.refresh_btn.setText(tr("Yuklanmoqda..."))
         self.refresh_btn.setEnabled(False)
         self.sync_worker = ProductionUnitSyncWorker(self.api)
         self.sync_worker.finished.connect(self._on_sync_done)
@@ -486,7 +487,7 @@ class PrinterSettingsDialog(QDialog):
 
     def _on_sync_done(self, success: bool, message: str):
         from ui.components.dialogs import InfoDialog
-        self.refresh_btn.setText("⟳  Yangilash")
+        self.refresh_btn.setText(tr("⟳  Yangilash"))
         self.refresh_btn.setEnabled(True)
 
         # Lokal printer ro'yxati har doim yangilanadi, server sync muvaffaqiyatsiz
@@ -496,9 +497,9 @@ class PrinterSettingsDialog(QDialog):
         self.content_layout.addStretch()
 
         if success:
-            InfoDialog(self, "Yangilandi", message, kind="success").exec()
+            InfoDialog(self, tr("Yangilandi"), message, kind="success").exec()
         else:
-            InfoDialog(self, "Ogohlantirish", message, kind="warning").exec()
+            InfoDialog(self, tr("Ogohlantirish"), message, kind="warning").exec()
 
     def _on_save(self):
         from ui.components.dialogs import InfoDialog
@@ -543,5 +544,5 @@ class PrinterSettingsDialog(QDialog):
                         break
                 save_config({"production_units": prod_units})
 
-        InfoDialog(self, "Saqlandi", "Printer sozlamalari saqlandi!", kind="success").exec()
+        InfoDialog(self, tr("Saqlandi"), tr("Printer sozlamalari saqlandi!"), kind="success").exec()
         self.accept()

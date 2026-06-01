@@ -217,14 +217,20 @@ class SyncWorker(QThread):
             if not isinstance(items_response, list):
                 break
 
+            # MUHIM: keyset pagination uchun `start_after` server qaytargan
+            # eng katta item_code bo'lishi shart, lekin server tartibi
+            # kafolatlanmasligi mumkin.  Shu sababli max'ni o'zimiz hisoblaymiz.
+            page_max_code = start_after
             with db.atomic():
                 for itm in items_response:
                     item_code = itm.get("item_code")
                     if not item_code:
                         continue
-                        
+
                     server_item_codes.add(item_code)
-                    
+                    if page_max_code is None or item_code > page_max_code:
+                        page_max_code = item_code
+
                     Item.insert(
                         item_code=item_code,
                         item_name=itm.get("item_name") or item_code,
@@ -260,13 +266,16 @@ class SyncWorker(QThread):
                             "last_sync": datetime.datetime.now()
                         }
                     ).execute()
-                    
-                    # Update start_after hook for keyset pagination
-                    start_after = item_code
+
+            # Infinite loop'ga tushib qolmaslik: cursor o'zgarmasa to'xtaymiz.
+            if page_max_code == start_after:
+                has_more = False
+            else:
+                start_after = page_max_code
 
             total_synced += len(items_response)
             self.progress_update.emit(f"Tovarlar POSAwesome dan yuklandi: {total_synced}")
-            
+
             if len(items_response) < limit:
                 has_more = False
 
@@ -360,18 +369,19 @@ class SyncWorker(QThread):
                 if not succ or not items_res or not isinstance(items_res, list):
                     break
 
+                page_max_code = start_after
                 with db.atomic():
                     for itm in items_res:
                         item_code = itm.get("item_code")
                         rate = float(itm.get("price_list_rate") or itm.get("rate") or 0.0)
                         currency = itm.get("price_list_currency") or itm.get("currency") or "UZS"
-                        
+
                         if not item_code:
                             continue
-                            
-                        # Composite name: ItemCode-PriceList
+                        if page_max_code is None or item_code > page_max_code:
+                            page_max_code = item_code
+
                         idx_name = f"{item_code}-{price_list}"
-                        
                         ItemPrice.insert(
                             name=idx_name,
                             item_code=item_code,
@@ -388,12 +398,15 @@ class SyncWorker(QThread):
                                 "last_sync": datetime.datetime.now()
                             }
                         ).execute()
-                        
-                        start_after = item_code
+
+                if page_max_code == start_after:
+                    has_more = False
+                else:
+                    start_after = page_max_code
 
                 total_for_pl += len(items_res)
                 self.progress_update.emit(f"'{price_list}' dan {total_for_pl} tasi yuklandi")
-                
+
                 if len(items_res) < limit:
                     has_more = False
 
@@ -424,13 +437,15 @@ class SyncWorker(QThread):
             if not isinstance(customer_response, list):
                 break
 
+            page_max_name = start_after
             with db.atomic():
                 for cust in customer_response:
-                    # customer returns object with name, customer_name, customer_group, mobile_no
                     name = cust.get("name")
                     if not name:
                         continue
-                        
+                    if page_max_name is None or name > page_max_name:
+                        page_max_name = name
+
                     Customer.insert(
                         name=name,
                         customer_name=cust.get("customer_name") or name,
@@ -452,12 +467,15 @@ class SyncWorker(QThread):
                             "last_sync": datetime.datetime.now()
                         }
                     ).execute()
-                    
-                    start_after = name
+
+            if page_max_name == start_after:
+                has_more = False
+            else:
+                start_after = page_max_name
 
             total_synced += len(customer_response)
             self.progress_update.emit(f"Mijozlar POSAwesome dan yuklandi: {total_synced}")
-            
+
             if len(customer_response) < limit:
                 has_more = False
         

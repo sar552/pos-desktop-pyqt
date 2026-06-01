@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from database.models import Customer, db
 from ui.theme_manager import ThemeManager
+from core.i18n import tr
 
 
 class CustomerDialog(QDialog):
@@ -22,7 +23,7 @@ class CustomerDialog(QDialog):
         self.load_customers()
 
     def init_ui(self):
-        self.setWindowTitle("Mijoz tanlash")
+        self.setWindowTitle(tr("Mijoz tanlash"))
         self.setMinimumSize(520, 620)
 
         colors = ThemeManager.get_theme_colors()
@@ -35,12 +36,12 @@ class CustomerDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        title = QLabel("Mijozlar")
+        title = QLabel(tr("Mijozlar"))
         title.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {colors['text_primary']};")
         layout.addWidget(title)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Qidirish: name, customer_name, phone")
+        self.search_input.setPlaceholderText(tr("Qidirish: name, customer_name, phone"))
         self.search_input.setStyleSheet(f"""
             QLineEdit {{
                 background: {colors['input_bg']};
@@ -99,19 +100,19 @@ class CustomerDialog(QDialog):
         """
 
         footer = QHBoxLayout()
-        self.walk_in_btn = QPushButton("Walk-in Customer")
+        self.walk_in_btn = QPushButton(tr("Walk-in Customer"))
         self.walk_in_btn.setStyleSheet(btn_style)
         self.walk_in_btn.clicked.connect(self._select_walk_in)
         footer.addWidget(self.walk_in_btn)
 
         footer.addStretch()
 
-        cancel_btn = QPushButton("Bekor qilish")
+        cancel_btn = QPushButton(tr("Bekor qilish"))
         cancel_btn.setStyleSheet(btn_style)
         cancel_btn.clicked.connect(self.reject)
         footer.addWidget(cancel_btn)
 
-        select_btn = QPushButton("Tanlash")
+        select_btn = QPushButton(tr("Tanlash"))
         select_btn.setStyleSheet(primary_btn_style)
         select_btn.clicked.connect(self._accept_selected)
         footer.addWidget(select_btn)

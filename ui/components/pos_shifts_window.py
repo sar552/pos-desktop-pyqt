@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
+from core.i18n import tr
 
 logger = get_logger(__name__)
 
@@ -79,7 +80,7 @@ class ShiftDetailDialog(QDialog):
         super().__init__(parent)
         self.api = api
         self.opening_name = opening_name
-        self.setWindowTitle("Smena tafsilotlari")
+        self.setWindowTitle(tr("Smena tafsilotlari"))
         self.setMinimumSize(520, 550)
         self.resize(650, 700)
         self.setStyleSheet("""
@@ -118,7 +119,7 @@ class ShiftDetailDialog(QDialog):
         
         top_row.addStretch()
         
-        self.status_lbl = QLabel("Yuklanmoqda...")
+        self.status_lbl = QLabel(tr("Yuklanmoqda..."))
         self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_lbl.setStyleSheet("""
             QLabel {
@@ -169,7 +170,7 @@ class ShiftDetailDialog(QDialog):
         footer_layout = QHBoxLayout()
         footer_layout.addStretch()
         
-        close_btn = QPushButton("Yopish")
+        close_btn = QPushButton(tr("Yopish"))
         close_btn.setMinimumSize(120, 40)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet("""
@@ -243,8 +244,8 @@ class ShiftDetailDialog(QDialog):
 
     def _on_loaded(self, success: bool, doc: dict, payments: list):
         if not success:
-            self.user_lbl.setText("Xatolik")
-            self.status_lbl.setText("Ma'lumot topilmadi")
+            self.user_lbl.setText(tr("Xatolik"))
+            self.status_lbl.setText(tr("Ma'lumot topilmadi"))
             return
 
         user = doc.get("user", "")
@@ -257,12 +258,12 @@ class ShiftDetailDialog(QDialog):
         self.date_lbl.setText(f"📅 {date}  ⏱ {time_str}")
 
         if status == "Open":
-            self.status_lbl.setText("🟢 OCHIQ")
+            self.status_lbl.setText(tr("🟢 OCHIQ"))
             self.status_lbl.setStyleSheet("""
                 QLabel { padding: 6px 12px; border-radius: 6px; font-size: 14px; font-weight: bold; background: #dcfce7; color: #16a34a; border: none; }
             """)
         else:
-            self.status_lbl.setText("🔴 YOPILGAN")
+            self.status_lbl.setText(tr("🔴 YOPILGAN"))
             self.status_lbl.setStyleSheet("""
                 QLabel { padding: 6px 12px; border-radius: 6px; font-size: 14px; font-weight: bold; background: #f1f5f9; color: #64748b; border: none; }
             """)
@@ -270,14 +271,14 @@ class ShiftDetailDialog(QDialog):
         # Ochilish summalari Card
         balance = doc.get("balance_details", [])
         if balance:
-            card, lyt = self._create_section_card("Ochilish summalari (Baza)")
+            card, lyt = self._create_section_card(tr("Ochilish summalari (Baza)"))
             for bd in balance:
                 self._add_opening_row(lyt, bd.get("mode_of_payment", ""), float(bd.get("opening_amount", 0)))
             self.content_layout.addWidget(card)
 
         # Yopilish hisobi Card
         if payments:
-            p_card, p_lyt = self._create_section_card("Smena yakunidagi hisobot")
+            p_card, p_lyt = self._create_section_card(tr("Smena yakunidagi hisobot"))
             
             # Header
             hdr = QWidget()
@@ -287,7 +288,7 @@ class ShiftDetailDialog(QDialog):
             hdr_l.setContentsMargins(0, 0, 0, 0)
             
             for text, align, width in [
-                ("To'lov turi", Qt.AlignmentFlag.AlignLeft, 0),
+                (tr("To'lov turi"), Qt.AlignmentFlag.AlignLeft, 0),
                 ("Dasturda", Qt.AlignmentFlag.AlignRight, 100),
                 ("Kassada", Qt.AlignmentFlag.AlignRight, 100),
                 ("Farq", Qt.AlignmentFlag.AlignRight, 90),
@@ -355,7 +356,7 @@ class ShiftDetailDialog(QDialog):
             card.setStyleSheet("QFrame#OpenCard { background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; }")
             l = QVBoxLayout(card)
             l.setContentsMargins(20, 30, 20, 30)
-            msg = QLabel("⚠️ Smena hali ochiq. Yopilish hisoboti mavjud emas.")
+            msg = QLabel(tr("⚠️ Smena hali ochiq. Yopilish hisoboti mavjud emas."))
             msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
             msg.setStyleSheet("font-size: 16px; font-weight: bold; color: #d97706; border: none;")
             l.addWidget(msg)
@@ -380,16 +381,16 @@ class PosShiftsWindow(QWidget):
         # Header
         hdr_row = QHBoxLayout()
 
-        title = QLabel("Kassa tarixi")
+        title = QLabel(tr("Kassa tarixi"))
         title.setStyleSheet("font-size: 18px; font-weight: 800; color: #1e293b;")
         hdr_row.addWidget(title)
 
-        hint = QLabel("(2× bosing — batafsil)")
+        hint = QLabel(tr("(2× bosing — batafsil)"))
         hint.setStyleSheet("font-size: 11px; color: #94a3b8; font-style: italic;")
         hdr_row.addWidget(hint)
         hdr_row.addStretch()
 
-        refresh_btn = QPushButton("⟳  Yangilash")
+        refresh_btn = QPushButton(tr("⟳  Yangilash"))
         refresh_btn.setMinimumHeight(38)
         refresh_btn.setMaximumHeight(48)
         refresh_btn.setStyleSheet("""
@@ -423,7 +424,7 @@ class PosShiftsWindow(QWidget):
 
         # Table
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["ID", "Kassir", "Sana", "Vaqt", "Holat"])
+        self.table.setHorizontalHeaderLabels([tr("ID"), tr("Kassir"), tr("Sana"), tr("Vaqt"), tr("Holat")])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
@@ -486,7 +487,7 @@ class PosShiftsWindow(QWidget):
             self.table.setItem(i, 3, time_item)
 
             status = item.get("status", "")
-            status_item = QTableWidgetItem("🟢 Ochiq" if status == "Open" else "🔴 Yopilgan")
+            status_item = QTableWidgetItem(tr("🟢 Ochiq") if status == "Open" else tr("🔴 Yopilgan"))
             if status == "Open":
                 status_item.setForeground(Qt.GlobalColor.darkGreen)
             else:
