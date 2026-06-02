@@ -7,7 +7,7 @@ YANGI VERSIYA CHIQARISH:
    (GitHub Actions release yaratadi; do'konlardagi dastur shu releasega yangilanadi.)
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 # Avto-yangilanish releaselarni shu repodan tekshiradi.
 GITHUB_REPO = "sar552/pos-desktop-pyqt"
