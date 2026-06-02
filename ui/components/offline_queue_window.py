@@ -33,8 +33,8 @@ class OfflineQueueWindow(QDialog):
         info_text.setStyleSheet("color: #6b7280; font-style: italic;")
         layout.addWidget(info_text)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels([tr("Vaqt"), tr("Mijoz"), tr("Summa"), tr("Tur")])
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels([tr("Vaqt"), tr("Mijoz"), tr("Summa")])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
@@ -69,19 +69,44 @@ class OfflineQueueWindow(QDialog):
                 except (json.JSONDecodeError, ValueError):
                     pass
 
-                customer = data.get("customer", "—")
-                total = data.get("total_amount", 0.0)
-                order_type = data.get("order_type", "—")
+                customer = data.get("customer") or "—"
+                total = self._invoice_amount(data)
 
-                self.table.setItem(row_idx, 0, QTableWidgetItem(inv.created_at.strftime("%H:%M:%S")))
+                self.table.setItem(row_idx, 0, QTableWidgetItem(inv.created_at.strftime("%d-%m %H:%M")))
                 self.table.setItem(row_idx, 1, QTableWidgetItem(str(customer)))
                 self.table.setItem(row_idx, 2, QTableWidgetItem(
                     f"{total:,.0f} UZS".replace(",", " ")
                 ))
-                self.table.setItem(row_idx, 3, QTableWidgetItem(str(order_type)))
 
         except Exception as e:
             logger.error("Oflayn cheklar yuklashda xatolik: %s", e)
         finally:
             if not db.is_closed():
                 db.close()
+
+    @staticmethod
+    def _invoice_amount(data: dict) -> float:
+        """Saqlangan invoice'dan haqiqiy summani aniqlaydi.
+
+        Sales Invoice payloadida `net_total` + `discount_amount` bor;
+        to'lanadigan summa = net_total - discount. Topilmasa — to'lovlar
+        yig'indisi yoki eski `total_amount` ga qaytamiz.
+        """
+        def _f(x):
+            try:
+                return float(x or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        net = _f(data.get("net_total")) or _f(data.get("total"))
+        amount = net - _f(data.get("discount_amount"))
+        if amount > 0:
+            return amount
+        # Zaxira: to'lovlar yig'indisi
+        pays = data.get("_payments") or data.get("payments") or []
+        if isinstance(pays, list):
+            total_paid = sum(_f(p.get("amount")) for p in pays if isinstance(p, dict))
+            if total_paid > 0:
+                return total_paid
+        # Eski format
+        return _f(data.get("total_amount"))
