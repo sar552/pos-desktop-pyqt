@@ -56,14 +56,15 @@ class TouchKeyboard(QDialog):
         geo = screen.availableGeometry()
 
         if self.is_numeric:
-            height = min(440, int(geo.height() * 0.45))
-            width = min(560, geo.width())
-            x = geo.x() + (geo.width() - width) // 2  # numpad — markazda pastda
+            height = min(460, int(geo.height() * 0.50))
+            width = min(520, geo.width())
         else:
-            height = min(500, int(geo.height() * 0.46))
-            width = geo.width()  # uzun — to'liq kenglik
-            x = geo.x()
+            # To'liq ekran kengligiga cho'zilmasin — keng ekranlarda tugmalar
+            # juda keng/yassi bo'lib ketadi. Oqilona kenglikda, markazda.
+            height = min(620, int(geo.height() * 0.56))
+            width = min(1180, int(geo.width() * 0.96))
 
+        x = geo.x() + (geo.width() - width) // 2  # har doim markazda
         y = geo.y() + geo.height() - height
         self.setFixedSize(width, height)
         self.move(x, y)
@@ -299,8 +300,8 @@ class TouchKeyboard(QDialog):
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         # Minimal o'lcham — har qanday ekran/masshtabda tugmalar o'qiladigan
         # va bir-biriga yopishmaydigan bo'lib qoladi.
-        btn.setMinimumHeight(40)
-        btn.setMinimumWidth(34)
+        btn.setMinimumHeight(48)
+        btn.setMinimumWidth(40)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
 

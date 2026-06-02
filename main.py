@@ -1,3 +1,4 @@
+import os
 import sys
 
 from core.paths import BASE_DIR
@@ -87,5 +88,37 @@ def main():
     sys.exit(exit_code)
 
 
+def _write_crash(exc: BaseException):
+    """Ochilmay qolsa — xatoni faylga yozadi va (imkon bo'lsa) oyna ko'rsatadi."""
+    import traceback
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    try:
+        crash_path = os.path.join(BASE_DIR, "logs", "crash.log")
+        os.makedirs(os.path.dirname(crash_path), exist_ok=True)
+        with open(crash_path, "a", encoding="utf-8") as f:
+            f.write("\n===== CRASH =====\n")
+            f.write(tb)
+    except Exception:
+        pass
+    try:
+        logger.error("Ilova ishga tushmadi:\n%s", tb)
+    except Exception:
+        pass
+    # Foydalanuvchiga ko'rsatishga harakat qilamiz (konsol bo'lmasa ham).
+    try:
+        from PyQt6.QtWidgets import QApplication, QMessageBox
+        if QApplication.instance() is None:
+            QApplication(sys.argv)
+        QMessageBox.critical(None, "POSAwesome — xato", tb[-1500:])
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException as e:
+        _write_crash(e)
+        sys.exit(1)
