@@ -297,8 +297,10 @@ class TouchKeyboard(QDialog):
 
         btn = QPushButton(display_text)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        # Minimal balandlik kichik — kichik ekranlarda ham qatorlar ustma-ust tushmaydi.
-        btn.setMinimumHeight(34)
+        # Minimal o'lcham — har qanday ekran/masshtabda tugmalar o'qiladigan
+        # va bir-biriga yopishmaydigan bo'lib qoladi.
+        btn.setMinimumHeight(40)
+        btn.setMinimumWidth(34)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
 

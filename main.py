@@ -18,6 +18,18 @@ logger = get_logger(__name__)
 
 
 def main():
+    # Windows monoblok/notebooklarda ekran masshtabi (125%/150%) tufayli
+    # tugmalar siqilib/yopishib qolmasligi uchun — Qt fractional scaling'ni
+    # silliq boshqarsin. QApplication'dan OLDIN o'rnatilishi shart.
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QGuiApplication
+    try:
+        QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     ThemeManager.initialize(app)
 
