@@ -273,7 +273,7 @@ def _build_customer_receipt(order_data: dict, payments_list: list, config: dict)
     comment = order_data.get("comment", "")
     customer = order_data.get("customer", "")
 
-    company = config.get("company", "POKIZA POS")
+    company = config.get("company", "POSAwesome")
 
     total_paid = sum(float(p.get("amount", 0)) for p in payments_list)
     change = max(0, total_paid - total_amount)
@@ -556,7 +556,7 @@ def _build_customer_receipt_html(order_data: dict, payments_list: list, config: 
     ticket_number = order_data.get("ticket_number", "")
     comment = order_data.get("comment", "")
     customer = order_data.get("customer", "")
-    company = config.get("company", "POKIZA POS")
+    company = config.get("company", "POSAwesome")
     logo_html = _build_receipt_logo_html(config, max_width_px=210, max_height_px=90)
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     total_paid = sum(float(p.get("amount", 0) or 0) for p in payments_list)
@@ -703,7 +703,7 @@ def _build_production_receipt_html(order_data: dict, unit_items: list, unit_name
 
 
 def _build_payment_receipt(payment_data: dict, config: dict | None = None) -> bytes:
-    company = payment_data.get("company") or "POKIZA POS"
+    company = payment_data.get("company") or "POSAwesome"
     customer = payment_data.get("customer") or "Customer"
     currency = payment_data.get("currency") or "UZS"
     entries = payment_data.get("entries") or []
@@ -764,7 +764,7 @@ def _build_payment_receipt(payment_data: dict, config: dict | None = None) -> by
 
 
 def _build_payment_receipt_html(payment_data: dict, config: dict | None = None) -> str:
-    company = escape(str(payment_data.get("company") or "POKIZA POS"))
+    company = escape(str(payment_data.get("company") or "POSAwesome"))
     logo_html = _build_receipt_logo_html(config or {}, max_width_px=210, max_height_px=90)
     customer = escape(str(payment_data.get("customer") or "Customer"))
     currency = escape(str(payment_data.get("currency") or "UZS"))
@@ -1105,7 +1105,7 @@ def print_closing_shift_receipt(closing_data: dict) -> bool:
         return False
 
     config = load_config()
-    company = config.get("company", "POKIZA POS")
+    company = config.get("company", "POSAwesome")
     
     # To'lov ma'lumotlarini yig'ish
     payment_rows = closing_data.get("payment_reconciliation", [])
@@ -1186,7 +1186,7 @@ def print_closing_shift_receipt(closing_data: dict) -> bool:
 
 def _build_closing_shift_html(closing_data: dict, config: dict) -> str:
     """Kassa yopish cheki uchun HTML (A4 printer) — sodda"""
-    company = escape(config.get("company", "POKIZA POS"))
+    company = escape(config.get("company", "POSAwesome"))
     logo_html = _build_receipt_logo_html(config, max_width_px=210, max_height_px=90)
     user = escape(str(closing_data.get("user", "")))
     

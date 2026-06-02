@@ -1,13 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec — POKIZA POS (Windows .exe). PyInstaller 6.x uchun.
+"""PyInstaller spec — POSAwesome (Windows .exe). PyInstaller 6.x uchun.
 
 Build (Windows mashinasida):
     pyinstaller --noconfirm pos.spec
 Natija:
-    dist\\POKIZA-POS\\POKIZA-POS.exe
+    dist\\POSAwesome\\POSAwesome.exe
 
 Eslatma: config.json, .env, pos_data.db, logs/ — RUNTIME fayllar.
-Ular .exe yoniga (dist\\POKIZA-POS\\) avtomatik yoziladi (core/paths.py).
+Ular .exe yoniga (dist\\POSAwesome\\) avtomatik yoziladi (core/paths.py).
 Shu sababli ular bundle ICHIGA qo'shilmaydi (har do'kon/kassada o'ziniki).
 """
 
@@ -55,7 +55,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="POKIZA-POS",
+    name="POSAwesome",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -76,5 +76,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="POKIZA-POS",
+    name="POSAwesome",
 )

@@ -1,4 +1,4 @@
-# POKIZA POS — Windows uchun build qilish
+# POSAwesome — Windows uchun build qilish
 
 Bu hujjat PyQt6 POS dasturini **Windows .exe** ga aylantirish va tarqatish bo'yicha qo'llanma.
 
@@ -30,13 +30,13 @@ pip install -r requirements.txt
 pyinstaller --noconfirm pos.spec
 ```
 
-**Natija:** `dist\POKIZA-POS\POKIZA-POS.exe`
+**Natija:** `dist\POSAwesome\POSAwesome.exe`
 
 ## 3. Tarqatish (kassaga o'rnatish)
 
-- Butun **`dist\POKIZA-POS\`** papkasini kassa kompyuteriga ko'chiring
+- Butun **`dist\POSAwesome\`** papkasini kassa kompyuteriga ko'chiring
   (faqat .exe emas — yonidagi DLL/kutubxonalar ham kerak).
-- `POKIZA-POS.exe` ni ishga tushiring.
+- `POSAwesome.exe` ni ishga tushiring.
 - Yorliq (shortcut) yasab, ish stoliga / autostart'ga qo'ying.
 
 ## 4. Birinchi ishga tushirish
@@ -59,7 +59,7 @@ Dastur quyidagi fayllarni **`.exe` yonidagi papkada** yaratadi/saqlaydi
 | `.cache\branding\` | Kompaniya logosi (yuklab olingan) |
 
 > Bu fayllar har kassada **o'ziniki** bo'ladi — bundle ichiga kirmaydi.
-> Yangilanish (yangi versiya) chiqsa, `dist\POKIZA-POS\` ni almashtiring,
+> Yangilanish (yangi versiya) chiqsa, `dist\POSAwesome\` ni almashtiring,
 > lekin yuqoridagi fayllarni **saqlab qoling** (sozlama va offline baza yo'qolmasin).
 
 ## 6. Offline / Online hamohanglik

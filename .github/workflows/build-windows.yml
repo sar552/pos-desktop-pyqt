@@ -32,17 +32,17 @@ jobs:
         run: pyinstaller --noconfirm pos.spec
 
       - name: Zip the build
-        run: Compress-Archive -Path dist/POKIZA-POS/* -DestinationPath POKIZA-POS-windows.zip
+        run: Compress-Archive -Path dist/POSAwesome/* -DestinationPath POSAwesome-windows.zip
 
       - name: Upload artifact (har build'da yuklanadi)
         uses: actions/upload-artifact@v4
         with:
-          name: POKIZA-POS-windows
-          path: POKIZA-POS-windows.zip
+          name: POSAwesome-windows
+          path: POSAwesome-windows.zip
           retention-days: 30
 
       - name: Create Release (faqat v* teg bo'lsa)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: POKIZA-POS-windows.zip
+          files: POSAwesome-windows.zip

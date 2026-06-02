@@ -93,7 +93,7 @@ class LoginWindow(QWidget):
         logo.setStyleSheet("font-size: 48px; margin-bottom: 4px; background: transparent;")
         layout.addWidget(logo)
 
-        title = QLabel("POKIZA POS")
+        title = QLabel("POSAwesome")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet(f"""
             font-size: 26px; font-weight: 900; color: {theme_styles['title_color']};

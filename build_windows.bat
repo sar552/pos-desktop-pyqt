@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM  POKIZA POS  —  Windows build skripti
+REM  POSAwesome  —  Windows build skripti
 REM  Windows mashinasida ishga tushiring (Python 3.10+ kerak).
 REM ============================================================
 setlocal
@@ -40,9 +40,9 @@ if errorlevel 1 (
 echo.
 echo ============================================================
 echo  TAYYOR!
-echo  Dastur:  dist\POKIZA-POS\POKIZA-POS.exe
+echo  Dastur:  dist\POSAwesome\POSAwesome.exe
 echo.
-echo  Butun "dist\POKIZA-POS" papkasini kassa kompyuteriga
-echo  ko'chiring va POKIZA-POS.exe ni ishga tushiring.
+echo  Butun "dist\POSAwesome" papkasini kassa kompyuteriga
+echo  ko'chiring va POSAwesome.exe ni ishga tushiring.
 echo ============================================================
 pause
