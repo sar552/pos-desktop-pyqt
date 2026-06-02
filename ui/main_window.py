@@ -17,6 +17,7 @@ from core.logger import get_logger
 from core.constants import MONITOR_INTERVAL_MS
 from core.config import load_config
 from core.i18n import tr, i18n, SUPPORTED_LANGUAGES
+from core.updater import check_for_update, perform_update
 from core.barcode_listener import BarcodeManager
 from ui.components.item_browser import ItemBrowser
 from ui.components.cart_widget import CartWidget
@@ -47,6 +48,16 @@ class ConnectivityCheckWorker(QThread):
             self.finished.emit(success)
         except Exception:
             self.finished.emit(False)
+
+
+class UpdateCheckWorker(QThread):
+    """GitHub'dan yangi versiya bor-yo'qligini background'da tekshiradi."""
+    update_available = pyqtSignal(dict)  # {version, url, notes}
+
+    def run(self):
+        info = check_for_update()
+        if info:
+            self.update_available.emit(info)
 
 
 class PosOpeningCheckWorker(QThread):
@@ -436,6 +447,11 @@ class MainWindow(QMainWindow):
         self.kb_shortcut = QShortcut(QKeySequence("F11"), self)
         self.kb_shortcut.activated.connect(self._toggle_global_keyboard)
 
+        # Avto-yangilanish: startdan ~4 soniya keyin background'da tekshiramiz.
+        self._update_worker = None
+        self._update_in_progress = False
+        QTimer.singleShot(4000, self._start_update_check)
+
 
         # Initial Sale Tab
         self.add_new_sale_tab()
@@ -680,6 +696,43 @@ class MainWindow(QMainWindow):
         i18n.set_language(code)
         # Butun oyna yangi tilda qayta quriladi (hamma matn yangilanadi).
         self.relaunch_requested.emit()
+
+    # ── Avto-yangilanish ─────────────────────────────────────────────
+    def _start_update_check(self):
+        try:
+            self._update_worker = UpdateCheckWorker()
+            self._update_worker.update_available.connect(self._on_update_available)
+            self._update_worker.start()
+        except Exception as e:
+            logger.debug("Update check ishga tushmadi: %s", e)
+
+    def _on_update_available(self, info: dict):
+        if self._update_in_progress:
+            return
+        version = info.get("version", "")
+        dlg = ConfirmDialog(
+            self, tr("Yangi versiya"),
+            f"{tr('Yangi versiya chiqdi')}: {version}\n{tr('Hozir yangilansinmi?')}",
+            icon="⬆️", yes_text=tr("Yangilash"), yes_color="#2563eb",
+        )
+        dlg.exec()
+        if not dlg.result_accepted:
+            return
+        self._update_in_progress = True
+        try:
+            started = perform_update(info.get("url", ""))
+        except Exception as e:
+            logger.error("Yangilash xatosi: %s", e)
+            InfoDialog(self, tr("Xatolik"), tr("Yangilash amalga oshmadi."), "error").exec()
+            self._update_in_progress = False
+            return
+        if started:
+            # .bat fayllarni almashtirib, dasturni qayta ishga tushiradi.
+            QApplication.quit()
+        else:
+            # Dev rejim yoki .exe emas — faqat xabar.
+            InfoDialog(self, tr("Yangi versiya"), tr("Yangi versiyani GitHub'dan yuklab oling."), "warning").exec()
+            self._update_in_progress = False
 
     def _update_company_badge(self, company: str = "", pos_profile: str = ""):
         colors = ThemeManager.get_theme_colors()

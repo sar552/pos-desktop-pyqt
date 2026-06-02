@@ -3,7 +3,7 @@ name: Build Windows EXE
 # Qachon ishga tushadi: main'ga push, qo'lda (workflow_dispatch), yoki teg (v*)
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, develop ]
     tags: [ 'v*' ]
   workflow_dispatch:
 

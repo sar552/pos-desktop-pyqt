@@ -284,7 +284,8 @@ class LoginWindow(QWidget):
         layout.addWidget(self.login_btn)
 
         # ——— Pastki yozuv ———
-        footer = QLabel("POSAwesome Desktop v1.0")
+        from core.version import __version__
+        footer = QLabel(f"POSAwesome Desktop v{__version__}")
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         footer.setStyleSheet("""
             font-size: 11px; color: #cbd5e1; margin-top: 14px; background: transparent;
