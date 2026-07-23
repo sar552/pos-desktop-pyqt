@@ -9,6 +9,7 @@ from core.config import save_credentials, load_config
 from core.i18n import tr, i18n, SUPPORTED_LANGUAGES
 from core.logger import get_logger
 from ui.components.dialogs import ClickableLineEdit
+from ui.components.keyboard import TouchKeyboard
 from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
@@ -43,8 +44,9 @@ class LoginWindow(QWidget):
         super().__init__()
         self.api = api
         self._active_field = None
-        self._caps = False
-        self._letter_buttons = []
+        # Bitta umumiy TouchKeyboard ishlatiladi (asosiy oynadagi bilan bir
+        # xil) — oldingi ichki panel bilan ikkita klaviatura chiqib qolardi.
+        self._kb = None
         self._init_ui()
 
     def _init_ui(self):
@@ -144,7 +146,13 @@ class LoginWindow(QWidget):
 
         # ——— Formalar ———
         config = load_config()
-        default_url = config.get("url", "")
+        # Production rejim: server manzili bir marta kiritilgach (yoki
+        # o'rnatuvchi config.json'da `default_server_url` bilan berilgach)
+        # eslab qolinadi — kassir faqat login+parol yozadi. Logout .env'ni
+        # o'chirsa ham bu qiymat config.json'da saqlanib qoladi.
+        saved_server = (config.get("default_server_url") or "").strip()
+        default_url = saved_server or config.get("url", "")
+        self._has_default_server = bool(saved_server)
 
         INPUT_STYLE = theme_styles["input_style"]
         INPUT_ACTIVE_STYLE = theme_styles["input_active_style"]
@@ -160,17 +168,23 @@ class LoginWindow(QWidget):
         self.url_input = ClickableLineEdit()
         self.url_input.setPlaceholderText(tr("masalan: http://192.168.1.53:8000"))
         self.url_input.setText(default_url)
-        # # self.url_input.setReadOnly(True)
+        self.url_input.setMinimumHeight(46)
         self.url_input.setStyleSheet(INPUT_STYLE)
         self.url_input.clicked.connect(lambda: self._activate_field(self.url_input, tr("Server manzili")))
         layout.addWidget(self.url_input)
+
+        # Server oldindan sozlangan bo'lsa — maydonni yashiramiz (kassir faqat
+        # login+parol ko'radi); kerak bo'lsa "Kengaytirilgan sozlamalar"da ochiladi.
+        if self._has_default_server:
+            self.url_label.setVisible(False)
+            self.url_input.setVisible(False)
 
         # Login (Email)
         self.user_label = self._label(tr("Email yoki Login"), LABEL_STYLE)
         layout.addWidget(self.user_label)
         self.user_input = ClickableLineEdit()
         self.user_input.setPlaceholderText("cashier@example.uz")
-        # # self.user_input.setReadOnly(True)
+        self.user_input.setMinimumHeight(46)
         self.user_input.setStyleSheet(INPUT_STYLE)
         self.user_input.clicked.connect(lambda: self._activate_field(self.user_input, tr("Email yoki Login")))
         layout.addWidget(self.user_input)
@@ -181,7 +195,7 @@ class LoginWindow(QWidget):
         self.password_input = ClickableLineEdit()
         self.password_input.setPlaceholderText("••••••••")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        # # self.password_input.setReadOnly(True)
+        self.password_input.setMinimumHeight(46)
         self.password_input.setStyleSheet(INPUT_STYLE)
         self.password_input.clicked.connect(lambda: self._activate_field(self.password_input, tr("Parol")))
         layout.addWidget(self.password_input)
@@ -215,8 +229,8 @@ class LoginWindow(QWidget):
 
         self.site_input = ClickableLineEdit()
         self.site_input.setPlaceholderText(tr("sayt nomi (masalan: mysite.local)"))
-        self.site_input.setText(config.get("site", ""))
-        # # self.site_input.setReadOnly(True)
+        self.site_input.setText(config.get("site", "") or config.get("default_site", ""))
+        self.site_input.setMinimumHeight(46)
         self.site_input.setStyleSheet(INPUT_STYLE)
         self.site_input.clicked.connect(lambda: self._activate_field(self.site_input, tr("Sayt nomi")))
         site_layout.addWidget(self.site_input)
@@ -293,173 +307,104 @@ class LoginWindow(QWidget):
         layout.addWidget(footer)
 
         top_layout.addWidget(card)
-        root_layout.addWidget(top_area, stretch=1)
 
-        # --- Pastki qism: inline keyboard ---
-        self.keyboard_panel = self._build_keyboard_panel()
-        self.keyboard_panel.setVisible(False)
-        root_layout.addWidget(self.keyboard_panel)
+        # Kartani scroll ichiga o'raymiz — klaviatura ochilganda yuqori qism
+        # SIQILMAYDI: joy yetmasa scroll chiqadi, maydonlar o'z balandligida
+        # qoladi.
+        self._card_scroll = QScrollArea()
+        self._card_scroll.setWidgetResizable(True)
+        self._card_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._card_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._card_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._card_scroll.setWidget(top_area)
+        root_layout.addWidget(self._card_scroll, stretch=1)
 
-    # ─── Inline Keyboard ──────────────────────────────────
-    def _build_keyboard_panel(self):
-        theme_styles = ThemeManager.get_login_styles()
-        colors = ThemeManager.get_theme_colors()
-        
-        panel = QFrame()
-        panel.setStyleSheet(theme_styles["keyboard_panel"])
-        panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(16, 10, 16, 12)
-        panel_layout.setSpacing(6)
-
-        # Yuqori qator: aktiv field nomi + display + yopish
-        top_row = QHBoxLayout()
-
-        self.kb_field_label = QLabel("")
-        self.kb_field_label.setStyleSheet(f"""
-            font-size: 12px; font-weight: 700; color: {colors['accent']};
-            background: transparent; padding: 0 4px;
-        """)
-
-        self.kb_display = QLabel("")
-        self.kb_display.setStyleSheet(theme_styles["kb_display"])
-        self.kb_display.setFixedHeight(40)
-
-        close_btn = QPushButton("✕")
-        close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        close_btn.setFixedSize(44, 44)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: #ef4444; color: white;
-                font-weight: bold; font-size: 16px;
-                border-radius: 8px; border: none;
-            }
-            QPushButton:pressed { background: #dc2626; }
-        """)
-        close_btn.clicked.connect(self._close_keyboard)
-
-        top_row.addWidget(self.kb_field_label)
-        top_row.addWidget(self.kb_display, stretch=1)
-        top_row.addWidget(close_btn)
-        panel_layout.addLayout(top_row)
-
-        # Klaviatura qatorlari
-        self._letter_buttons = []
-        rows = [
-            ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '⌫'],
-            ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-            ['CAPS', 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'CLR'],
-            ['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', ' SPACE '],
-            ['@', '-', '_', ':', '/', '#', '+', '='],
-        ]
-        for row_keys in rows:
-            row_layout = QHBoxLayout()
-            row_layout.setSpacing(5)
-            for key in row_keys:
-                btn = self._make_key(key)
-                row_layout.addWidget(btn)
-            panel_layout.addLayout(row_layout)
-
-        return panel
-
-    def _make_key(self, key):
-        label = key.strip()
-        if label == 'SPACE':
-            label = tr('PROBEL')
-        elif label == 'CLR':
-            label = tr('TOZALASH')
-        elif label == 'CAPS':
-            label = '⇧ Aa'
-
-        btn = QPushButton(label)
-        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        btn.setFixedHeight(48)
-
-        if key.strip() == '⌫':
-            style = "background:#fee2e2; color:#ef4444; font-size:18px; font-weight:bold;"
-        elif key.strip() == 'CLR':
-            style = "background:#fff7ed; color:#ea580c; font-size:11px; font-weight:bold;"
-        elif key.strip() == 'CAPS':
-            style = "background:#e0e7ff; color:#4338ca; font-size:13px; font-weight:bold;"
-        elif 'SPACE' in key:
-            style = "background:#eff6ff; color:#3b82f6; font-size:13px; font-weight:bold;"
-            btn.setMinimumWidth(120)
-        elif key.strip().isdigit():
-            style = "background:#e0e7ff; color:#3730a3; font-size:16px; font-weight:bold;"
-        else:
-            style = "background:white; color:#1e293b; font-size:15px; font-weight:600;"
-
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                {style}
-                border: 1px solid #e2e8f0;
-                border-radius: 7px;
-            }}
-            QPushButton:pressed {{ background: #dbeafe; }}
-        """)
-        btn.clicked.connect(lambda _, k=key.strip(): self._on_key(k))
-
-        # Harf tugmalarini saqlash (caps uchun)
-        if len(key.strip()) == 1 and key.strip().isalpha():
-            self._letter_buttons.append(btn)
-
-        return btn
-
-    def _on_key(self, key):
-        if key == 'CAPS':
-            self._caps = not self._caps
-            for btn in self._letter_buttons:
-                txt = btn.text()
-                btn.setText(txt.upper() if self._caps else txt.lower())
-            return
-        if not self._active_field:
-            return
-        current = self._active_field.text()
-        if key == '⌫':
-            new_text = current[:-1]
-        elif key == 'CLR':
-            new_text = ''
-        elif key == 'SPACE':
-            new_text = current + ' '
-        else:
-            char = key.lower() if not self._caps else key.upper()
-            new_text = current + char
-        self._active_field.setText(new_text)
-        # Display yangilash — parol uchun yashirish
-        if self._active_field == self.password_input:
-            self.kb_display.setText('•' * len(new_text) if new_text else "")
-        else:
-            self.kb_display.setText(new_text)
-
-    
-    def _sync_display(self, widget, text):
-        if self._active_field == widget:
-            if widget == self.password_input:
-                self.kb_display.setText('•' * len(text) if text else "")
-            else:
-                self.kb_display.setText(text)
-
+    # ─── Ekran klaviaturasi (umumiy TouchKeyboard) ────────
     def _toggle_keyboard_panel(self):
-        self.keyboard_panel.setVisible(not self.keyboard_panel.isVisible())
+        kb = self._kb
+        if kb is not None:
+            try:
+                if kb.isVisible():
+                    kb.hide()
+                    return
+            except RuntimeError:
+                self._kb = None
+        target = self._active_field or self.user_input
+        title = tr("Parol") if target is self.password_input else tr("Email yoki Login")
+        self._activate_field(target, title)
 
     def _activate_field(self, widget, title: str):
         # Avvalgi field stilini qaytarish
         if self._active_field and self._active_field != widget:
             self._active_field.setStyleSheet(self._input_style)
+            try:
+                self._active_field.textChanged.disconnect(self._on_field_text_changed)
+            except (TypeError, RuntimeError):
+                pass
         self._active_field = widget
         widget.setStyleSheet(self._input_active_style)
-        self.kb_field_label.setText(title)
-        # Display yangilash
-        if widget == self.password_input:
-            self.kb_display.setText('•' * len(widget.text()) if widget.text() else "")
+        try:
+            widget.textChanged.disconnect(self._on_field_text_changed)
+        except (TypeError, RuntimeError):
+            pass
+        widget.textChanged.connect(self._on_field_text_changed)
+        self._open_keyboard_for(widget, title)
+        # Aktiv maydon klaviatura ostida qolib ketmasin — scroll qilib
+        # ko'rinadigan joyga keltiramiz.
+        if hasattr(self, "_card_scroll"):
+            self._card_scroll.ensureWidgetVisible(widget, 50, 80)
+
+    def _open_keyboard_for(self, widget, title: str):
+        is_password = widget is self.password_input
+        kb = self._kb
+        if kb is not None:
+            try:
+                if kb.is_password != is_password:
+                    kb.close()
+                    kb.deleteLater()
+                    kb = None
+            except RuntimeError:
+                kb = None
+        if kb is None:
+            kb = TouchKeyboard(
+                self, initial_text=widget.text(), title=title,
+                is_numeric=False, is_password=is_password,
+            )
+            kb.text_changed.connect(self._on_kb_text_changed)
+            self._kb = kb
         else:
-            self.kb_display.setText(widget.text())
-        self.keyboard_panel.setVisible(True)
+            kb.set_target(widget.text(), title)
+        kb.show()
+
+    def _on_kb_text_changed(self, text: str):
+        if self._active_field is None:
+            return
+        try:
+            if self._active_field.text() != text:
+                self._active_field.setText(text)
+        except RuntimeError:
+            self._active_field = None
+
+    def _on_field_text_changed(self, text: str):
+        # Hardware klaviaturada yozilsa — ekran klaviaturasi ham sinxron.
+        kb = self._kb
+        if kb is None:
+            return
+        try:
+            kb.sync_text(text)
+        except RuntimeError:
+            self._kb = None
 
     def _close_keyboard(self):
         if self._active_field:
             self._active_field.setStyleSheet(self._input_style)
             self._active_field = None
-        self.keyboard_panel.setVisible(False)
+        kb = self._kb
+        if kb is not None:
+            try:
+                kb.hide()
+            except RuntimeError:
+                self._kb = None
 
     # ─── Helpers ─────────────────────────────────────────
     @staticmethod
@@ -470,6 +415,11 @@ class LoginWindow(QWidget):
 
     def _toggle_advanced(self, checked: bool):
         self.site_frame.setVisible(checked)
+        # Server oldindan sozlangan bo'lsa — manzil maydoni faqat shu yerda
+        # ochiladi (o'zgartirish kerak bo'lib qolsa).
+        if getattr(self, "_has_default_server", False):
+            self.url_label.setVisible(checked)
+            self.url_input.setVisible(checked)
         self.advanced_toggle.setText(tr("Kengaytirilgan sozlamalar ▾") if checked else tr("Kengaytirilgan sozlamalar ▸"))
 
     def _on_language_changed(self, _index):
@@ -510,7 +460,9 @@ class LoginWindow(QWidget):
         url = self.url_input.text().strip()
         user = self.user_input.text().strip()
         password = self.password_input.text().strip()
-        site = self.site_input.text().strip() if self.advanced_toggle.isChecked() else ""
+        # Sayt nomi yashirin bo'lsa ham yuboriladi — u default_site'dan
+        # oldindan to'ldirilgan bo'lishi mumkin (multi-site production).
+        site = self.site_input.text().strip()
 
         # Validatsiya
         if not url:
@@ -548,6 +500,13 @@ class LoginWindow(QWidget):
         self._pending_credentials = None
         if success:
             save_credentials(url, user, password, site)
+            # Serverni doimiy eslab qolamiz — keyingi login (logoutdan keyin
+            # ham) faqat login+parol so'raydi.
+            try:
+                from core.config import save_config
+                save_config({"default_server_url": url, "default_site": site})
+            except Exception as e:
+                logger.debug("Default server saqlanmadi: %s", e)
             self.api.reload_config()
             logger.info("Login muvaffaqiyatli: %s (User: %s)", url, user)
             self.login_successful.emit()

@@ -15,7 +15,7 @@ from PyQt6.QtCore import pyqtSignal, Qt, QThread, QTimer
 from PyQt6.QtGui import QDoubleValidator
 from core.api import FrappeAPI
 from core.logger import get_logger
-from core.printer import print_closing_shift_receipt
+from core.printer import print_closing_shift_receipt, print_async
 from database.models import PosShift, db
 from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit, InfoDialog
@@ -734,12 +734,12 @@ class PosClosingDialog(QDialog):
                 f"Cheklar: {self.overview.get('credit_invoices', {}).get('count', 0)}",
             ),
             (
-                "Returnlar",
+                tr("Returnlar"),
                 self._fmt(self.overview.get("returns", {}).get("company_currency_total", 0), company_currency),
-                f"Cheklar: {self.overview.get('returns', {}).get('count', 0)}",
+                f"{tr('Jami cheklar')}: {self.overview.get('returns', {}).get('count', 0)}",
             ),
             (
-                "Qaytim",
+                tr("Qaytim"),
                 self._fmt(self.overview.get("change_returned", {}).get("company_currency_total", 0), company_currency),
                 tr("Mijozlarga qaytarilgan summa"),
             ),
@@ -956,14 +956,17 @@ class PosClosingDialog(QDialog):
         colors = self.colors
 
         for data in self.closing_inputs.values():
+            # ru/uz lokalda "12,5" ham keladi — float() vergulni tushunmaydi.
+            raw = (data["input"].text() or "0").replace(" ", "").replace(",", ".")
             try:
-                closing_amt = float(data["input"].text() or 0)
+                closing_amt = float(raw or 0)
             except ValueError:
                 closing_amt = 0.0
             diff = closing_amt - float(data["expected"] or 0)
             total_diff += abs(diff)
 
-        if total_diff == 0:
+        # Float yig'indisi 1e-10 qoldiq berishi mumkin — bu "farq bor" emas.
+        if total_diff < 0.01:
             self.diff_label.setText(tr("✓  No difference — reconciliation matches"))
             self.diff_label.setStyleSheet(f"""
                 font-size: 13px;
@@ -995,7 +998,8 @@ class PosClosingDialog(QDialog):
             mode = rec.get("mode_of_payment", "")
             data = self.closing_inputs.get(mode, {})
             try:
-                rec["closing_amount"] = float(data["input"].text() or 0)
+                raw = (data["input"].text() or "0").replace(" ", "").replace(",", ".")
+                rec["closing_amount"] = float(raw or 0)
             except (ValueError, KeyError):
                 rec["closing_amount"] = 0
 
@@ -1008,7 +1012,7 @@ class PosClosingDialog(QDialog):
 
     def _on_closing_finished(self, success: bool, message: str):
         self.btn_close.setEnabled(True)
-        self.btn_close.setText(tr("KASSANI YOPISH"))
+        self.btn_close.setText(tr("Close Shift"))
 
         if success:
             # Kassa yopish chekini chop etish
@@ -1037,7 +1041,8 @@ class PosClosingDialog(QDialog):
                 "total_quantity": self.closing_shift_doc.get("total_quantity", 0),
                 "payment_reconciliation": self.closing_shift_doc.get("payment_reconciliation", []),
             }
-            print_closing_shift_receipt(closing_data)
+            # Fonda chop etiladi — printer qotsa kassa yopilishi kutmaydi.
+            print_async(print_closing_shift_receipt, closing_data)
             logger.info("Kassa yopish cheki chop etish boshlandi")
         except Exception as e:
             logger.error("Kassa yopish cheki xatosi: %s", e)

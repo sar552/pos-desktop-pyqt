@@ -39,7 +39,10 @@ def main():
 
     def show_login():
         if windows["main"]:
+            # To'liq o'chirish — aks holda eski oynaning global klaviatura
+            # hook'lari tirik qolib, login oynasida ikkinchi klaviatura ochardi.
             windows["main"].close()
+            windows["main"].deleteLater()
             windows["main"] = None
         windows["login"] = LoginWindow(shared_api)
         windows["login"].login_successful.connect(show_main)

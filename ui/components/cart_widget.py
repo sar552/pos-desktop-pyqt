@@ -1,10 +1,11 @@
 import datetime
+import time
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QHBoxLayout,
     QComboBox, QLineEdit, QGroupBox, QFrame, QListWidget, QListWidgetItem, QDialog,
 )
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal, Qt, QThread
 from PyQt6.QtCore import QEvent, QPoint, QTimer
 from PyQt6.QtGui import QDoubleValidator, QFontMetrics
 from database.models import Customer, PosProfile, Item, db
@@ -28,6 +29,124 @@ class QtyLabel(QLabel):
 
     def mousePressEvent(self, event):
         self.clicked.emit()
+
+
+# Ishlayotgan QThread'lar registri — Python reference yo'qolib, Qt
+# "QThread destroyed while running" bilan ilovani o'ldirmasligi uchun.
+_BG_WORKERS = set()
+
+
+def _hold_worker(worker):
+    _BG_WORKERS.add(worker)
+    worker.finished.connect(lambda: _BG_WORKERS.discard(worker))
+    return worker
+
+
+class _CustomerGroupsWorker(QThread):
+    """Customer Group ro'yxatini serverdan fonda oladi (GUI muzlamaydi)."""
+
+    finished_signal = pyqtSignal(list)
+
+    def __init__(self, api):
+        super().__init__()
+        self.api = api
+
+    def run(self):
+        groups = []
+        try:
+            success, response = self.api.call_method(
+                "frappe.client.get_list",
+                {
+                    "doctype": "Customer Group",
+                    "fields": ["name"],
+                    "filters": {"is_group": 0},
+                    "limit_page_length": 0,
+                },
+            )
+            if success and isinstance(response, list):
+                groups = [str(r.get("name") or "").strip() for r in response if r.get("name")]
+        except Exception as e:
+            logger.debug("Customer Group serverdan olinmadi: %s", e)
+        self.finished_signal.emit(groups)
+
+
+class _ServerPricingWorker(QThread):
+    """Pricing-rule reconcile + customer info — fonda, GUI'ni bloklamasdan."""
+
+    finished_signal = pyqtSignal(int, object, object)  # generation, customer_info|None, pricing|None
+
+    def __init__(self, api, generation, payload_json, customer_name, fetch_customer):
+        super().__init__()
+        self.api = api
+        self.generation = generation
+        self.payload_json = payload_json
+        self.customer_name = customer_name
+        self.fetch_customer = fetch_customer
+
+    def run(self):
+        customer_info = None
+        if self.fetch_customer and self.customer_name:
+            try:
+                ok, resp = self.api.call_method(
+                    "posawesome.posawesome.api.customers.get_customer_info",
+                    {"customer": self.customer_name},
+                )
+                if ok and isinstance(resp, dict):
+                    customer_info = resp
+            except Exception as e:
+                logger.debug("Customer info serverdan olinmadi: %s", e)
+        pricing = None
+        try:
+            ok, resp = self.api.call_method(
+                "posawesome.posawesome.api.pricing_rules.reconcile_line_prices",
+                {"cart_payload": self.payload_json},
+            )
+            if ok and isinstance(resp, dict):
+                pricing = resp
+        except Exception as e:
+            logger.debug("Pricing reconcile ishlamadi: %s", e)
+        self.finished_signal.emit(self.generation, customer_info, pricing)
+
+
+class _AddCustomerWorker(QThread):
+    """Yangi mijoz yaratish — 4 ta ketma-ket API chaqiruv fonda bajariladi."""
+
+    finished_signal = pyqtSignal(bool, object)  # success, response|error
+
+    def __init__(self, cart, api_args, phone_number):
+        super().__init__()
+        self.cart = cart
+        self.api_args = api_args
+        self.phone_number = phone_number
+
+    def run(self):
+        cart = self.cart
+        try:
+            args = dict(self.api_args)
+            args["territory"] = cart._resolve_new_customer_territory()
+            meta_fields = cart._get_customer_meta_fields()
+            success, response = cart.api.call_method(
+                "posawesome.posawesome.api.customers.create_customer", args
+            )
+            if not success or not isinstance(response, dict):
+                self.finished_signal.emit(False, str(response))
+                return
+            customer_code = str(response.get("name") or args.get("customer_name") or "").strip()
+            if self.phone_number and customer_code and "phone_number" in meta_fields:
+                ok2, resp2 = cart.api.call_method(
+                    "frappe.client.set_value",
+                    {
+                        "doctype": "Customer",
+                        "name": customer_code,
+                        "fieldname": "phone_number",
+                        "value": self.phone_number,
+                    },
+                )
+                if ok2 and isinstance(resp2, dict):
+                    response["phone_number"] = self.phone_number
+            self.finished_signal.emit(True, response)
+        except Exception as e:
+            self.finished_signal.emit(False, str(e))
 
 
 class CartWidget(QWidget):
@@ -65,6 +184,16 @@ class CartWidget(QWidget):
         self.order_type_buttons = {}
         self._numpad_mode = "ticket"   # "ticket" | "qty"
         self._active_qty_item = None
+        # Server narxlash endi ASINXRON — GUI hech qachon tarmoqni kutmaydi.
+        self._pricing_generation = 0
+        self._pricing_worker = None
+        self._pricing_rerun = False
+        self._pending_pricing_customer = ""
+        self._customer_server_fetched = set()
+        self._pricing_debounce = QTimer(self)
+        self._pricing_debounce.setSingleShot(True)
+        self._pricing_debounce.setInterval(300)
+        self._pricing_debounce.timeout.connect(self._start_server_pricing)
         self.init_ui()
         self.load_customers()
         self.load_price_lists()
@@ -193,6 +322,9 @@ class CartWidget(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels([tr("NAME"), tr("QTY"), tr("RATE"), tr("AMOUNT")])
+        # Katakni bosib matnini tahrirlab bo'lmasin — nomi/summasi faqat
+        # ko'rsatish uchun (qty/rate o'z maxsus editorlariga ega).
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -712,6 +844,16 @@ class CartWidget(QWidget):
                 elif preferred_price_list in pls:
                     self.price_list_combo.setCurrentText(preferred_price_list)
                 self.price_list_combo.blockSignals(False)
+                # Eski tanlov yangi ro'yxatda yo'q bo'lsa combo boshqa
+                # qatorga tushadi — savat esa eski narxlarda qolib ketardi.
+                # Haqiqatan o'zgargan bo'lsa repricing qilamiz. Signalni faqat
+                # AKTIV tab yuboradi — fon tablari umumiy katalogni
+                # aylantirib yubormasin.
+                new_txt = self.price_list_combo.currentText()
+                if new_txt != curr_txt:
+                    self._reprice_cart()
+                    if self.isVisible():
+                        self.price_list_changed.emit(new_txt)
             elif not self.price_list_combo.currentText() and preferred_price_list in pls:
                 self.price_list_combo.setCurrentText(preferred_price_list)
         finally:
@@ -809,6 +951,24 @@ class CartWidget(QWidget):
         return profile_customer
 
     def eventFilter(self, obj, event):
+        # Qty/Rate inline editorlari: fokus chiqqanda commit (ekran
+        # klaviaturasi setText() bilan yozadi, editingFinished chiqmaydi).
+        if event.type() == QEvent.Type.FocusOut and isinstance(obj, QLineEdit):
+            try:
+                qty_code = obj.property("cart_qty_editor_code")
+                if qty_code:
+                    stored = f"{self._flt(self.items.get(qty_code, {}).get('qty'), 0):g}"
+                    if obj.text() != stored:
+                        self.update_qty_absolute(qty_code, obj.text())
+                    return False
+                rate_code = obj.property("cart_rate_editor_code")
+                if rate_code and rate_code in self.items:
+                    stored_rate = f"{self._flt(self.items[rate_code].get('price'), 0):.0f}"
+                    if obj.text().strip() != stored_rate:
+                        self._commit_inline_rate(rate_code, obj)
+                    return False
+            except RuntimeError:
+                return False
         if obj is self.customer_input and event.type() == QEvent.Type.KeyPress:
             default_customer = (self._get_default_customer_name() or "").strip()
             current_text = obj.text().strip()
@@ -845,11 +1005,13 @@ class CartWidget(QWidget):
 
         Mijoz tanlangan bo'lsa — qayta tanlash uchun guruh bo'yicha to'liq
         ro'yxat, aks holda yozilgan matn bo'yicha filtrlangan ro'yxat.
+        MUHIM: preserve_selection — shunchaki maydonga bosish tanlangan
+        mijozni (va uning chegirmali narxlarini) yo'qotib yubormasin.
         """
         if self._selected_customer:
-            self._apply_customer_filters(typed_text="", show_popup=True)
+            self._apply_customer_filters(typed_text="", show_popup=True, preserve_selection=True)
         else:
-            self._apply_customer_filters(show_popup=True)
+            self._apply_customer_filters(show_popup=True, preserve_selection=True)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -876,6 +1038,9 @@ class CartWidget(QWidget):
                 db.close()
 
     def _get_customer_info(self, customer_name: str) -> dict:
+        """FAQAT lokal ma'lumot — bu metod reprice yo'lida (skan/qty) chaqiriladi
+        va GUI oqimida tarmoqqa chiqishi mumkin emas. Server ma'lumoti
+        _ServerPricingWorker fonda olib kelib, cache'ni yangilaydi."""
         if not customer_name:
             return {}
         cached = self._customer_info_cache.get(customer_name)
@@ -883,17 +1048,6 @@ class CartWidget(QWidget):
             return dict(cached)
 
         info = self._get_customer_info_local(customer_name)
-        if self.api and self.api.is_configured():
-            try:
-                success, response = self.api.call_method(
-                    "posawesome.posawesome.api.customers.get_customer_info",
-                    {"customer": customer_name},
-                )
-                if success and isinstance(response, dict):
-                    info.update(response)
-            except Exception as e:
-                logger.debug("Customer info serverdan olinmadi: %s", e)
-
         self._customer_info_cache[customer_name] = dict(info)
         return dict(info)
 
@@ -1008,10 +1162,11 @@ class CartWidget(QWidget):
         if not silent:
             SoundFeedback.error()
             left_qty = max(actual_qty - self._flt(self.items.get(item_code, {}).get("qty"), 0.0), 0.0)
+            shortage_msg = tr("uchun yetarli qoldiq yo'q.")
             InfoDialog(
                 self,
                 tr("Xatolik"),
-                f"{item_name} uchun yetarli qoldiq yo'q.\nMavjud: {actual_qty:g}\nQolgan: {left_qty:g}",
+                f"{item_name} {shortage_msg}\n{tr('Mavjud')}: {actual_qty:g}\n{tr('Qolgan')}: {left_qty:g}",
                 kind="warning",
             ).exec()
         return False
@@ -1045,7 +1200,7 @@ class CartWidget(QWidget):
         item = self.items.get(item_code)
         if not item:
             return
-        raw = (editor.text() or "").replace(" ", "").strip()
+        raw = (editor.text() or "").replace(" ", "").replace(",", ".").strip()
         if not raw:
             self._apply_manual_rate_to_item(
                 item,
@@ -1118,9 +1273,14 @@ class CartWidget(QWidget):
             "conversion_rate": 1,
         }
 
-    def _apply_server_pricing(self, customer_name: str, customer_info: dict):
+    # Class-level circuit breaker — BARCHA tablar uchun umumiy: server qotgan
+    # bo'lsa, boshqa tabga o'tish ham yangi urinish ochib yubormaydi.
+    _pricing_retry_at = 0.0
+
+    def _build_pricing_payload(self, customer_name: str, customer_info: dict):
+        """Server reconcile uchun payload — GUI oqimida faqat dict quriladi."""
         if not self.api or not self.api.is_configured():
-            return
+            return None
 
         lines = []
         for code, item in self.items.items():
@@ -1145,51 +1305,110 @@ class CartWidget(QWidget):
             )
 
         if not lines:
-            return
+            return None
 
-        payload = {
+        return {
             "context": self._build_pricing_context(customer_name, customer_info),
             "lines": lines,
             "free_lines": [],
         }
-        try:
-            success, response = self.api.call_method(
-                "posawesome.posawesome.api.pricing_rules.reconcile_line_prices",
-                {"cart_payload": json.dumps(payload)},
-            )
-            if not success or not isinstance(response, dict):
-                return
 
-            updates = response.get("updates") or []
-            for update in updates:
-                row_id = str(update.get("row_id") or "").strip()
-                if not row_id or row_id not in self.items:
-                    continue
-                item = self.items[row_id]
-                if item.get("_manual_rate_set"):
-                    continue
-                price_list_rate = self._flt(update.get("price_list_rate"), self._flt(item.get("price_list_rate")))
-                discount_amount = self._flt(update.get("discount_amount"))
-                discount_percentage = self._flt(update.get("discount_percentage"))
-                rate = self._flt(update.get("rate"), max(price_list_rate - discount_amount, 0))
-                item["price_list_rate"] = price_list_rate
-                item["base_price_list_rate"] = price_list_rate
-                item["discount_amount"] = discount_amount
-                item["base_discount_amount"] = discount_amount
-                item["discount_percentage"] = discount_percentage
-                item["rate"] = rate
-                item["base_rate"] = rate
-                item["price"] = rate
-                item["pricing_rules"] = self._normalize_pricing_rules(update.get("pricing_rules"))
+    def _apply_pricing_response(self, response: dict):
+        """Worker'dan kelgan reconcile natijasini savatga qo'llash (GUI oqimida)."""
+        updates = response.get("updates") or []
+        for update in updates:
+            row_id = str(update.get("row_id") or "").strip()
+            if not row_id or row_id not in self.items:
+                continue
+            item = self.items[row_id]
+            if item.get("_manual_rate_set"):
+                continue
+            price_list_rate = self._flt(update.get("price_list_rate"), self._flt(item.get("price_list_rate")))
+            discount_amount = self._flt(update.get("discount_amount"))
+            discount_percentage = self._flt(update.get("discount_percentage"))
+            rate = self._flt(update.get("rate"), max(price_list_rate - discount_amount, 0))
+            item["price_list_rate"] = price_list_rate
+            item["base_price_list_rate"] = price_list_rate
+            item["discount_amount"] = discount_amount
+            item["base_discount_amount"] = discount_amount
+            item["discount_percentage"] = discount_percentage
+            item["rate"] = rate
+            item["base_rate"] = rate
+            item["price"] = rate
+            item["pricing_rules"] = self._normalize_pricing_rules(update.get("pricing_rules"))
 
-            invoice_updates = response.get("invoice_updates") or {}
-            self.invoice_discount_amount = self._flt(invoice_updates.get("discount_amount"))
-            self.invoice_discount_percentage = self._flt(
-                invoice_updates.get("additional_discount_percentage")
-            )
-            self.apply_discount_on = invoice_updates.get("apply_discount_on") or "Grand Total"
-        except Exception as e:
-            logger.debug("Pricing rule reconcile ishlamadi: %s", e)
+        invoice_updates = response.get("invoice_updates") or {}
+        self.invoice_discount_amount = self._flt(invoice_updates.get("discount_amount"))
+        self.invoice_discount_percentage = self._flt(
+            invoice_updates.get("additional_discount_percentage")
+        )
+        self.apply_discount_on = invoice_updates.get("apply_discount_on") or "Grand Total"
+        self.refresh_table()
+
+    def _schedule_server_pricing(self, customer_name: str):
+        """Debounce bilan background reconcile'ni rejalashtiradi."""
+        if not self.api or not self.api.is_configured() or not self.items:
+            return
+        if time.monotonic() < CartWidget._pricing_retry_at:
+            return
+        self._pending_pricing_customer = customer_name or ""
+        self._pricing_debounce.start()
+
+    def _start_server_pricing(self):
+        if not self.items:
+            return
+        if self._pricing_worker is not None:
+            try:
+                if self._pricing_worker.isRunning():
+                    self._pricing_rerun = True
+                    return
+            except RuntimeError:
+                pass
+        customer_name = self._pending_pricing_customer
+        customer_info = self._customer_info_cache.get(customer_name) or {}
+        payload = self._build_pricing_payload(customer_name, customer_info)
+        if not payload:
+            return
+        fetch_customer = bool(customer_name) and customer_name not in self._customer_server_fetched
+        worker = _ServerPricingWorker(
+            self.api,
+            self._pricing_generation,
+            json.dumps(payload),
+            customer_name,
+            fetch_customer,
+        )
+        worker.finished_signal.connect(self._on_server_pricing_done)
+        self._pricing_worker = worker
+        _hold_worker(worker)
+        worker.start()
+
+    def _on_server_pricing_done(self, generation: int, customer_info, pricing):
+        self._pricing_worker = None
+        if pricing is None:
+            # Server javob bermadi — hamma tab uchun 30s tanaffus.
+            CartWidget._pricing_retry_at = time.monotonic() + 30.0
+        else:
+            CartWidget._pricing_retry_at = 0.0
+
+        customer_name = self._pending_pricing_customer
+        if isinstance(customer_info, dict) and customer_name:
+            merged = self._get_customer_info_local(customer_name)
+            merged.update(customer_info)
+            self._customer_info_cache[customer_name] = dict(merged)
+            self._customer_server_fetched.add(customer_name)
+            # Serverdan kelgan chegirma ma'lumoti bilan lokal qayta narxlash —
+            # navbatdagi reconcile fetch_customer=False bilan ketadi.
+            self._reprice_cart()
+            return
+
+        if generation != self._pricing_generation or self._pricing_rerun:
+            # Savat bu orada o'zgardi — eski natijani tashlab, yangisini so'raymiz.
+            self._pricing_rerun = False
+            self._pricing_debounce.start()
+            return
+
+        if isinstance(pricing, dict):
+            self._apply_pricing_response(pricing)
 
     def _reprice_cart(self):
         if self._is_repricing:
@@ -1254,8 +1473,11 @@ class CartWidget(QWidget):
             self.invoice_discount_amount = 0.0
             self.invoice_discount_percentage = 0.0
             self.apply_discount_on = "Grand Total"
-            self._apply_server_pricing(customer_name, customer_info)
+            # Lokal narxlar DARHOL ko'rsatiladi; server pricing-rule'lari
+            # fonda kelib ustiga qo'llanadi — GUI hech qachon kutmaydi.
             self.refresh_table()
+            self._pricing_generation += 1
+            self._schedule_server_pricing(customer_name)
         finally:
             self._is_repricing = False
 
@@ -1330,19 +1552,38 @@ class CartWidget(QWidget):
                 groups.append(normalized)
                 seen.add(normalized)
 
-        # 2. Webdagi kabi fallback: serverdan Customer Group ro'yxati
+        # 2. Lokal mijozlar bazasidagi guruhlar — tarmoqsiz, darhol.
         if not groups:
-            for group in self._fetch_customer_groups_from_server():
-                normalized = (group or "").strip()
-                if normalized and normalized not in seen:
-                    groups.append(normalized)
-                    seen.add(normalized)
+            try:
+                db.connect(reuse_if_open=True)
+                for row in Customer.select(Customer.customer_group).distinct():
+                    normalized = (row.customer_group or "").strip()
+                    if normalized and normalized not in seen:
+                        groups.append(normalized)
+                        seen.add(normalized)
+            except Exception as e:
+                logger.debug("Lokal customer group o'qilmadi: %s", e)
+            finally:
+                if not db.is_closed():
+                    db.close()
 
+        self._populate_customer_groups_combo(groups)
+
+        # 3. Server fallback — FONDA (avval bu yerda sinxron chaqiruv
+        # dastur ochilishini va har yangi tabni 15s gacha muzlatardi).
+        if not groups and self.api and self.api.is_configured():
+            worker = _CustomerGroupsWorker(self.api)
+            worker.finished_signal.connect(self._populate_customer_groups_combo)
+            _hold_worker(worker)
+            worker.start()
+
+    def _populate_customer_groups_combo(self, groups):
+        groups = [g for g in (groups or []) if str(g or "").strip()]
         current_value = self.cg_mock.currentData()
         self.cg_mock.blockSignals(True)
         self.cg_mock.clear()
         self.cg_mock.addItem(tr("All Groups"), "all")
-        for group in sorted(groups):
+        for group in sorted(set(groups)):
             self.cg_mock.addItem(group, group)
 
         if current_value:
@@ -1526,49 +1767,48 @@ class CartWidget(QWidget):
             InfoDialog(self, tr("Xatolik"), tr("Customer Group topilmadi."), kind="error").exec()
             return
 
-        territory = self._resolve_new_customer_territory()
-        meta_fields = self._get_customer_meta_fields()
         pos_profile_doc = self._current_profile_data or self._get_current_profile_data()
         api_args = {
             "customer_name": customer_name,
             "company": company,
             "pos_profile_doc": json.dumps(pos_profile_doc or {}),
             "customer_group": customer_group,
-            "territory": territory,
             "customer_type": "Company",
             "method": "create",
         }
         if phone_number:
             api_args["mobile_no"] = phone_number
 
-        success, response = self.api.call_method(
-            "posawesome.posawesome.api.customers.create_customer",
-            api_args,
+        # 4 ta ketma-ket API chaqiruv — FONDA (GUI oqimida ~40s gacha
+        # muzlatib qo'yardi). Jarayonda kichik "Kuting" dialogi ko'rinadi.
+        from PyQt6.QtWidgets import QProgressDialog
+        progress = QProgressDialog(tr("Customer yaratilmoqda..."), "", 0, 0, self)
+        progress.setWindowTitle(tr("Kuting..."))
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+
+        worker = _AddCustomerWorker(self, api_args, phone_number)
+        worker.finished_signal.connect(
+            lambda ok, resp: self._on_customer_created(
+                ok, resp, customer_name, customer_group, phone_number, progress
+            )
         )
+        _hold_worker(worker)
+        worker.start()
+        progress.show()
+
+    def _on_customer_created(self, success, response, customer_name, customer_group, phone_number, progress):
+        try:
+            progress.close()
+        except RuntimeError:
+            pass
         if not success or not isinstance(response, dict):
-            InfoDialog(
-                self,
-                tr("Xatolik"),
-                f"Customer qo'shib bo'lmadi: {response}",
-                kind="error",
-            ).exec()
+            failed_msg = tr("Customer qo'shib bo'lmadi")
+            InfoDialog(self, tr("Xatolik"), f"{failed_msg}: {response}", kind="error").exec()
             return
 
         customer_code = str(response.get("name") or customer_name).strip()
-
-        if phone_number and customer_code and "phone_number" in meta_fields:
-            phone_update_success, phone_update_response = self.api.call_method(
-                "frappe.client.set_value",
-                {
-                    "doctype": "Customer",
-                    "name": customer_code,
-                    "fieldname": "phone_number",
-                    "value": phone_number,
-                },
-            )
-            if phone_update_success and isinstance(phone_update_response, dict):
-                response["phone_number"] = phone_number
-
         inserted_name = str(response.get("customer_name") or customer_name).strip()
         customer_phone = str(
             response.get("phone_number")
@@ -1761,7 +2001,13 @@ class CartWidget(QWidget):
         self._render_customer_results([])
         self._customer_ui_updating = False
 
-    def _apply_customer_filters(self, typed_text: str | None = None, selected_name: str = "", show_popup: bool = False):
+    def _apply_customer_filters(
+        self,
+        typed_text: str | None = None,
+        selected_name: str = "",
+        show_popup: bool = False,
+        preserve_selection: bool = False,
+    ):
         search_text = typed_text if typed_text is not None else self.customer_input.text()
         parts = self._normalize_customer_search(search_text)
         selected_group = self._get_selected_customer_group()
@@ -1792,6 +2038,13 @@ class CartWidget(QWidget):
             if selected:
                 self._select_customer_row(selected)
                 return
+
+        if preserve_selection and self._selected_customer:
+            # Tanlangan mijoz saqlanadi — faqat qayta tanlash uchun ro'yxat
+            # ko'rsatiladi. Aks holda maydonga bosishning o'zi tanlovni
+            # o'chirib, savat esa eski chegirmali narxlarda qolib ketardi.
+            self._render_customer_results(filtered if show_popup else [])
+            return
 
         self._selected_customer = ""
         self._customer_ui_updating = True
@@ -1862,11 +2115,23 @@ class CartWidget(QWidget):
             return self._selected_customer
 
         typed = self.customer_input.text().strip()
+        if not typed:
+            return ""
         matched = self._find_customer_by_text(typed, self._filtered_customers or self._all_customers)
         if matched:
-            return str(matched.get("name") or "").strip()
+            # Faqat ANIQ moslik qabul qilinadi — "ali" kabi chala matn
+            # bo'yicha birinchi duch kelgan mijozga sotib yubormaymiz.
+            exact = typed.lower() in {
+                str(matched.get("name") or "").strip().lower(),
+                str(matched.get("customer_name") or "").strip().lower(),
+                str(matched.get("phone") or "").strip().lower(),
+            }
+            if exact:
+                return str(matched.get("name") or "").strip()
 
-        return typed
+        # Chala/noma'lum matn — default (Guest) mijozga qaytamiz;
+        # yozilgan ixtiyoriy matnni serverga yubormaymiz.
+        return ""
 
     def add_item(self, item_code: str, item_name: str, price: float, currency: str) -> bool:
         current_qty = self._flt(self.items.get(item_code, {}).get("qty", 0), 0.0)
@@ -1900,21 +2165,34 @@ class CartWidget(QWidget):
         return False
 
     def update_qty_absolute(self, item_code: str, new_qty_str: str) -> bool:
+        previous_qty = self._flt(self.items.get(item_code, {}).get("qty"), 0.0)
         try:
-            previous_qty = self._flt(self.items.get(item_code, {}).get("qty"), 0.0)
-            new_qty = float(new_qty_str)
+            # "1,5" (ru/uz lokal) va bo'sh matnni ham to'g'ri qabul qilamiz.
+            new_qty = float((new_qty_str or "").replace(" ", "").replace(",", "."))
+        except (TypeError, ValueError):
+            # Ko'rinish savat holatiga qaytadi — aks holda maydonda rad
+            # etilgan matn qolib, jami summa bilan mos kelmay turardi.
+            self.refresh_table()
+            return False
+        try:
             if new_qty > 0:
+                if abs(new_qty - previous_qty) < 1e-9:
+                    return True
                 if not self._can_set_item_qty(item_code, new_qty):
+                    self.refresh_table()
+                    return False
+                if item_code not in self.items:
                     return False
                 self.items[item_code]["qty"] = new_qty
             else:
-                del self.items[item_code]
+                self.items.pop(item_code, None)
             self._reprice_cart()
             self._emit_cart_updated()
             if new_qty > previous_qty:
                 SoundFeedback.success()
             return True
-        except (ValueError, KeyError):
+        except KeyError:
+            self.refresh_table()
             return False
 
     def apply_item_payload(self, payload: dict) -> bool:
@@ -2016,6 +2294,12 @@ class CartWidget(QWidget):
                 f"background:{colors['input_bg']}; border:1px solid {colors['border']}; border-radius:8px; padding:2px 6px;"
             )
             qty_lbl.editingFinished.connect(lambda c=code, w=qty_lbl: self.update_qty_absolute(c, w.text()))
+            # Ekran klaviaturasi matnni setText() bilan yozadi — Qt6'da bu
+            # "edited" flagini ko'tarmaydi va editingFinished chiqmaydi.
+            # FocusOut'da ham commit qilamiz, aks holda kiritilgan son
+            # ko'rinib tursa ham jami summaga hech qachon tushmasdi.
+            qty_lbl.setProperty("cart_qty_editor_code", code)
+            qty_lbl.installEventFilter(self)
             
             plus_btn = QPushButton("+")
             plus_btn.setFixedSize(30, 30)
@@ -2047,6 +2331,9 @@ class CartWidget(QWidget):
                 rate_lbl.setPlaceholderText(tr("Rate"))
                 rate_lbl.setToolTip(tr("Rate ni shu joyda o'zgartiring"))
                 rate_lbl.editingFinished.connect(lambda c=code, w=rate_lbl: self._commit_inline_rate(c, w))
+                # Ekran klaviaturasi uchun (qty kabi) FocusOut-commit.
+                rate_lbl.setProperty("cart_rate_editor_code", code)
+                rate_lbl.installEventFilter(self)
                 rate_lbl.setMinimumWidth(rate_width)
                 rate_lbl.setFixedHeight(34)
                 rate_lbl.setStyleSheet(

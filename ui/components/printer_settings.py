@@ -22,12 +22,20 @@ def detect_printers() -> list[dict]:
     if platform.system() == "Windows":
         try:
             import win32print
+            # Print Spooler o'chiq bo'lsa EnumPrinters pywintypes.error
+            # tashlaydi — ImportError'dan tashqari hammasini ham ushlaymiz,
+            # aks holda "Printer" tugmasi butun ilovani o'ldirardi.
             for flags, desc, name, comment in win32print.EnumPrinters(2):
                 printers.append({"label": name, "device": "", "win_name": name, "cups_name": ""})
         except ImportError:
             pass
+        except Exception as e:
+            logger.error("Windows printerlarni aniqlashda xato: %s", e)
     else:
-        return list_linux_printers()
+        try:
+            return list_linux_printers()
+        except Exception as e:
+            logger.error("Printerlarni aniqlashda xato: %s", e)
     return printers
 
 
@@ -256,14 +264,15 @@ class PrinterSettingsDialog(QDialog):
         layout.addWidget(bottom)
 
     def _build_printer_rows(self):
-        # Eski rowlarni tozalash
+        # Eski rowlarni tozalash (QSpacerItem — addStretch — ham olib
+        # tashlanadi, aks holda har yangilashda spacer to'planib, kartalar
+        # pastga surilib ketardi).
         for i in reversed(range(self.content_layout.count())):
             item = self.content_layout.itemAt(i)
             w = item.widget()
             if w:
                 w.setParent(None)
-            elif item.layout():
-                # stretch
+            else:
                 self.content_layout.removeItem(item)
 
         self.printer_rows.clear()

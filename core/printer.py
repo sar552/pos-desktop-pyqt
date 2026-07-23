@@ -15,6 +15,44 @@ from database.models import Item, db
 
 logger = get_logger(__name__)
 
+
+# ──────────────────────────────────────────────────
+#  Asinxron chop etish — GUI oqimi printerni KUTMAYDI
+#  (CUPS/win32/termal yozish har printer uchun 3-10s bloklashi mumkin edi)
+# ──────────────────────────────────────────────────
+from PyQt6.QtCore import QThread, pyqtSignal  # noqa: E402
+
+_PRINT_JOBS = set()
+
+
+class _PrintJob(QThread):
+    finished_signal = pyqtSignal(bool)
+
+    def __init__(self, fn, args, kwargs):
+        super().__init__()
+        self._fn = fn
+        self._args = args
+        self._kwargs = kwargs
+
+    def run(self):
+        ok = True
+        try:
+            self._fn(*self._args, **self._kwargs)
+        except Exception as e:
+            logger.error("Print job xatosi: %s", e)
+            ok = False
+        self.finished_signal.emit(ok)
+
+
+def print_async(fn, *args, **kwargs):
+    """Chop etish funksiyasini background thread'da ishga tushiradi."""
+    job = _PrintJob(fn, args, kwargs)
+    _PRINT_JOBS.add(job)
+    job.finished.connect(lambda: _PRINT_JOBS.discard(job))
+    job.start()
+    return job
+
+
 # ESC/POS buyruqlari
 ESC = b'\x1b'
 GS = b'\x1d'

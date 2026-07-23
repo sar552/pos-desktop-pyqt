@@ -329,6 +329,16 @@ class PosOpeningDialog(QDialog):
         self._rebuild_payment_inputs()
 
     def _rebuild_payment_inputs(self):
+        # Background worker ma'lumot keltirganda qayta qurilamiz — kassir
+        # allaqachon yozgan summalarni yo'qotmaslik uchun eslab qolamiz.
+        previous_values = {}
+        for mode, inp in (self.payment_inputs or {}).items():
+            try:
+                text = (inp.text() or "").strip()
+            except RuntimeError:
+                continue
+            if text and text != "0":
+                previous_values[mode] = text
         self._clear_payment_rows()
         selected_profile = self.profile_combo.currentData() or {}
         selected_profile_name = (selected_profile.get("name") or self.profile_combo.currentText() or "").strip()
@@ -360,7 +370,7 @@ class PosOpeningDialog(QDialog):
             # O'ng tomonda doimiy numpad bor — global ekran klaviaturasi chiqmasin.
             inp.setProperty("disable_virtual_keyboard", True)
             inp.setPlaceholderText("0")
-            inp.setText("0")
+            inp.setText(previous_values.get(mode, "0"))
             inp.setMinimumWidth(140)
             inp.setMaximumWidth(220)
             inp.setMinimumHeight(44)
@@ -415,17 +425,31 @@ class PosOpeningDialog(QDialog):
                 self.active_input.setText(current + action)
 
     def _process_opening(self):
+        existing = getattr(self, "worker", None)
+        if existing is not None:
+            try:
+                if existing.isRunning():
+                    return
+            except RuntimeError:
+                pass
         self.btn_open.setEnabled(False)
         self.btn_open.setText(tr("Kassa ochilmoqda..."))
 
         balance_details = []
         for mode, inp in self.payment_inputs.items():
+            # ru/uz lokalda QDoubleValidator "12,5" ni qabul qiladi —
+            # float() esa vergulni tushunmay 0 qilib yuborardi.
+            raw = (inp.text() or "0").replace(" ", "").replace(",", ".")
             try:
-                amount = float(inp.text() or 0)
+                amount = float(raw or 0)
             except ValueError:
                 amount = 0
+            # MUHIM: doctype'dagi maydon nomi "amount" — "opening_amount"
+            # yuborilsa server uni e'tiborsiz qoldirib, boshlang'ich summa
+            # 0 bo'lib yozilardi. Ikkala kalitni ham yuboramiz.
             balance_details.append({
                 "mode_of_payment": mode,
+                "amount": amount,
                 "opening_amount": amount,
             })
 

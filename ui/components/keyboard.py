@@ -12,8 +12,9 @@ class TouchKeyboard(QDialog):
     text_confirmed = pyqtSignal(str)
     text_changed = pyqtSignal(str)  # Emitted on every key press
 
-    def __init__(self, parent=None, initial_text="", title="Matn kiriting", is_numeric=False):
+    def __init__(self, parent=None, initial_text="", title="Matn kiriting", is_numeric=False, is_password=False):
         super().__init__(parent)
+        self.is_password = is_password
         self.setWindowTitle(title)
         # Sarlavha paneli kerak emas — ekran pastiga yopishib turadigan panel.
         # WindowDoesNotAcceptFocus: klaviatura yozilayotgan maydondan fokusni
@@ -47,6 +48,21 @@ class TouchKeyboard(QDialog):
         self.input_field.setText(text or "")
         self.input_field.setCursorPosition(len(text or ""))
 
+    def sync_text(self, text: str):
+        """Target maydonda qo'lda (hardware klaviaturada) yozilgan matnni
+        signal chiqarmasdan qabul qilish.
+
+        Aks holda klaviaturaning ichki nusxasi eskirib, keyingi virtual tugma
+        bosilganda foydalanuvchi yozgan harflar o'chib ketardi.
+        """
+        text = text or ""
+        if self.input_field.text() == text:
+            return
+        self.input_field.blockSignals(True)
+        self.input_field.setText(text)
+        self.input_field.setCursorPosition(len(text))
+        self.input_field.blockSignals(False)
+
     # ── Joylashuv ──────────────────────────────────────────────────────────
     def _dock_to_bottom(self):
         """Klaviaturani ekran pastiga, to'liq kenglikda joylashtiradi."""
@@ -61,7 +77,9 @@ class TouchKeyboard(QDialog):
         else:
             # To'liq ekran kengligiga cho'zilmasin — keng ekranlarda tugmalar
             # juda keng/yassi bo'lib ketadi. Oqilona kenglikda, markazda.
-            height = min(620, int(geo.height() * 0.56))
+            # 0.60 — 1366x768 monobloklarda pastki belgi qatori kesilmasligi
+            # uchun (5 qator × min balandlik + sarlavha + footer sig'ishi kerak).
+            height = min(640, int(geo.height() * 0.60))
             width = min(1180, int(geo.width() * 0.96))
 
         x = geo.x() + (geo.width() - width) // 2  # har doim markazda
@@ -145,6 +163,9 @@ class TouchKeyboard(QDialog):
         display_layout.setContentsMargins(6, 4, 6, 4)
 
         self.input_field = QLineEdit(initial_text)
+        if self.is_password:
+            # Parol maydoni uchun — displayda ham yulduzcha ko'rinadi.
+            self.input_field.setEchoMode(QLineEdit.EchoMode.Password)
         self.input_field.setStyleSheet(
             f"border: none; background: transparent; font-size: 26px; "
             f"font-weight: bold; padding: 10px; color: {c['text_primary']};"
@@ -253,7 +274,8 @@ class TouchKeyboard(QDialog):
         rows = [
             ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
             *letter_rows,
-            ['🌐', '@', '-', '_', ':', '/', '#', '+', '='],
+            # Apostrof (') — o'zbek lotinchada o'/g' uchun majburiy belgi.
+            ['🌐', "'", '@', '-', '_', ':', '/', '#', '+', '='],
         ]
         for row in rows:
             self._add_row(row)
@@ -299,9 +321,10 @@ class TouchKeyboard(QDialog):
         btn = QPushButton(display_text)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         # Minimal o'lcham — har qanday ekran/masshtabda tugmalar o'qiladigan
-        # va bir-biriga yopishmaydigan bo'lib qoladi.
-        btn.setMinimumHeight(48)
-        btn.setMinimumWidth(40)
+        # va bir-biriga yopishmaydigan bo'lib qoladi. 42px — touch uchun
+        # yetarli, ammo past (768px) ekranlarda qatorlar sig'adi.
+        btn.setMinimumHeight(42)
+        btn.setMinimumWidth(36)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -335,7 +358,7 @@ class TouchKeyboard(QDialog):
         if text == '⌫':
             bg, fg = c['error'], "white"
         elif text == 'CLEAR':
-            bg, fg, font_size = c['warning'], "white", 14
+            bg, fg, font_size = c['warning'], "white", 12
         elif text == 'SPACE':
             bg, fg = c.get('accent_light', c['bg_hover']), c['text_primary']
 
@@ -371,7 +394,7 @@ class TouchKeyboard(QDialog):
                 QPushButton {{
                     background: {c['success']}; color: white;
                     border: 2px solid white; border-radius: 10px;
-                    font-size: 15px; font-weight: 800;
+                    font-size: 12px; font-weight: 800;
                 }}
             """)
         else:
@@ -381,7 +404,7 @@ class TouchKeyboard(QDialog):
                 QPushButton {{
                     background: {c['bg_tertiary']}; color: {c['text_secondary']};
                     border: 1px solid {c['border']}; border-radius: 10px;
-                    font-size: 15px; font-weight: bold;
+                    font-size: 12px; font-weight: bold;
                 }}
                 QPushButton:hover {{ border: 1px solid {c['accent']}; }}
             """)
@@ -402,6 +425,10 @@ class TouchKeyboard(QDialog):
         elif key == 'SPACE':
             self.input_field.setText(current + " ")
         else:
+            # Raqamli rejimda ikkinchi nuqta kiritilmasin — "12.3.4" keyin
+            # float() da yiqilib, summa 0 bo'lib ketardi.
+            if self.is_numeric and key == '.' and '.' in current:
+                return
             char = key.lower() if not self._caps else key.upper()
             self.input_field.setText(current + char)
 

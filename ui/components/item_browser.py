@@ -63,13 +63,33 @@ class _OnlineBarcodeLookupWorker(QThread):
 
 
 class ImageLoader(QThread):
-    """Rasmlarni fonda yuklash uchun maxsus thread"""
-    image_loaded = pyqtSignal(QPixmap)
+    """Rasmlarni fonda yuklash uchun maxsus thread.
+
+    MUHIM: QPixmap faqat GUI thread'da yaratilishi mumkin — shu sababli
+    worker QImage emit qiladi, qabul qiluvchi uni QPixmap'ga o'giradi.
+
+    Karta (ItemButton) har qidiruv harfida deleteLater() bo'ladi; agar thread
+    ob'ektiga oxirgi reference karta bilan birga yo'qolsa, Qt "QThread:
+    Destroyed while thread is still running" bilan butun ilovani o'ldiradi.
+    Shuning uchun ishlayotgan loaderlarni class-level registrda ushlab turamiz
+    va faqat thread tugagach qo'yib yuboramiz.
+    """
+    image_loaded = pyqtSignal(QImage)
+
+    _active_loaders = set()
 
     def __init__(self, url, api):
         super().__init__()
         self.url = url
         self.api = api
+
+    def start(self, *args, **kwargs):
+        ImageLoader._active_loaders.add(self)
+        self.finished.connect(self._release_ref)
+        super().start(*args, **kwargs)
+
+    def _release_ref(self):
+        ImageLoader._active_loaders.discard(self)
 
     def run(self):
         try:
@@ -83,8 +103,7 @@ class ImageLoader(QThread):
             if response.status_code == 200:
                 image = QImage()
                 if image.loadFromData(response.content):
-                    pixmap = QPixmap.fromImage(image)
-                    self.image_loaded.emit(pixmap)
+                    self.image_loaded.emit(image)
             else:
                 logger.debug("Image yuklanmadi: %s — HTTP %d", full_url, response.status_code)
         except Exception as e:
@@ -238,8 +257,11 @@ class ItemButton(QFrame):
             pass
 
 
-    def _set_pixmap(self, pixmap: QPixmap):
-        """Yuklangan rasmni image_label'ga o'rnatish"""
+    def _set_pixmap(self, image: QImage):
+        """Yuklangan rasmni image_label'ga o'rnatish (QImage -> QPixmap GUI threadda)"""
+        if image is None or image.isNull():
+            return
+        pixmap = QPixmap.fromImage(image)
         if pixmap.isNull():
             return
         self._original_pixmap = pixmap
@@ -298,9 +320,9 @@ class ItemBrowser(QWidget):
         self.api = api
         self.reserved_quantities = {}
         self.settings = {
-            "hide_zero_stock": {"label": "0 qoldiqchilarni yashirish", "value": False},
-            "hide_zero_rate": {"label": "Nol narxlilarni yashirish", "value": False},
-            "hide_decimals": {"label": "O'nli kasrlarni yashirish", "value": False},
+            "hide_zero_stock": {"label": tr("0 qoldiqchilarni yashirish"), "value": False},
+            "hide_zero_rate": {"label": tr("Nol narxlilarni yashirish"), "value": False},
+            "hide_decimals": {"label": tr("O'nli kasrlarni yashirish"), "value": False},
         }
         self.current_price_list = "Standard Selling"
 
@@ -308,10 +330,22 @@ class ItemBrowser(QWidget):
         self._last_columns = 0
         self._caps = False
         self._letter_buttons = []
+        # Barcode -> item_code xaritasi: har skanda butun jadvalni JSON bilan
+        # qayta o'qib chiqmaslik uchun (sinxrondan keyin yangilanadi).
+        self._barcode_cache = None
         self._resize_timer = QTimer()
         self._resize_timer.setSingleShot(True)
         self._resize_timer.setInterval(150)
         self._resize_timer.timeout.connect(self._on_resize_done)
+        # Qidiruv debounce — har harfda emas, yozish to'xtagach ro'yxatni
+        # qayta quramiz (har keystroke'da butun grid + rasm threadlari
+        # qayta yaratilishi GUI'ni muzlatib qo'yardi).
+        self._search_timer = QTimer()
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
+        self._search_timer.timeout.connect(
+            lambda: self.load_items(self.search_input.text())
+        )
         self.init_ui()
         self.load_categories()
         self.load_items()
@@ -372,7 +406,7 @@ class ItemBrowser(QWidget):
         )
         self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_btn.clicked.connect(self.open_settings)
-        self.sync_label = QLabel("Last sync: 00:00:00 PM")
+        self.sync_label = QLabel(f"{tr('Oxirgi sinxron')}: —")
         self.sync_label.setStyleSheet(f"color: {colors['text_tertiary']}; font-size: 11px;")
         self.sync_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.reload_btn = QPushButton(tr("RELOAD ITEMS"))
@@ -408,6 +442,9 @@ class ItemBrowser(QWidget):
         self.items_table = QTableWidget()
         self.items_table.setColumnCount(4)
         self.items_table.setHorizontalHeaderLabels([tr("NAME"), tr("QTY"), tr("RATE"), tr("UOM")])
+        # ERPNext'dan kelgan ma'lumot — faqat o'qish uchun. Aks holda katak
+        # bosilganda tahrir ochilib, o'zgartirilgan nom savatga ham tushardi.
+        self.items_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.items_table.verticalHeader().setVisible(False)
         self.items_table.verticalHeader().setDefaultSectionSize(50)
         self.items_table.setShowGrid(False)
@@ -576,13 +613,20 @@ class ItemBrowser(QWidget):
         import json
         it = Item.get_or_none(Item.item_code == code)
         if it:
-            p_data = json.loads(it.posawesome_data) if it.posawesome_data else {}
-            st_qty = self._get_effective_stock_qty(code, float(p_data.get("actual_qty", 0)))
+            try:
+                p_data = json.loads(it.posawesome_data) if it.posawesome_data else {}
+            except (TypeError, ValueError):
+                p_data = {}
+            try:
+                actual_qty = float(p_data.get("actual_qty", 0) or 0)
+            except (TypeError, ValueError):
+                actual_qty = 0.0
+            st_qty = self._get_effective_stock_qty(code, actual_qty)
             allow_negative = bool(p_data.get("allow_negative_stock", 0))
             is_stock = bool(p_data.get("is_stock_item", 1))
             if is_stock and not allow_negative and st_qty <= 0:
                 SoundFeedback.error()
-                InfoDialog(self, tr("Xatolik"), f"{name} omborda qolmagan!", kind="warning").exec()
+                InfoDialog(self, tr("Xatolik"), f"{name}: {tr('omborda qolmagan!')}", kind="warning").exec()
                 return
         self.item_selected.emit(code, name, rate, currency)
 
@@ -602,8 +646,20 @@ class ItemBrowser(QWidget):
         if normalized == self.reserved_quantities:
             return
 
+        # hide_zero_stock yoqiq bo'lsa: savatdan tovar olib tashlanganda
+        # (rezerv kamayganda) yashiringan karta qayta ko'rinishi kerak —
+        # badge yangilash buni sezmaydi, to'liq reload kerak.
+        hide_zero = bool(self.settings.get("hide_zero_stock", {}).get("value"))
+        released = hide_zero and any(
+            qty > normalized.get(code, 0)
+            for code, qty in self.reserved_quantities.items()
+        )
+
         self.reserved_quantities = normalized
-        self._refresh_badges_in_place()
+        if released:
+            self.load_items(self.search_input.text())
+        else:
+            self._refresh_badges_in_place()
 
     def _refresh_badges_in_place(self):
         """Update stock badges on existing cards/rows without rebuilding the grid.
@@ -848,29 +904,47 @@ class ItemBrowser(QWidget):
         if available <= 0:
             available = 600
         spacing = self.items_grid.spacing()
-        min_card_width = 170
-        cols = max(2, (available + spacing) // (min_card_width + spacing))
+        # Kartalar setFixedWidth(180) — kichikroq qiymat olsak, ustunlar
+        # viewportga sig'may gorizontal scroll chiqadi.
+        card_width = 180
+        cols = max(2, (available + spacing) // (card_width + spacing))
         return cols
 
     def _handle_item_click(self, item, price, currency):
-        p_data = json.loads(item.posawesome_data) if item.posawesome_data else {}
-        st_qty = self._get_effective_stock_qty(item.item_code, float(p_data.get("actual_qty", 0)))
+        try:
+            p_data = json.loads(item.posawesome_data) if item.posawesome_data else {}
+        except (TypeError, ValueError):
+            p_data = {}
+        try:
+            actual_qty = float(p_data.get("actual_qty", 0) or 0)
+        except (TypeError, ValueError):
+            actual_qty = 0.0
+        st_qty = self._get_effective_stock_qty(item.item_code, actual_qty)
         allow_negative = bool(p_data.get("allow_negative_stock", 0))
         is_stock = bool(p_data.get("is_stock_item", 1))
-        
+
         if is_stock and not allow_negative and st_qty <= 0:
             SoundFeedback.error()
-            InfoDialog(self, tr("Xatolik"), f"{item.item_name} omborda qolmagan (0 qt)!", kind="warning").exec()
+            InfoDialog(self, tr("Xatolik"), f"{item.item_name}: {tr('omborda qolmagan!')}", kind="warning").exec()
             return
-            
+
         self.item_selected.emit(item.item_code, item.item_name, float(price), currency)
         
     def set_price_list(self, price_list):
         self.current_price_list = price_list
         self.load_items(self.search_input.text())
 
+    def set_last_sync_now(self):
+        """Sinxronizatsiya tugaganda haqiqiy vaqtni ko'rsatish."""
+        from datetime import datetime
+        self.sync_label.setText(f"{tr('Oxirgi sinxron')}: {datetime.now().strftime('%H:%M:%S')}")
+        # Yangi tovarlar/barcodelar kelgan bo'lishi mumkin.
+        self.invalidate_barcode_cache()
+
     def set_search_text(self, text: str, trigger: bool = True):
         normalized = str(text or "")
+        # Kutayotgan debounce eski matn bilan keyinroq ishga tushmasin.
+        self._search_timer.stop()
         self.search_input.blockSignals(True)
         self.search_input.setText(normalized)
         self.search_input.blockSignals(False)
@@ -986,17 +1060,38 @@ class ItemBrowser(QWidget):
             if item:
                 return item, scale_data
                 
-            # 3. JSON barcodelarni tekshirish (sekinroq, lekin kerak)
-            query = Item.select()
-            for item in query:
-                barcodes = self._extract_item_barcodes(item)
-                if any(normalized.lower() == b.lower() for b in barcodes):
+            # 3. JSON barcodelar — oldindan qurilgan xarita orqali
+            # (har skanda to'liq jadval skani GUI'ni sekinlatardi)
+            code_hit = self._barcode_map().get(normalized.lower())
+            if code_hit:
+                item = Item.get_or_none(Item.item_code == code_hit)
+                if item:
                     return item, scale_data
-                    
+
             return None, scale_data
         finally:
             if not db.is_closed():
                 db.close()
+
+    def _barcode_map(self) -> dict:
+        if self._barcode_cache is not None:
+            return self._barcode_cache
+        mapping = {}
+        try:
+            db.connect(reuse_if_open=True)
+            for item in Item.select(Item.item_code, Item.barcode, Item.posawesome_data):
+                for b in self._extract_item_barcodes(item):
+                    mapping[b.lower()] = item.item_code
+        except Exception as e:
+            logger.debug("Barcode xarita qurilmadi: %s", e)
+        finally:
+            if not db.is_closed():
+                db.close()
+        self._barcode_cache = mapping
+        return mapping
+
+    def invalidate_barcode_cache(self):
+        self._barcode_cache = None
 
     def _resolve_online_barcode(self, search: str) -> dict | None:
         if not self.api or not self.api.is_configured():
@@ -1080,10 +1175,12 @@ class ItemBrowser(QWidget):
             self.set_search_text("", trigger=False)
             self.search_resolved.emit(payload)
             return
-        # Topilmadi — tovushli signal + lokal qidiruvni ko'rsatamiz
-        self.load_items(search)
-        if self.items_table.rowCount() == 0 and self.items_grid.count() == 0:
-            SoundFeedback.error()
+        # Topilmadi — tovushli signal.  MUHIM: search box bo'sh bo'lsa,
+        # ro'yxatni ko'rinmas matn bilan filtrlab qo'ymaymiz (kassir sababini
+        # ko'rmay bo'sh grid bilan qolardi).
+        SoundFeedback.error()
+        if self.search_input.text().strip() == search.strip():
+            self.load_items(search)
 
 
     def open_settings(self):
@@ -1145,22 +1242,38 @@ class ItemBrowser(QWidget):
         try:
             db.connect(reuse_if_open=True)
             query = Item.select()
-            
+
             # Agar qidiruv bo'lsa - hamma kategoriyadan qidiramiz (Global search)
             # Agar qidiruv bo'masa - tanlangan kategoriya bo'yicha filtrlaymiz
             if self.current_category and not search:
                 query = query.where(Item.item_group == self.current_category)
-                
-            items_iter = query if search else query.limit(ITEM_LOAD_LIMIT)
+
+            # MUHIM: limitni DB darajasida emas, filtrlardan KEYIN qo'llaymiz.
+            # Aks holda hide_zero_stock yoqilganda birinchi ITEM_LOAD_LIMIT
+            # qatorning hammasi 0-qoldiqli bo'lsa, ro'yxat bo'sh ko'rinardi.
+            rendered = 0
+
+            # Narxlarni BITTA so'rov bilan oldindan olamiz — har karta uchun
+            # alohida query GUI'ni sekinlatardi.
+            price_map = {}
+            for pr in ItemPrice.select().where(ItemPrice.price_list == self.current_price_list):
+                price_map[pr.item_code] = (float(pr.price_list_rate or 0), pr.currency or "UZS")
 
             row, col = 0, 0
             table_row = 0
-            
-            for item in items_iter:
+
+            for item in query:
                 if search and not self._item_matches_search(item, search):
                     continue
-                p, cur = self._resolve_display_price(item)
-                raw_qty = float(json.loads(item.posawesome_data).get("actual_qty", 0)) if item.posawesome_data else 0.0
+                p, cur = price_map.get(
+                    item.item_code, (float(item.standard_rate or 0), "UZS")
+                )
+                try:
+                    raw_qty = float(
+                        json.loads(item.posawesome_data or "{}").get("actual_qty", 0) or 0
+                    )
+                except (TypeError, ValueError):
+                    raw_qty = 0.0
                 st_qty = self._get_effective_stock_qty(item.item_code, raw_qty)
                 uom_val = item.uom or item.stock_uom or "Nos"
 
@@ -1169,14 +1282,14 @@ class ItemBrowser(QWidget):
                     continue
                 if self.settings["hide_zero_rate"]["value"] and p <= 0:
                     continue
-                
-                # Apply Decimals Setting
-                if self.settings["hide_decimals"]["value"]:
-                    st_qty = int(st_qty)
-                    p = int(p)
+
+                # Decimals sozlamasi FAQAT ko'rinishga ta'sir qiladi.
+                # Narx (p) o'z holicha qoladi — aks holda kesilgan narx
+                # savatga tushib, mijozdan kam pul olinardi.
+                display_qty = int(st_qty) if self.settings["hide_decimals"]["value"] else st_qty
 
                 # 1. Update Grid Card
-                card = ItemButton(item.item_code, item.item_name, p, cur, item.image, self.api, stock_qty=st_qty, uom=uom_val)
+                card = ItemButton(item.item_code, item.item_name, p, cur, item.image, self.api, stock_qty=display_qty, uom=uom_val)
                 card.clicked.connect(
                     lambda i=item, pr=p, c=cur: self._handle_item_click(i, float(pr), c)
                 )
@@ -1189,24 +1302,28 @@ class ItemBrowser(QWidget):
                 # 2. Update Table (List View) — same iteration
                 if hasattr(self, 'items_table'):
                     self.items_table.insertRow(table_row)
-                    
+
                     item_name_widget = QTableWidgetItem(item.item_name)
                     item_name_widget.setData(Qt.ItemDataRole.UserRole, item.item_code)
                     item_name_widget.setData(Qt.ItemDataRole.UserRole + 1, float(p))
                     item_name_widget.setData(Qt.ItemDataRole.UserRole + 2, cur)
-                    
-                    qty_widget = QTableWidgetItem(f"{st_qty:g}")
-                    
+
+                    qty_widget = QTableWidgetItem(f"{display_qty:g}")
+
                     price_str = f"{p:,.0f}".replace(",", " ") + f" {cur}"
                     rate_widget = QTableWidgetItem(price_str)
-                    
+
                     uom_widget = QTableWidgetItem(uom_val)
-                    
+
                     self.items_table.setItem(table_row, 0, item_name_widget)
                     self.items_table.setItem(table_row, 1, qty_widget)
                     self.items_table.setItem(table_row, 2, rate_widget)
                     self.items_table.setItem(table_row, 3, uom_widget)
                     table_row += 1
+
+                rendered += 1
+                if rendered >= ITEM_LOAD_LIMIT:
+                    break
 
         finally:
             db.close()
@@ -1220,8 +1337,8 @@ class ItemBrowser(QWidget):
         if new_cols != self._last_columns:
             self.load_items(self.search_input.text())
 
-    def filter_items(self, t):
-        self.load_items(t)
+    def filter_items(self, _t):
+        self._search_timer.start()
 
     def _toggle_search_keyboard(self):
         """Qidiruv maydoni uchun ekran klaviaturasini ochadi/yopadi.

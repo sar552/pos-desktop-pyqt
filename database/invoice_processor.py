@@ -51,27 +51,38 @@ def process_pending_invoice(api: FrappeAPI, invoice: PendingInvoice) -> tuple[st
     config = load_config()
     
     # Customer tekshiruvi - bo'sh bo'lsa default customer
+    # ("Guest" emas — online oqim bilan bir xil nom, aks holda server
+    # "Guest" degan yangi soxta mijoz yaratib yuborardi)
     customer = payload.get("customer", "").strip()
     if not customer:
-        payload["customer"] = config.get("default_customer", "Guest")
+        payload["customer"] = config.get("default_customer") or "Guest Customer"
+
+    # Idempotency: server shu id li chekni qayta yaratmaydi.
+    if invoice.offline_id:
+        payload["posa_offline_id"] = invoice.offline_id
     
     # POSAwesome uchun kerakli maydonlar
     payload["doctype"] = "Sales Invoice"
     payload["is_pos"] = 1
     payload["update_stock"] = 1
 
-    if not payload.get("posa_pos_opening_shift"):
-        try:
-            shift = (
-                PosShift.select()
-                .where(PosShift.status == "Open")
-                .order_by(PosShift.id.desc())
-                .first()
-            )
-            if shift and shift.opening_entry:
-                payload["posa_pos_opening_shift"] = shift.opening_entry
-        except Exception as e:
-            logger.debug("Pending invoice uchun opening shift olinmadi: %s", e)
+    # MUHIM: chek saqlangan paytdagi smena sinxron vaqtiga kelib YOPILGAN
+    # bo'lishi mumkin — server yopiq smenali chekni qabul qilmaydi va chek
+    # butunlay yo'qolardi. Shu sababli har urinishda JORIY ochiq smena bilan
+    # qayta muhrlaymiz; ochiq smena bo'lmasa maydonni olib tashlaymiz.
+    try:
+        shift = (
+            PosShift.select()
+            .where(PosShift.status == "Open")
+            .order_by(PosShift.id.desc())
+            .first()
+        )
+        if shift and shift.opening_entry:
+            payload["posa_pos_opening_shift"] = shift.opening_entry
+        else:
+            payload.pop("posa_pos_opening_shift", None)
+    except Exception as e:
+        logger.debug("Pending invoice uchun opening shift olinmadi: %s", e)
     
     # Currency - POSAwesome uchun majburiy
     if not payload.get("currency"):
@@ -145,16 +156,23 @@ def process_pending_invoice(api: FrappeAPI, invoice: PendingInvoice) -> tuple[st
         response = result[1]
         status_code = result[2] if len(result) > 2 else 0
 
-        if success and isinstance(response, dict):
-            doc_name = response.get("name", "")
+        if success:
+            # 200 OK, lekin javob dict bo'lmasligi (bo'sh message) ham mumkin —
+            # server chekni qabul qilgan. "Pending"da qoldirsak, har 30
+            # sekundda qayta yuborilib, cheksiz dublikat chek yaratiladi.
+            doc_name = response.get("name", "") if isinstance(response, dict) else ""
             logger.info(
                 "Oflayn chek muvaffaqiyatli sinxronlandi: %s -> %s",
-                invoice.offline_id, doc_name,
+                invoice.offline_id, doc_name or "(nomsiz javob)",
             )
             return "Synced", doc_name
 
         error_str = str(response)
         logger.error("Sinxronlashda xato (HTTP %s): %s", status_code, error_str)
+        # Smena bilan bog'liq rad — sotuvni yo'qotmaymiz: keyingi urinishda
+        # joriy ochiq smena bilan (yoki smenasiz) qayta yuboriladi.
+        if "shift" in error_str.lower() and "not open" in error_str.lower():
+            return "Pending", error_str
         if is_permanent_error(error_str, status_code):
             return "Failed", error_str
         return "Pending", error_str

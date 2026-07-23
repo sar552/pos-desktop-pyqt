@@ -12,7 +12,7 @@ from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
 from database.models import PendingInvoice, PosShift, PosProfile, db
-from core.printer import print_receipt
+from core.printer import print_receipt, print_async
 from ui.components.dialogs import ClickableLineEdit
 from ui.component_styles import get_component_styles
 from ui.theme_manager import ThemeManager
@@ -37,6 +37,9 @@ class CheckoutWorker(QThread):
             invoice_payload["doctype"] = "Sales Invoice"
             invoice_payload["is_pos"] = 1
             invoice_payload["update_stock"] = 1
+            # Idempotency: server bir xil offline_id li chekni ikkinchi marta
+            # yaratmaydi (timeout keyin qayta yuborishda dublikat bo'lmaydi).
+            invoice_payload["posa_offline_id"] = self.offline_id
 
             formatted_payments = []
             for p in self.payments:
@@ -101,8 +104,15 @@ class CheckoutWorker(QThread):
             if not PendingInvoice.select().where(
                 PendingInvoice.offline_id == self.offline_id
             ).exists():
+                import datetime as _dt
+                now = _dt.datetime.now()
                 save_data = dict(self.invoice_data)
                 save_data["_payments"] = self.payments
+                # Sotuv sanasi sinxron kunida emas, HAQIQIY sotuv paytida
+                # yozilishi uchun sana/vaqtni muhrlab qo'yamiz.
+                save_data.setdefault("posting_date", now.strftime("%Y-%m-%d"))
+                save_data.setdefault("posting_time", now.strftime("%H:%M:%S"))
+                save_data.setdefault("set_posting_time", 1)
                 PendingInvoice.create(
                     offline_id=self.offline_id,
                     invoice_data=json.dumps(save_data),
@@ -148,8 +158,12 @@ class CheckoutWindow(QDialog):
         self._syncing_payment_inputs = False
         self.active_input = None
         self._is_calculating = False
+        self._submitting = False
+        self.worker = None
         self.offline_id = str(uuid.uuid4())
         self._submitted_payments = []
+        self._tendered_payments = []
+        self.invoice_currency = (load_config().get("currency") or "UZS").strip() or "UZS"
         self.colors = ThemeManager.get_theme_colors()
         
         self.init_ui()
@@ -250,7 +264,7 @@ class CheckoutWindow(QDialog):
         )
         self.lbl_balance.setAlignment(Qt.AlignmentFlag.AlignLeft)
         
-        self.lbl_change = QLabel(tr("Qaytim: 0 UZS"))
+        self.lbl_change = QLabel(f"{tr('Qaytim')}: 0 {self.invoice_currency}")
         self.lbl_change.setMinimumHeight(40)
         self.lbl_change.setStyleSheet(
             f"font-size: 15px; font-weight: 700; color: {colors['success']}; "
@@ -531,18 +545,23 @@ class CheckoutWindow(QDialog):
     def _on_numpad_key(self, key):
         if not self.active_input:
             return
-            
+
         current = self.active_input.text()
         if key == "C":
             self.active_input.clear()
         elif key == "<-":
             self.active_input.setText(current[:-1])
         elif key == "+50K":
-            val = float(current.replace(" ", "") or 0) + 50000
-            self.active_input.setText(str(int(val)))
+            try:
+                val = float((current or "0").replace(" ", "").replace(",", ".") or 0)
+            except (TypeError, ValueError):
+                val = 0.0
+            self.active_input.setText(str(int(val) + 50000))
         elif key == "Enter":
             self._process_payment()
         else:
+            if key == "." and "." in current:
+                return
             if current == "0" and key != ".":
                 self.active_input.setText(key)
             else:
@@ -552,7 +571,18 @@ class CheckoutWindow(QDialog):
         if not self.active_input:
             return
         self._clear_amounts()
-        self.active_input.setText(str(int(self.total_amount)))
+        self.active_input.setText(self._fmt_amount_input(self.total_amount))
+
+    @staticmethod
+    def _fmt_amount_input(amount: float) -> str:
+        """Input maydoniga yoziladigan summa — kasr bo'lsa yo'qotmaymiz."""
+        try:
+            amount = max(float(amount or 0), 0.0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        if abs(amount - round(amount)) < 0.005:
+            return str(int(round(amount)))
+        return f"{amount:.2f}"
 
     def _load_profile_data(self) -> dict:
         try:
@@ -635,7 +665,7 @@ class CheckoutWindow(QDialog):
         try:
             for name, inp in self.payment_inputs.items():
                 inp.blockSignals(True)
-                inp.setText(str(int(self.total_amount if name == method else 0)))
+                inp.setText(self._fmt_amount_input(self.total_amount if name == method else 0))
                 inp.blockSignals(False)
             self._set_active_input(self.payment_inputs[method])
         finally:
@@ -659,7 +689,7 @@ class CheckoutWindow(QDialog):
             for name, inp in self.payment_inputs.items():
                 value = self.total_amount if name == self._default_payment_method else 0
                 inp.blockSignals(True)
-                inp.setText(str(int(value)))
+                inp.setText(self._fmt_amount_input(value))
                 inp.blockSignals(False)
             if self._default_payment_method:
                 self._set_active_input(self.payment_inputs[self._default_payment_method])
@@ -671,7 +701,7 @@ class CheckoutWindow(QDialog):
         inp = self.payment_inputs.get(method)
         if not inp:
             return 0.0
-        val = (inp.text() or "").replace(" ", "").strip()
+        val = (inp.text() or "").replace(" ", "").replace(",", ".").strip()
         if not val:
             return 0.0
         try:
@@ -684,7 +714,7 @@ class CheckoutWindow(QDialog):
         if not inp:
             return
         inp.blockSignals(True)
-        inp.setText(str(int(max(amount, 0.0))))
+        inp.setText(self._fmt_amount_input(max(amount, 0.0)))
         inp.blockSignals(False)
 
     def _rebalance_default_payment(self, changed_method: str):
@@ -716,9 +746,13 @@ class CheckoutWindow(QDialog):
             
         self._is_calculating = True
         try:
+            cur = self.invoice_currency
             paid = self._get_paid_total()
             payable_total = self.total_amount
             shortage = max(payable_total - paid, 0.0)
+            # Float qoldiqlari (masalan 0.4 tiyin) tugmani bloklamasin.
+            if shortage < 0.01:
+                shortage = 0.0
             self.extra_discount_amount = 0.0
 
             if self._credit_sale_mode_active() and shortage > 0:
@@ -726,23 +760,23 @@ class CheckoutWindow(QDialog):
                     can_submit = self.allow_credit_sale
                 else:
                     can_submit = self.allow_partial_payment
-                self.lbl_balance.setText(f"{tr('Qarz')}: {shortage:,.0f} UZS")
-                self.lbl_change.setText(tr("Qaytim: 0 UZS"))
+                self.lbl_balance.setText(f"{tr('Qarz')}: {shortage:,.0f} {cur}")
+                self.lbl_change.setText(f"{tr('Qaytim')}: 0 {cur}")
                 self._set_pay_button_enabled(can_submit)
             elif shortage > 0:
                 if self._can_apply_underpayment_discount(shortage):
                     self.extra_discount_amount = shortage
-                    self.lbl_balance.setText(tr("Qoldiq: 0 UZS"))
-                    self.lbl_change.setText(tr("Qaytim: 0 UZS"))
+                    self.lbl_balance.setText(f"{tr('Qoldiq')}: 0 {cur}")
+                    self.lbl_change.setText(f"{tr('Qaytim')}: 0 {cur}")
                     self._set_pay_button_enabled(True)
                 else:
-                    self.lbl_balance.setText(f"{tr('Qoldiq')}: {shortage:,.0f} UZS")
-                    self.lbl_change.setText(tr("Qaytim: 0 UZS"))
+                    self.lbl_balance.setText(f"{tr('Qoldiq')}: {shortage:,.0f} {cur}")
+                    self.lbl_change.setText(f"{tr('Qaytim')}: 0 {cur}")
                     self._set_pay_button_enabled(False)
             else:
-                diff = paid - payable_total
-                self.lbl_balance.setText(tr("Qoldiq: 0 UZS"))
-                self.lbl_change.setText(f"{tr('Qaytim')}: {diff:,.0f} UZS")
+                diff = max(paid - payable_total, 0.0)
+                self.lbl_balance.setText(f"{tr('Qoldiq')}: 0 {cur}")
+                self.lbl_change.setText(f"{tr('Qaytim')}: {diff:,.0f} {cur}")
                 self._set_pay_button_enabled(True)
 
             self._refresh_summary_labels()
@@ -776,12 +810,18 @@ class CheckoutWindow(QDialog):
 
     def _refresh_summary_labels(self):
         total_discount = self._current_invoice_discount_amount()
-        self.lbl_total.setText(f"{tr('Subtotal')}: {self.net_total_amount:,.0f} UZS")
-        self.lbl_discount.setText(f"{tr('Chegirma')}: {total_discount:,.0f} UZS")
-        self.lbl_payable.setText(f"{tr('To\'lanadi')}: {max(self.net_total_amount - total_discount, 0.0):,.0f} UZS")
+        cur = self.invoice_currency
+        payable_label = tr("To'lanadi")
+        self.lbl_total.setText(f"{tr('Subtotal')}: {self.net_total_amount:,.0f} {cur}")
+        self.lbl_discount.setText(f"{tr('Chegirma')}: {total_discount:,.0f} {cur}")
+        self.lbl_payable.setText(f"{payable_label}: {max(self.net_total_amount - total_discount, 0.0):,.0f} {cur}")
 
     def _set_pay_button_enabled(self, enabled: bool):
         colors = self.colors
+        # Yuborish jarayonida hech qanday recalculate tugmani qayta yoqmasin —
+        # aks holda ikkinchi bosish dublikat chek yuboradi.
+        if self._submitting:
+            enabled = False
         self.btn_pay.setEnabled(enabled)
         if enabled:
             self.btn_pay.setStyleSheet(
@@ -793,24 +833,26 @@ class CheckoutWindow(QDialog):
             )
 
     def _process_payment(self):
+        # Bitta checkout — bitta yuborish. Worker ishlayotganda qayta bosish
+        # (Enter, numpad orqali) dublikat chek yaratardi.
+        if self._submitting:
+            return
+
         paid_total = 0.0
         payments = []
-        for method, inp in self.payment_inputs.items():
-            val = inp.text().replace(" ", "")
-            if val:
-                try:
-                    num = float(val)
-                    if num > 0:
-                        paid_total += num
-                        payments.append({
-                            "mode_of_payment": method,
-                            "amount": num
-                        })
-                except (ValueError, TypeError):
-                    pass
+        for method in self._payment_method_order:
+            num = self._parse_input_amount(method)
+            if num > 0:
+                paid_total += num
+                payments.append({
+                    "mode_of_payment": method,
+                    "amount": num
+                })
 
         credit_mode = self._credit_sale_mode_active()
         shortage = max(self.total_amount - paid_total, 0.0)
+        if shortage < 0.01:
+            shortage = 0.0
         extra_discount = 0.0 if credit_mode else (
             shortage if self._can_apply_underpayment_discount(shortage) else 0.0
         )
@@ -830,13 +872,30 @@ class CheckoutWindow(QDialog):
                 if not self.allow_partial_payment:
                     return
                 is_partly_paid = True
-        elif paid_total + 0.0001 < final_payable_total:
+        elif paid_total + 0.01 < final_payable_total:
             return
 
+        # Chekda ko'rsatish uchun kassir haqiqatda olgan (tendered) summalar.
+        self._tendered_payments = [dict(p) for p in payments]
+
+        # Qaytim (excess) avval default (odatda naqd) usuldan, yetmasa qolgan
+        # usullardan ayiriladi — hech qaysi qator manfiy bo'lib qolmaydi.
         excess = max(paid_total - final_payable_total, 0.0)
-        if excess > 0 and len(payments) > 0:
-            payments[0]["amount"] -= excess
-            
+        if excess > 0.0001 and payments:
+            ordered = sorted(
+                payments,
+                key=lambda p: 0 if p["mode_of_payment"] == self._default_payment_method else 1,
+            )
+            remaining = excess
+            for p in ordered:
+                take = min(p["amount"], remaining)
+                p["amount"] = round(p["amount"] - take, 2)
+                remaining = round(remaining - take, 2)
+                if remaining <= 0.0001:
+                    break
+            payments = [p for p in payments if p["amount"] > 0.0001]
+
+
         config = load_config()
 
         customer = self.order_data.get("customer", "").strip()
@@ -862,9 +921,10 @@ class CheckoutWindow(QDialog):
             "apply_discount_on": self.apply_discount_on or "Grand Total",
             "discount_amount": final_invoice_discount,
             "base_discount_amount": final_invoice_discount,
-            "additional_discount_percentage": (
-                (final_invoice_discount / self.net_total_amount) * 100 if self.net_total_amount > 0 else 0.0
-            ),
+            # MUHIM: foiz yuborilsa ERPNext discount_amount ni Grand Total
+            # bo'yicha QAYTA hisoblaydi (soliq bo'lsa summa suriladi).
+            # Foizni 0 qoldirsak — bizning aniq discount_amount saqlanadi.
+            "additional_discount_percentage": 0.0,
             "total": self.net_total_amount,
             "net_total": self.net_total_amount,
             "base_total": self.net_total_amount,
@@ -906,7 +966,10 @@ class CheckoutWindow(QDialog):
             )
 
         self.order_data["invoice_discount_amount"] = final_invoice_discount
-        self.order_data["invoice_discount_percentage"] = invoice_data["additional_discount_percentage"]
+        # Ko'rsatish (chek) uchun foiz — serverga esa foiz yuborilmaydi.
+        self.order_data["invoice_discount_percentage"] = (
+            (final_invoice_discount / self.net_total_amount) * 100 if self.net_total_amount > 0 else 0.0
+        )
         self.order_data["total_amount"] = final_payable_total
         self.order_data["net_total_amount"] = self.net_total_amount
         self.order_data["paid_amount"] = sum(p["amount"] for p in payments)
@@ -916,9 +979,13 @@ class CheckoutWindow(QDialog):
 
         self._submitted_payments = list(payments)
 
+        self._submitting = True
         self.btn_pay.setEnabled(False)
         self.btn_pay.setText(tr("Kuting..."))
-        
+
+        # deleteLater ni maxsus `finished` signalga ulamaymiz — u run() ichida
+        # thread hali tirikligida chiqadi va ishlayotgan QThread o'chib ketishi
+        # mumkin edi. _submitting guard qayta yaratishni baribir bloklaydi.
         self.worker = CheckoutWorker(invoice_data, payments, self.offline_id, self.api)
         self.worker.finished.connect(self._on_checkout_finished)
         self.worker.start()
@@ -944,17 +1011,21 @@ class CheckoutWindow(QDialog):
         """Show real feedback; print only on success; keep dialog open on hard error."""
         from ui.components.dialogs import InfoDialog
 
+        self._submitting = False
+
+        # Chekka kassir bergan (tendered) summalarni yuboramiz — printer
+        # qaytimni o'zi hisoblab "QAYTIM" qatorini ko'rsata oladi.
+        receipt_payments = self._tendered_payments or self._submitted_payments
         receipt_data = dict(self.order_data)
         receipt_data.update({
-            "paid_amount": sum(p["amount"] for p in self._submitted_payments),
+            "paid_amount": sum(p["amount"] for p in receipt_payments),
             "offline_id": self.offline_id,
         })
 
         if success:
-            try:
-                print_receipt(self, receipt_data, self._submitted_payments)
-            except Exception as e:
-                logger.error("Chek chop etishda xato: %s", e)
+            # Chop etish FONDA — printer qotib qolsa ham kassa oynasi
+            # darhol yopilib, keyingi mijozga o'tish mumkin.
+            print_async(print_receipt, None, receipt_data, receipt_payments)
             self.checkout_completed.emit()
             self.accept()
             return
@@ -963,10 +1034,7 @@ class CheckoutWindow(QDialog):
             # Server javob bermadi, lekin chek pending'ga saqlandi.
             # Kassir hozircha chekni chop etishi mumkin — pending sinxron qilingach
             # bo'sh nom (#PENDING) bilan ko'rsatamiz.
-            try:
-                print_receipt(self, receipt_data, self._submitted_payments)
-            except Exception as e:
-                logger.error("Oflayn chek chop etishda xato: %s", e)
+            print_async(print_receipt, None, receipt_data, receipt_payments)
             InfoDialog(
                 self,
                 tr("Server javob bermadi"),
@@ -1003,6 +1071,15 @@ class CheckoutWindow(QDialog):
             if self.btn_pay.isEnabled():
                 self._process_payment()
         elif event.key() == Qt.Key.Key_Escape:
-            self.reject()
+            # Yuborish paytida Escape dialogni yopmasin — chek fonda o'tib
+            # ketib, kassir "bekor bo'ldi" deb ikkinchi marta sotardi.
+            if not self._submitting:
+                self.reject()
         else:
             super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        if self._submitting:
+            event.ignore()
+            return
+        super().closeEvent(event)

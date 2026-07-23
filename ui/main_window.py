@@ -60,6 +60,22 @@ class UpdateCheckWorker(QThread):
             self.update_available.emit(info)
 
 
+class UpdateDownloadWorker(QThread):
+    """Yangilanish ZIP'ini fonda yuklab oladi (GUI 5 minutgacha muzlamasin)."""
+    finished_signal = pyqtSignal(bool, str)  # started, error
+
+    def __init__(self, url: str):
+        super().__init__()
+        self.url = url
+
+    def run(self):
+        try:
+            started = perform_update(self.url)
+            self.finished_signal.emit(bool(started), "")
+        except Exception as e:
+            self.finished_signal.emit(False, str(e))
+
+
 class PosOpeningCheckWorker(QThread):
     finished = pyqtSignal(bool, str, dict)  # has_opening, opening_entry_name, dialog_data
 
@@ -633,11 +649,10 @@ class MainWindow(QMainWindow):
         self.item_browser.submit_search(barcode, add_to_cart=True)
 
         if self._active_cart_item_count() > cart_count_before:
-            self.status_label.setText(f"✅ Skanerlandi: {barcode}")
+            self.status_label.setText(f"✅ {tr('Skanerlandi')}: {barcode}")
         else:
-            self.status_label.setText(
-                f"❌ '{barcode}' barcode bo'yicha tovar topilmadi"
-            )
+            not_found = tr("barcode bo'yicha tovar topilmadi")
+            self.status_label.setText(f"❌ {barcode}: {not_found}")
 
     def _active_cart_item_count(self) -> int:
         cart = self.sales_tabs.currentWidget() if hasattr(self, "sales_tabs") else None
@@ -719,10 +734,15 @@ class MainWindow(QMainWindow):
         if not dlg.result_accepted:
             return
         self._update_in_progress = True
-        try:
-            started = perform_update(info.get("url", ""))
-        except Exception as e:
-            logger.error("Yangilash xatosi: %s", e)
+        self.status_label.setText(tr("Yangilanish yuklab olinmoqda..."))
+        # Yuklab olish FONDA — 300s timeout GUI'ni muzlatmaydi.
+        self._update_download_worker = UpdateDownloadWorker(info.get("url", ""))
+        self._update_download_worker.finished_signal.connect(self._on_update_downloaded)
+        self._update_download_worker.start()
+
+    def _on_update_downloaded(self, started: bool, error: str):
+        if error:
+            logger.error("Yangilash xatosi: %s", error)
             InfoDialog(self, tr("Xatolik"), tr("Yangilash amalga oshmadi."), "error").exec()
             self._update_in_progress = False
             return
@@ -830,8 +850,15 @@ class MainWindow(QMainWindow):
     def _update_offline_queue_count(self):
         try:
             db.connect(reuse_if_open=True)
-            count = PendingInvoice.select().where(PendingInvoice.status == "Pending").count()
-            self.offline_btn.setText(f"{tr('Offline')}: {count}")
+            pending = PendingInvoice.select().where(PendingInvoice.status == "Pending").count()
+            failed = PendingInvoice.select().where(PendingInvoice.status == "Failed").count()
+            # Failed cheklar ham ko'rinishi shart — aks holda yo'qolgan sotuvni
+            # hech kim sezmay qolardi.
+            count = pending + failed
+            if failed:
+                self.offline_btn.setText(f"{tr('Offline')}: {pending} ⚠{failed}")
+            else:
+                self.offline_btn.setText(f"{tr('Offline')}: {pending}")
             colors = ThemeManager.get_theme_colors()
 
             if count > 0:
@@ -857,14 +884,20 @@ class MainWindow(QMainWindow):
         self._update_offline_queue_count()
 
     def add_new_sale_tab(self):
-        tab_count = self.sales_tabs.count()
         new_cart = CartWidget(self.api)
         new_cart.checkout_requested.connect(self.on_checkout)
         new_cart.price_list_changed.connect(self.item_browser.set_price_list)
         new_cart.cart_updated.connect(self._sync_item_browser_cart_view)
-        tab_index = self.sales_tabs.addTab(new_cart, f"{tr('Sotuv')} {tab_count + 1}")
+        tab_index = self.sales_tabs.addTab(new_cart, "")
+        self._renumber_sale_tabs()
         self.sales_tabs.setCurrentIndex(tab_index)
         self._sync_item_browser_cart_view()
+
+    def _renumber_sale_tabs(self):
+        """Tab nomlarini tartib bilan yangilash — yopilgandan keyin
+        "Sotuv 2, Sotuv 2" kabi takror nomlar qolmasligi uchun."""
+        for i in range(self.sales_tabs.count()):
+            self.sales_tabs.setTabText(i, f"{tr('Sotuv')} {i + 1}")
 
     def _on_tab_changed(self, index: int):
         cart = self.sales_tabs.widget(index)
@@ -876,18 +909,24 @@ class MainWindow(QMainWindow):
         self._sync_item_browser_cart_view()
 
     def _get_active_cart_reservations(self) -> dict:
-        active_cart = self.sales_tabs.currentWidget()
-        if not active_cart or not hasattr(active_cart, "items"):
-            return {}
+        """BARCHA ochiq tablardagi savatlar bo'yicha jami rezerv.
 
+        Faqat aktiv tabni hisoblasak, ikkinchi tabga o'tganda badge qayta
+        to'liq zaxirani ko'rsatib, 3 dona qoldiqli tovarni 6 dona sotib
+        yuborish mumkin edi.
+        """
         reservations = {}
-        for code, item in active_cart.items.items():
-            try:
-                qty = float(item.get("qty", 0))
-            except (TypeError, ValueError):
-                qty = 0
-            if qty > 0:
-                reservations[code] = qty
+        for i in range(self.sales_tabs.count()):
+            cart = self.sales_tabs.widget(i)
+            if not cart or not hasattr(cart, "items"):
+                continue
+            for code, item in cart.items.items():
+                try:
+                    qty = float(item.get("qty", 0))
+                except (TypeError, ValueError):
+                    qty = 0
+                if qty > 0:
+                    reservations[code] = reservations.get(code, 0.0) + qty
         return reservations
 
     def _sync_item_browser_cart_view(self, *_args):
@@ -901,12 +940,13 @@ class MainWindow(QMainWindow):
                 dlg = ConfirmDialog(
                     self, tr("Vkladkani yopish"),
                     tr("Savatda tovarlar bor. Baribir yopmoqchimisiz?"),
-                    icon="⚠️", yes_text="Ha, yopish", yes_color="#ef4444",
+                    icon="⚠️", yes_text=tr("Ha, yopish"), yes_color="#ef4444",
                 )
                 dlg.exec()
                 if not dlg.result_accepted:
                     return
             self.sales_tabs.removeTab(index)
+            self._renumber_sale_tabs()
             self._sync_item_browser_cart_view()
         else:
             InfoDialog(self, tr("Diqqat"), tr("Kamida bitta sotuv oynasi ochiq bo'lishi kerak."), kind="warning").exec()
@@ -1030,6 +1070,8 @@ class MainWindow(QMainWindow):
         self._update_company_badge(cfg.get("company", ""), cfg.get("pos_profile", ""))
         self._update_company_logo(cfg)
         if success:
+            if hasattr(self.item_browser, "set_last_sync_now"):
+                self.item_browser.set_last_sync_now()
             self.item_browser.load_items()
             # Also refresh Cart's price list combo
             for i in range(self.sales_tabs.count()):
@@ -1078,11 +1120,9 @@ class MainWindow(QMainWindow):
     def _show_pos_opening_dialog(self, dialog_data: dict):
         if not dialog_data:
             dialog_data = getattr(self, "_cached_opening_dialog", None) or {}
-        if not dialog_data:
-            success, response = self.api.call_method("posawesome.posawesome.api.shifts.get_opening_dialog_data")
-            if success and isinstance(response, dict):
-                dialog_data = response
-                self._cached_opening_dialog = dialog_data
+        # Cache bo'sh bo'lsa ham sinxron API chaqirmaymiz — GUI 10 sekund
+        # muzlab qolardi. PosOpeningDialog o'zi background worker bilan
+        # ma'lumotni yuklab, kelganda formani to'ldiradi.
         dlg = PosOpeningDialog(self, self.api, dialog_data)
         dlg.opening_completed.connect(self._on_pos_opened)
         dlg.exit_requested.connect(self._on_opening_exit)
@@ -1104,6 +1144,19 @@ class MainWindow(QMainWindow):
 
     def show_pos_closing(self):
         if not self.opening_entry:
+            # Oflayn ochilgan (serverda hujjati yo'q) lokal shift bo'lishi
+            # mumkin — kassir butunlay qulflanib qolmasligi uchun uni lokal
+            # yopish imkonini beramiz.
+            if self._has_local_open_shift():
+                dlg = ConfirmDialog(
+                    self, tr("Kassani yopish"),
+                    tr("Kassa oflayn ochilgan (serverda hujjati yo'q). Lokal shift yopilsinmi?"),
+                    icon="🔒", yes_text=tr("Ha, yopish"), yes_color="#dc2626",
+                )
+                dlg.exec()
+                if dlg.result_accepted:
+                    self._close_local_shift_only()
+                return
             InfoDialog(
                 self, tr("Kassa topilmadi"),
                 tr("Ochiq kassa topilmadi."),
@@ -1114,7 +1167,7 @@ class MainWindow(QMainWindow):
         dlg = ConfirmDialog(
             self, tr("Kassani yopish"),
             tr("Kassani yopmoqchimisiz?\nBarcha to'lovlar hisoblanadi."),
-            icon="🔒", yes_text="Ha, yopish", yes_color="#dc2626",
+            icon="🔒", yes_text=tr("Ha, yopish"), yes_color="#dc2626",
         )
         dlg.exec()
         if not dlg.result_accepted:
@@ -1123,6 +1176,31 @@ class MainWindow(QMainWindow):
         closing_dlg = PosClosingDialog(self, self.api, self.opening_entry)
         closing_dlg.closing_completed.connect(self._on_pos_closed)
         closing_dlg.exec()
+
+    def _has_local_open_shift(self) -> bool:
+        try:
+            db.connect(reuse_if_open=True)
+            return PosShift.select().where(PosShift.status == "Open").exists()
+        except Exception as e:
+            logger.debug("Lokal shift tekshirishda xato: %s", e)
+            return False
+        finally:
+            if not db.is_closed():
+                db.close()
+
+    def _close_local_shift_only(self):
+        try:
+            import datetime
+            db.connect(reuse_if_open=True)
+            PosShift.update(
+                status="Closed", closed_at=datetime.datetime.now()
+            ).where(PosShift.status == "Open").execute()
+        except Exception as e:
+            logger.error("Lokal shiftni yopishda xato: %s", e)
+        finally:
+            if not db.is_closed():
+                db.close()
+        self._on_pos_closed()
 
     def _on_pos_closed(self):
         self.opening_entry = None
@@ -1331,15 +1409,47 @@ class MainWindow(QMainWindow):
         else:
             kb.set_target(text, title)
 
+        # Target maydonda hardware klaviaturada yozilsa ham ekran
+        # klaviaturasining ichki nusxasi yangilanib turadi — aks holda
+        # keyingi virtual tugma foydalanuvchi yozganini o'chirib yuborardi.
+        old_synced = getattr(self, "_kb_synced_input", None)
+        if old_synced is not None and old_synced is not line_edit:
+            try:
+                old_synced.textChanged.disconnect(self._sync_keyboard_from_input)
+            except (TypeError, RuntimeError):
+                pass
+            self._kb_synced_input = None
+        if getattr(self, "_kb_synced_input", None) is not line_edit:
+            try:
+                line_edit.textChanged.connect(self._sync_keyboard_from_input)
+                self._kb_synced_input = line_edit
+            except Exception:
+                pass
+
         if not kb.isVisible():
             kb.show()
+
+    def _sync_keyboard_from_input(self, text):
+        kb = getattr(self, "global_keyboard", None)
+        if kb is None:
+            return
+        try:
+            kb.sync_text(text)
+        except RuntimeError:
+            self.global_keyboard = None
 
     def _toggle_global_keyboard(self):
         """F11 / status-bar tugmasi: klaviaturani qo'lda ochish-yopish."""
         kb = getattr(self, 'global_keyboard', None)
-        if kb is not None and kb.isVisible():
-            kb.hide()
-            return
+        if kb is not None:
+            # Klaviatura dialog bilan birga o'chirilgan bo'lishi mumkin —
+            # o'lik C++ ob'ektga murojaat F11'da butun ilovani o'ldirardi.
+            try:
+                if kb.isVisible():
+                    kb.hide()
+                    return
+            except RuntimeError:
+                self.global_keyboard = None
         focused_input = self._get_live_focused_input()
         if focused_input is None:
             return
@@ -1468,6 +1578,27 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'barcode_manager'):
             # stop_all() endi HID filter-ni ham olib tashlaydi.
             self.barcode_manager.stop_all()
+        # Global klaviatura hook'larini tozalaymiz — aks holda logout'dan
+        # keyin login oynasida bu oynaning klaviaturasi ham ochilib,
+        # ekranda IKKITA klaviatura paydo bo'lardi.
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                app.focusChanged.disconnect(self._on_focus_changed)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                app.removeEventFilter(self)
+            except RuntimeError:
+                pass
+        kb = getattr(self, "global_keyboard", None)
+        if kb is not None:
+            try:
+                kb.close()
+                kb.deleteLater()
+            except RuntimeError:
+                pass
+            self.global_keyboard = None
         if not self.offline_sync_worker.wait(2000):
             logger.warning("Offline sync worker 2 sekund ichida to'xtamadi")
         super().closeEvent(event)

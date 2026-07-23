@@ -7,7 +7,9 @@ IMAGE_TIMEOUT = 5
 # Database
 ITEM_LOAD_LIMIT = 100
 CUSTOMER_SYNC_LIMIT = 1000
-HISTORY_FETCH_LIMIT = 50
+# Band smenada 50 ta chek tez to'lib qoladi — eski cheklar ko'rinmay,
+# bekor qilib bo'lmay qolardi.
+HISTORY_FETCH_LIMIT = 200
 
 # Offline sync interval (seconds)
 OFFLINE_SYNC_INTERVAL = 30

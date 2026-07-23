@@ -90,11 +90,18 @@ def perform_update(asset_url: str) -> bool:
         logger.info("Dev rejim — auto-update o'tkazib yuborildi")
         return False
 
+    import tempfile
+
     install_dir = os.path.dirname(sys.executable)
     exe_path = sys.executable
-    staging = os.path.join(install_dir, "_update_staging")
-    zip_path = os.path.join(install_dir, "_update.zip")
-    bat_path = os.path.join(install_dir, "_update.bat")
+    exe_name = os.path.basename(exe_path)
+    # Vaqtinchalik fayllar %TEMP% da — o'rnatish papkasi (masalan Program
+    # Files) yozib bo'lmaydigan bo'lsa ham yuklab olish muvaffaqiyatli bo'ladi.
+    tmp_root = os.path.join(tempfile.gettempdir(), "posawesome_update")
+    staging = os.path.join(tmp_root, "staging")
+    zip_path = os.path.join(tmp_root, "update.zip")
+    bat_path = os.path.join(tmp_root, "update.bat")
+    os.makedirs(tmp_root, exist_ok=True)
 
     # 1) Yuklab olish
     logger.info("Yangi versiya yuklanmoqda: %s", asset_url)
@@ -118,10 +125,22 @@ def perform_update(asset_url: str) -> bool:
     xd = " ".join(_KEEP_DIRS)
     bat = f"""@echo off
 chcp 65001 >nul
-REM Dastur to'liq yopilishini kutamiz
-timeout /t 2 /nobreak >nul
+REM Dastur to'liq yopilishini kutamiz. MUHIM: `timeout` konsolsiz (detached)
+REM cmd'da ishlamaydi — `ping` bilan kutamiz, so'ng exe qulfdan chiqqanini
+REM rename-test bilan tekshiramiz (yarim almashtirilgan o'rnatish bo'lmasin).
+ping -n 3 127.0.0.1 >nul
+set tries=0
+:waitloop
+ren "{exe_path}" "{exe_name}" >nul 2>&1
+if errorlevel 1 (
+  set /a tries+=1
+  if %tries% geq 60 goto giveup
+  ping -n 2 127.0.0.1 >nul
+  goto waitloop
+)
 REM Yangi fayllarni o'rnatamiz (data fayllar saqlanadi)
 robocopy "{staging}" "{install_dir}" /E /IS /IT /R:3 /W:1 /NFL /NDL /NJH /NJS /XF {xf} /XD {xd}
+:giveup
 REM Tozalash
 del "{zip_path}" >nul 2>&1
 rmdir /s /q "{staging}" >nul 2>&1

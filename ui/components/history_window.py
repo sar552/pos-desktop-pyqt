@@ -537,6 +537,15 @@ class HistoryWindow(QWidget):
             self.load_history()
 
     def load_history(self):
+        # Ishlayotgan worker ustidan yangisini ochmaymiz — ishlayotgan
+        # QThread reference'i yo'qolsa Qt butun ilovani o'ldiradi.
+        existing = getattr(self, "worker", None)
+        if existing is not None:
+            try:
+                if existing.isRunning():
+                    return
+            except RuntimeError:
+                pass
         self.table.setRowCount(0)
         if not self.opening_entry:
             return
@@ -546,6 +555,12 @@ class HistoryWindow(QWidget):
 
     def _on_loaded(self, success: bool, data: list):
         if not success:
+            # Jim bo'sh jadval "sotuv yo'q" bilan bir xil ko'rinadi —
+            # kassirga xato borligini bildiramiz.
+            self.table.setRowCount(1)
+            err = QTableWidgetItem(tr("Tarixni yuklab bo'lmadi — internetni tekshiring."))
+            self.table.setItem(0, 0, err)
+            self.table.setSpan(0, 0, 1, self.table.columnCount())
             return
         colors = ThemeManager.get_theme_colors()
         self.table.setRowCount(0)
@@ -556,11 +571,15 @@ class HistoryWindow(QWidget):
             status_text, status_tone = self._derive_payment_status(item)
 
             self.table.setItem(i, 0, QTableWidgetItem(inv_name))
-            self.table.setItem(i, 1, QTableWidgetItem(item.get("posting_date", "")))
-            self.table.setItem(i, 2, QTableWidgetItem(item.get("posting_time", "")[:5]))
-            self.table.setItem(i, 3, QTableWidgetItem(item.get("customer", "")))
+            self.table.setItem(i, 1, QTableWidgetItem(item.get("posting_date") or ""))
+            self.table.setItem(i, 2, QTableWidgetItem(str(item.get("posting_time") or "")[:5]))
+            self.table.setItem(i, 3, QTableWidgetItem(item.get("customer") or ""))
             self.table.setCellWidget(i, 4, self._build_status_badge(item))
-            amt = QTableWidgetItem(f"{item.get('grand_total', 0):,.0f} UZS".replace(",", " "))
+            try:
+                grand_total = float(item.get("grand_total") or 0)
+            except (TypeError, ValueError):
+                grand_total = 0.0
+            amt = QTableWidgetItem(f"{grand_total:,.0f} UZS".replace(",", " "))
             amt.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
             self.table.setItem(i, 5, amt)
 
@@ -595,20 +614,20 @@ class HistoryWindow(QWidget):
         paid_amount = max(grand_total - outstanding, 0.0)
 
         if docstatus == 0 or status_key == "draft":
-            return "Draft", "draft"
+            return tr("Draft"), "draft"
         if docstatus == 2 or status.lower() == "cancelled":
-            return "Bekor qilingan", "cancelled"
+            return tr("Bekor qilingan"), "cancelled"
         if status_key == "paid":
-            return "Paid", "paid"
+            return tr("Paid"), "paid"
         if status_key in {"partly paid", "partially paid"}:
             return tr("Qisman to'langan"), "partial"
         if status_key in {"unpaid", "overdue"}:
-            return "To'lanmagan", "unpaid"
+            return tr("To'lanmagan"), "unpaid"
         if outstanding <= 0:
-            return "Paid", "paid"
+            return tr("Paid"), "paid"
         if paid_amount > 0:
             return tr("Qisman to'langan"), "partial"
-        return "To'lanmagan", "unpaid"
+        return tr("To'lanmagan"), "unpaid"
 
     def _build_status_badge(self, item: dict) -> QLabel:
         text, tone = self._derive_payment_status(item)
@@ -662,6 +681,13 @@ class HistoryWindow(QWidget):
                 return
             reason = dlg.get_reason()
 
+        existing = getattr(self, "cancel_worker", None)
+        if existing is not None:
+            try:
+                if existing.isRunning():
+                    return
+            except RuntimeError:
+                pass
         self.cancel_worker = CancelOrderWorker(self.api, invoice_id, reason)
         self.cancel_worker.finished.connect(self._on_cancel_finished)
         self.cancel_worker.start()

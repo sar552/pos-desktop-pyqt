@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
-from core.printer import print_payment_receipt
+from core.printer import print_payment_receipt, print_async
 from database.models import Customer, PosProfile, db
 from ui.components.dialogs import ClickableLineEdit
 from ui.component_styles import get_component_styles
@@ -287,6 +287,9 @@ class PaymentsWindow(QDialog):
         self.sverka_final_balance = 0.0
         self.payment_method_inputs = {}
         self.payment_method_currencies = {}
+        self._processing_payment = False
+        self.worker = None
+        self.process_worker = None
         self.colors = ThemeManager.get_theme_colors()
         self._build_ui()
         self._load_customers()
@@ -779,9 +782,10 @@ class PaymentsWindow(QDialog):
         worker.start()
 
     def _on_payment_method_currencies(self, mapping: dict):
-        if isinstance(mapping, dict):
+        # Bo'sh javob (fetch xatosi) uchun UI qayta qurilmaydi — aks holda
+        # kassir yozib bo'lgan summalar bekorga o'chib ketardi.
+        if isinstance(mapping, dict) and mapping:
             self.payment_method_currencies = mapping
-            # Agar UI allaqachon qurilgan bo'lsa — qayta tuzamiz
             if hasattr(self, "payment_method_inputs"):
                 try:
                     self._build_payment_method_inputs()
@@ -790,6 +794,15 @@ class PaymentsWindow(QDialog):
 
     def _build_payment_method_inputs(self):
         colors = self.colors
+        # Qayta qurishda kassir yozgan summalarni saqlab qolamiz.
+        previous_values = {}
+        for mode, inp in (self.payment_method_inputs or {}).items():
+            try:
+                text = inp.text()
+            except RuntimeError:
+                continue
+            if text:
+                previous_values[mode] = text
         while self.payment_methods_layout.count():
             item = self.payment_methods_layout.takeAt(0)
             widget = item.widget()
@@ -829,9 +842,15 @@ class PaymentsWindow(QDialog):
             currency = self.payment_method_currencies.get(mode)
             if currency and currency != self.currency:
                 lbl.setText(f"{mode} ({currency})")
+            if mode in previous_values:
+                inp.blockSignals(True)
+                inp.setText(previous_values[mode])
+                inp.blockSignals(False)
             self.payment_methods_layout.addWidget(lbl, row_idx, 0)
             self.payment_methods_layout.addWidget(inp, row_idx, 1)
             self.payment_method_inputs[mode] = inp
+        if previous_values:
+            self._update_totals()
 
     def _load_dashboard(self):
         if not self.api:
@@ -841,6 +860,14 @@ class PaymentsWindow(QDialog):
         if not customer:
             QMessageBox.warning(self, tr("Customer"), tr("Avval customer tanlang."))
             return
+        # Avvalgi so'rov hali tugamagan bo'lsa — ustidan yangisini ochmaymiz
+        # (ishlayotgan QThread reference'i yo'qolib, crash bo'lardi).
+        if self.worker is not None:
+            try:
+                if self.worker.isRunning():
+                    return
+            except RuntimeError:
+                pass
         self.search_btn.setEnabled(False)
         self.worker = PaymentsDataWorker(
             self.api,
@@ -962,7 +989,7 @@ class PaymentsWindow(QDialog):
             self.sverka_table.setItem(idx, 4, credit_item)
             self.sverka_table.setItem(idx, 5, balance_item)
             status_text = row.get("status") or "Paid"
-            self.sverka_table.setItem(idx, 6, QTableWidgetItem(status_text))
+            self.sverka_table.setItem(idx, 6, QTableWidgetItem(tr(status_text)))
         self.sverka_final_balance = running_balance
 
     def _populate_outstanding_table(self):
@@ -1013,13 +1040,23 @@ class PaymentsWindow(QDialog):
         max_payable = max(outstanding_total, 0.0)
         payment_applied = min(new_payment_total, max_payable)
         remaining_after_payment = max(max_payable - payment_applied, 0.0)
-        balance_text = f"{tr('Qoldiq (Qarzdor)')}\n{self._money(max_payable)}" if max_payable > 0 else tr("Qoldiq\n0 UZS")
+        if max_payable > 0:
+            balance_text = f"{tr('Qoldiq (Qarzdor)')}\n{self._money(max_payable)}"
+        else:
+            balance_text = f"{tr('Qoldiq')}\n{self._money(0)}"
 
+        entered_label = tr("Kiritilgan To'lov")
         self.final_balance_label.setText(balance_text)
         self.outstanding_total_label.setText(f"{tr('Qarzdor Invoice')}\n{self._money(outstanding_total)}")
         self.selected_invoice_total_label.setText(f"{tr('FIFO Yopiladi')}\n{self._money(payment_applied)}")
         self.selected_payment_total_label.setText(f"{tr('Qoladi')}\n{self._money(remaining_after_payment)}")
-        self.new_payment_total_label.setText(f"{tr('Kiritilgan To\'lov')}\n{self._money(new_payment_total)}")
+        self.new_payment_total_label.setText(f"{entered_label}\n{self._money(new_payment_total)}")
+
+        # To'lov yuborilayotganda hech qanday textChanged tugmani qayta
+        # yoqmasin — aks holda ikkinchi bosish dublikat Payment Entry yaratadi.
+        if self._processing_payment:
+            self.process_btn.setEnabled(False)
+            return
 
         has_customer = bool(self._selected_customer_name())
         has_action = new_payment_total > 0
@@ -1044,9 +1081,9 @@ class PaymentsWindow(QDialog):
 
     def _format_running_balance(self, amount: float) -> str:
         if amount > 0:
-            return f"{self._money(amount)} Qarzdor"
+            return f"{self._money(amount)} {tr('Qarzdor')}"
         if amount < 0:
-            return f"{self._money(abs(amount))} Avans"
+            return f"{self._money(abs(amount))} {tr('Avans')}"
         return self._money(0.0)
 
     def _invoice_payment_status(self, invoice: dict) -> str:
@@ -1115,6 +1152,8 @@ class PaymentsWindow(QDialog):
         self._load_dashboard()
 
     def _process_payment(self):
+        if self._processing_payment:
+            return
         if not self.api:
             QMessageBox.warning(self, "API", tr("Server API ulanmagan."))
             return
@@ -1136,10 +1175,11 @@ class PaymentsWindow(QDialog):
             return
 
         if total_payment_methods > remaining_debt + 0.0001:
+            overpay_msg = tr("To'lov qarzdan oshib ketdi.")
             QMessageBox.warning(
                 self,
                 tr("Payment"),
-                f"To'lov qarzdan oshib ketdi. Maksimum: {self._money(remaining_debt)}",
+                f"{overpay_msg} {tr('Maksimum')}: {self._money(remaining_debt)}",
             )
             return
 
@@ -1166,6 +1206,7 @@ class PaymentsWindow(QDialog):
             "total_selected_mpesa_payments": 0.0,
         }
 
+        self._processing_payment = True
         self.process_btn.setEnabled(False)
         self.process_btn.setText(tr("Kuting..."))
         self.process_worker = ProcessPaymentWorker(self.api, payload)
@@ -1208,6 +1249,7 @@ class PaymentsWindow(QDialog):
         }
 
     def _on_payment_processed(self, success: bool, payload: dict, error: str):
+        self._processing_payment = False
         self.process_btn.setEnabled(True)
         self.process_btn.setText(tr("Payment Qilish"))
         if not success:
@@ -1219,24 +1261,20 @@ class PaymentsWindow(QDialog):
         reconciled = payload.get("reconciled_payments") or []
         message_lines = []
         if new_entries:
-            message_lines.append(f"Yangi payment: {len(new_entries)} ta")
+            message_lines.append(f"{tr('Yangi payment')}: {len(new_entries)} ta")
         if reconciled:
-            message_lines.append(f"Reconcile qilingan: {len(reconciled)} ta")
+            message_lines.append(f"{tr('Reconcile qilingan')}: {len(reconciled)} ta")
         if errors:
-            message_lines.append("Xatolar:")
+            message_lines.append(tr("Xatolar:"))
             message_lines.extend(str(err) for err in errors[:5])
 
-        print_issue = ""
         if new_entries:
+            # Chop etish fonda — printer sekin bo'lsa ham oyna muzlamaydi.
             try:
                 receipt_payload = self._build_payment_receipt_payload(new_entries)
-                if not print_payment_receipt(receipt_payload):
-                    print_issue = tr("Payment receipt printerdan chiqmadi.")
+                print_async(print_payment_receipt, receipt_payload)
             except Exception as print_error:
                 logger.error("Payment receipt print xatosi: %s", print_error)
-                print_issue = f"Payment receipt xatosi: {print_error}"
-        if print_issue:
-            message_lines.append(print_issue)
 
         QMessageBox.information(
             self,
