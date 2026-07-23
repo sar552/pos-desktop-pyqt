@@ -123,12 +123,24 @@ class LoginWindow(QWidget):
         cur = self.lang_combo.findData(i18n.language)
         if cur >= 0:
             self.lang_combo.setCurrentIndex(cur)
+        # MUHIM: ranglar ThemeManager'dan — avval har doim oq fon tushib,
+        # dark rejimda och matn ko'rinmay qolardi.
+        _c = ThemeManager.get_theme_colors()
         self.lang_combo.setStyleSheet(f"""
             QComboBox {{
-                background: {theme_styles.get('input_bg', '#ffffff')}; color: {theme_styles['title_color']};
-                border: 1px solid #cbd5e1; border-radius: 8px; padding: 4px 10px; font-size: 13px; font-weight: 600;
+                background: {_c['input_bg']}; color: {_c['text_primary']};
+                border: 1px solid {_c['border']}; border-radius: 8px;
+                padding: 4px 10px; font-size: 13px; font-weight: 600;
             }}
+            QComboBox:focus {{ border: 2px solid {_c['accent']}; }}
             QComboBox::drop-down {{ border: none; width: 24px; }}
+            QComboBox QAbstractItemView {{
+                background: {_c['bg_secondary']}; color: {_c['text_primary']};
+                border: 1px solid {_c['border']};
+                selection-background-color: {_c['accent']};
+                selection-color: white;
+                outline: 0;
+            }}
         """)
         self.lang_combo.currentIndexChanged.connect(self._on_language_changed)
         lang_row.addStretch()
@@ -204,13 +216,14 @@ class LoginWindow(QWidget):
         self.advanced_toggle = QPushButton(tr("Kengaytirilgan sozlamalar ▸"))
         self.advanced_toggle.setFixedHeight(44)
         self.advanced_toggle.setCheckable(True)
-        self.advanced_toggle.setStyleSheet("""
-            QPushButton {
-                font-size: 12px; font-weight: 600; color: #94a3b8;
+        _c = ThemeManager.get_theme_colors()
+        self.advanced_toggle.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 12px; font-weight: 600; color: {_c['text_tertiary']};
                 background: transparent; border: none; margin-top: 8px;
                 text-align: left; padding-left: 4px;
-            }
-            QPushButton:checked { color: #3b82f6; }
+            }}
+            QPushButton:checked {{ color: {_c['accent']}; }}
         """)
         self.advanced_toggle.toggled.connect(self._toggle_advanced)
         layout.addWidget(self.advanced_toggle)
@@ -240,10 +253,12 @@ class LoginWindow(QWidget):
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
         self.error_label.setVisible(False)
-        self.error_label.setStyleSheet("""
-            font-size: 12px; color: #dc2626; background: #fef2f2;
-            border: 1px solid #fecaca; border-radius: 8px;
-            padding: 8px 12px; margin-top: 10px;
+        _c = ThemeManager.get_theme_colors()
+        self.error_label.setStyleSheet(f"""
+            font-size: 12px; color: {_c['error']};
+            background: {_c.get('error_bg', _c['bg_tertiary'])};
+            border: 1px solid {_c.get('error_border', _c['border'])};
+            border-radius: 8px; padding: 8px 12px; margin-top: 10px;
         """)
         layout.addWidget(self.error_label)
 
@@ -253,11 +268,14 @@ class LoginWindow(QWidget):
         self.kb_toggle_btn = QPushButton(tr("⌨️ Ekran Klaviaturasi"))
         self.kb_toggle_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.kb_toggle_btn.setFixedHeight(40)
-        self.kb_toggle_btn.setStyleSheet("""
-            QPushButton {
-                background: #f1f5f9; color: #475569; font-weight: bold; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 5px;
-            }
-            QPushButton:hover { background: #e2e8f0; }
+        _c = ThemeManager.get_theme_colors()
+        self.kb_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {_c['bg_tertiary']}; color: {_c['text_primary']};
+                font-weight: bold; border-radius: 8px;
+                border: 1px solid {_c['border']}; margin-bottom: 5px;
+            }}
+            QPushButton:hover {{ background: {_c['bg_hover']}; }}
         """)
         self.kb_toggle_btn.clicked.connect(self._toggle_keyboard_panel)
         layout.addWidget(self.kb_toggle_btn)
@@ -301,8 +319,9 @@ class LoginWindow(QWidget):
         from core.version import __version__
         footer = QLabel(f"POSAwesome Desktop v{__version__}")
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        footer.setStyleSheet("""
-            font-size: 11px; color: #cbd5e1; margin-top: 14px; background: transparent;
+        footer.setStyleSheet(f"""
+            font-size: 11px; color: {ThemeManager.get_theme_colors()['text_tertiary']};
+            margin-top: 14px; background: transparent;
         """)
         layout.addWidget(footer)
 
