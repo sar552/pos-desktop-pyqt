@@ -9,6 +9,7 @@ from core.config import load_config, save_config
 from core.printer import send_test_print, get_printer_issue, list_linux_printers
 from core.logger import get_logger
 from core.i18n import tr
+from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
 
@@ -214,13 +215,15 @@ class PrinterSettingsDialog(QDialog):
         close_btn = QPushButton("✕")
         close_btn.setMinimumSize(34, 34)
         close_btn.setMaximumSize(44, 44)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: #475569; color: white;
+        _c = ThemeManager.get_theme_colors()
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {_c['bg_tertiary']}; color: {_c['error']};
                 font-weight: bold; font-size: 16px;
-                border-radius: 8px; border: none;
-            }
-            QPushButton:pressed { background: #334155; }
+                border-radius: 8px; border: none; padding: 0;
+            }}
+            QPushButton:hover {{ background: {_c['error']}; color: white; }}
+            QPushButton:pressed {{ background: {_c['error']}; color: white; }}
         """)
         close_btn.clicked.connect(self.reject)
         hdr_layout.addWidget(close_btn)

@@ -15,7 +15,7 @@ from core.api import FrappeAPI
 from core.company_logo import get_cached_company_logo_path
 from core.logger import get_logger
 from core.constants import MONITOR_INTERVAL_MS
-from core.config import load_config
+from core.config import load_config, is_laptop_mode
 from core.i18n import tr, i18n, SUPPORTED_LANGUAGES
 from core.updater import check_for_update, perform_update
 from core.barcode_listener import BarcodeManager
@@ -394,35 +394,7 @@ class MainWindow(QMainWindow):
         self.sales_tabs.setMovable(True)
         self.sales_tabs.tabCloseRequested.connect(self.close_sale_tab)
         self.sales_tabs.currentChanged.connect(self._on_tab_changed)
-        self.sales_tabs.setStyleSheet(f"""
-            QTabWidget::pane {{
-                border: none;
-                background: {colors['bg_primary']};
-            }}
-            QTabBar::tab {{
-                background: {colors['bg_secondary']};
-                color: {colors['text_tertiary']};
-                padding: 10px 20px;
-                font-weight: 600;
-                font-size: 12px;
-                border-radius: 8px 8px 0 0;
-                margin-right: 3px;
-                border: 1px solid {colors['border']};
-                border-bottom: none;
-                min-width: 90px;
-            }}
-            QTabBar::tab:selected {{
-                background: {colors['bg_primary']};
-                color: {colors['accent']};
-                font-weight: 700;
-                border: 1px solid {colors['border']};
-                border-bottom: 2px solid {colors['accent']};
-            }}
-            QTabBar::tab:hover:!selected {{
-                background: {colors['bg_tertiary']};
-                color: {colors['text_primary']};
-            }}
-        """)
+        self.sales_tabs.setStyleSheet(self._sales_tabs_qss(colors))
 
 
         splitter.addWidget(self.item_browser)
@@ -451,6 +423,9 @@ class MainWindow(QMainWindow):
 
         
         # Global Keyboard instance
+        # Laptop rejimida (POS Profile'dagi posa_ui_mode) ekran klaviaturasi
+        # butunlay o'chiq — flag sinxrondan keyin on_sync_finished'da yangilanadi.
+        self._laptop_mode = is_laptop_mode()
         self.global_keyboard = None
         self._current_focused_input = None
         QApplication.instance().focusChanged.connect(self._on_focus_changed)
@@ -1065,6 +1040,16 @@ class MainWindow(QMainWindow):
 
     def on_sync_finished(self, success: bool, message: str):
         self.sync_btn.setEnabled(True)
+        # UI rejimi profil bilan birga keladi — flagni yangilaymiz; Laptop
+        # rejimiga o'tgan bo'lsa, ochiq turgan klaviaturani yopamiz.
+        self._laptop_mode = is_laptop_mode()
+        if self._laptop_mode and getattr(self, "global_keyboard", None) is not None:
+            try:
+                self.global_keyboard.close()
+                self.global_keyboard.deleteLater()
+            except Exception:
+                pass
+            self.global_keyboard = None
         # Filial nomini yangilash
         cfg = load_config()
         self._update_company_badge(cfg.get("company", ""), cfg.get("pos_profile", ""))
@@ -1368,6 +1353,60 @@ class MainWindow(QMainWindow):
             pass
         return False
 
+    @staticmethod
+    def _sales_tabs_qss(colors) -> str:
+        """Sotuv tablari QSS — yaratishda va tema almashganda bitta manba.
+
+        Muhim ikki nuqta:
+        - QTabBar::close-button qoidasisiz Qt X tugmasini native metrikalar
+          bilan joylashtiradi va u QSS bilan kattalashgan tabda chetga surilib
+          qoladi (foydalanuvchi shikoyat qilgan siljish).
+        - Tanlanmagan tabda border-bottom: none, tanlanganida 2px bo'lsa, tab
+          balandligi farq qilib X tugma sakrab yurardi — ikkalasida ham 2px
+          (tanlanmaganida shaffof) qilamiz.
+        """
+        return f"""
+            QTabWidget::pane {{
+                border: none;
+                background: {colors['bg_primary']};
+            }}
+            QTabBar::tab {{
+                background: {colors['bg_secondary']};
+                color: {colors['text_tertiary']};
+                padding: 10px 20px;
+                font-weight: 600;
+                font-size: 12px;
+                border-radius: 8px 8px 0 0;
+                margin-right: 3px;
+                border: 1px solid {colors['border']};
+                border-bottom: 2px solid transparent;
+                min-width: 90px;
+            }}
+            QTabBar::tab:selected {{
+                background: {colors['bg_primary']};
+                color: {colors['accent']};
+                font-weight: 700;
+                border: 1px solid {colors['border']};
+                border-bottom: 2px solid {colors['accent']};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background: {colors['bg_tertiary']};
+                color: {colors['text_primary']};
+            }}
+            QTabBar::close-button {{
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 16px;
+                height: 16px;
+                margin-right: 6px;
+                border-radius: 8px;
+                background: transparent;
+            }}
+            QTabBar::close-button:hover {{
+                background: {colors['bg_hover']};
+            }}
+        """
+
     def _show_keyboard_for(self, line_edit):
         """Berilgan maydon uchun klaviaturani ochadi yoki moslaydi.
 
@@ -1375,7 +1414,12 @@ class MainWindow(QMainWindow):
         klaviatura chiqadi. Modal dialoglarda ham ishlashi uchun klaviatura
         fokuslangan maydonning oynasiga (window) bola qilib yaratiladi —
         aks holda modal dialog uni bloklab qo'yadi.
+
+        Laptop rejimida hech qachon ochilmaydi — bu barcha avto-ochilish
+        yo'llarining (focusChanged, eventFilter, F11) yagona kirish nuqtasi.
         """
+        if self._laptop_mode:
+            return
         try:
             text = line_edit.text()
         except RuntimeError:
@@ -1440,6 +1484,8 @@ class MainWindow(QMainWindow):
 
     def _toggle_global_keyboard(self):
         """F11 / status-bar tugmasi: klaviaturani qo'lda ochish-yopish."""
+        if self._laptop_mode:
+            return
         kb = getattr(self, 'global_keyboard', None)
         if kb is not None:
             # Klaviatura dialog bilan birga o'chirilgan bo'lishi mumkin —
@@ -1511,35 +1557,7 @@ class MainWindow(QMainWindow):
         
         # Update tabs styling
         if hasattr(self, 'sales_tabs'):
-            self.sales_tabs.setStyleSheet(f"""
-                QTabWidget::pane {{
-                    border: none;
-                    background: {colors['bg_primary']};
-                }}
-                QTabBar::tab {{
-                    background: {colors['bg_secondary']};
-                    color: {colors['text_tertiary']};
-                    padding: 10px 20px;
-                    font-weight: 600;
-                    font-size: 12px;
-                    border-radius: 8px 8px 0 0;
-                    margin-right: 3px;
-                    border: 1px solid {colors['border']};
-                    border-bottom: none;
-                    min-width: 90px;
-                }}
-                QTabBar::tab:selected {{
-                    background: {colors['bg_primary']};
-                    color: {colors['accent']};
-                    font-weight: 700;
-                    border: 1px solid {colors['border']};
-                    border-bottom: 2px solid {colors['accent']};
-                }}
-                QTabBar::tab:hover:!selected {{
-                    background: {colors['bg_tertiary']};
-                    color: {colors['text_primary']};
-                }}
-            """)
+            self.sales_tabs.setStyleSheet(self._sales_tabs_qss(colors))
         
         # Update history panel if exists
         if hasattr(self, 'history_panel'):

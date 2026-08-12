@@ -497,7 +497,7 @@ class CartWidget(QWidget):
         np_close.setFixedSize(42, 42)
         np_close.setStyleSheet(f"""
             QPushButton {{ background:{colors['error']}; color:white; font-weight:bold;
-                font-size:16px; border-radius:8px; border:none; }}
+                font-size:16px; border-radius:8px; border:none; padding:0; }}
             QPushButton:hover {{ background:{colors['accent_action']}; }}
         """)
         np_close.clicked.connect(self._close_panels)

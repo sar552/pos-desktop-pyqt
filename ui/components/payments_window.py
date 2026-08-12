@@ -353,9 +353,21 @@ class PaymentsWindow(QDialog):
         customer_box.addWidget(self.customer_results)
         controls.addLayout(customer_box, 4)
 
-        self.customer_clear_btn = QPushButton("X")
+        self.customer_clear_btn = QPushButton("✕")
         self.customer_clear_btn.setFixedSize(40, 40)
-        self.customer_clear_btn.setStyleSheet(styles["payment_button_secondary"])
+        # payment_button_secondary'dagi 12/24px padding 40x40 tugmada belgini
+        # qisib qo'yardi — padding: 0 bilan alohida stil (ikkala temada ham).
+        self.customer_clear_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {colors['bg_tertiary']}; color: {colors['error']};
+                border: 1px solid {colors['border']}; border-radius: 8px;
+                font-size: 16px; font-weight: 800; padding: 0;
+            }}
+            QPushButton:hover {{
+                background: {colors['error']}; color: white;
+                border-color: {colors['error']};
+            }}
+        """)
         self.customer_clear_btn.clicked.connect(self._clear_customer)
         controls.addWidget(self.customer_clear_btn, alignment=Qt.AlignmentFlag.AlignBottom)
 
@@ -406,8 +418,12 @@ class PaymentsWindow(QDialog):
         content.setSpacing(14)
 
         left_card = QFrame()
+        # objectName bilan cheklangan selektor — aks holda bu fon/ramka barcha
+        # ichki QLabel'larga ham "meros" bo'lib, matn orqasida to'rtburchak
+        # chiziqlar paydo bo'lardi.
+        left_card.setObjectName("pwLeftCard")
         left_card.setStyleSheet(
-            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+            f"QFrame#pwLeftCard {{ background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 16px; }}"
         )
         left_layout = QVBoxLayout(left_card)
         left_layout.setContentsMargins(14, 14, 14, 14)
@@ -424,8 +440,9 @@ class PaymentsWindow(QDialog):
         content.addWidget(left_card, 5)
 
         right_card = QFrame()
+        right_card.setObjectName("pwRightCard")
         right_card.setStyleSheet(
-            f"background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 16px;"
+            f"QFrame#pwRightCard {{ background: {colors['bg_secondary']}; border: 1px solid {colors['border']}; border-radius: 16px; }}"
         )
         right_layout = QVBoxLayout(right_card)
         right_layout.setContentsMargins(14, 14, 14, 14)
@@ -445,8 +462,9 @@ class PaymentsWindow(QDialog):
         right_layout.addWidget(payment_methods_title)
 
         payment_methods_card = QFrame()
+        payment_methods_card.setObjectName("pwMethodsCard")
         payment_methods_card.setStyleSheet(
-            f"background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 12px;"
+            f"QFrame#pwMethodsCard {{ background: {colors['bg_primary']}; border: 1px solid {colors['border']}; border-radius: 12px; }}"
         )
         self.payment_methods_layout = QGridLayout(payment_methods_card)
         self.payment_methods_layout.setContentsMargins(12, 12, 12, 12)

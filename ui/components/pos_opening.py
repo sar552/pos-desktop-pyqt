@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import pyqtSignal, Qt, QThread, QTimer
 from PyQt6.QtGui import QDoubleValidator
 from core.api import FrappeAPI
-from core.config import load_config
+from core.config import load_config, is_laptop_mode
 from core.logger import get_logger
 from database.models import PosShift, db
 from ui.components.numpad import TouchNumpad
@@ -253,6 +253,11 @@ class PosOpeningDialog(QDialog):
         right_layout.addStretch()
 
         main_h.addWidget(right, 1)
+
+        # Laptop rejimida sensor numpad paneli kerak emas — forma to'liq
+        # kenglikni oladi.
+        if is_laptop_mode():
+            right.setVisible(False)
 
     def _populate_company_and_profile(self):
         self.company_combo.blockSignals(True)

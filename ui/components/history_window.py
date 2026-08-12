@@ -473,8 +473,9 @@ class HistoryWindow(QWidget):
         self.close_btn.setMaximumSize(48, 48)
         self.close_btn.setStyleSheet(f"""
             QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['error']};
-                font-weight: 700; font-size: 14px; border-radius: 8px; border: none; }}
-            QPushButton:hover {{ background: {colors['border']}; }}
+                font-weight: 700; font-size: 14px; border-radius: 8px; border: none;
+                padding: 0; }}
+            QPushButton:hover {{ background: {colors['error']}; color: white; }}
         """)
         self.close_btn.clicked.connect(self.hide)
         hdr_row.addWidget(self.close_btn)
@@ -526,8 +527,9 @@ class HistoryWindow(QWidget):
         if hasattr(self, "close_btn"):
             self.close_btn.setStyleSheet(f"""
                 QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['error']};
-                    font-weight: 700; font-size: 14px; border-radius: 8px; border: none; }}
-                QPushButton:hover {{ background: {colors['border']}; }}
+                    font-weight: 700; font-size: 14px; border-radius: 8px; border: none;
+                    padding: 0; }}
+                QPushButton:hover {{ background: {colors['error']}; color: white; }}
             """)
         if hasattr(self, "sep_line"):
             self.sep_line.setStyleSheet(f"background: {colors['border']}; max-height: 1px;")

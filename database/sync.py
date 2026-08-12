@@ -109,7 +109,12 @@ class SyncWorker(QThread):
         config["warehouse"] = pos_profile.get("warehouse")
         config["currency"] = pos_profile.get("currency")
         config["allow_negative_stock"] = bool(stock_settings.get("allow_negative_stock"))
-        
+
+        # UI rejimi (POS Profile'dagi posa_ui_mode): Sensor (default) yoki Laptop.
+        # Laptop rejimida ekran klaviaturasi butunlay o'chiriladi.
+        config["ui_mode"] = pos_profile.get("posa_ui_mode") or "Sensor"
+
+
         # Default customer ni POS Profile dan olish
         default_customer = pos_profile.get("customer")
         if default_customer:

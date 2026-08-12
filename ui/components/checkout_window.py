@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QDate
 from PyQt6.QtGui import QDoubleValidator
 
 from core.api import FrappeAPI
-from core.config import load_config
+from core.config import load_config, is_laptop_mode
 from core.logger import get_logger
 from database.models import PendingInvoice, PosShift, PosProfile, db
 from core.printer import print_receipt, print_async
@@ -459,6 +459,10 @@ class CheckoutWindow(QDialog):
         main_h_layout.addWidget(left_panel, stretch=5)
         main_h_layout.addWidget(right_panel, stretch=6)
         main_h_layout.addWidget(numpad_panel, stretch=3)
+        # Laptop rejimida sensor numpad ustuni yashiriladi — chek va to'lov
+        # panellari kengroq joy oladi.
+        if is_laptop_mode():
+            numpad_panel.setVisible(False)
         if methods:
             self._reset_payment_distribution()
         self._refresh_credit_sale_availability()

@@ -142,7 +142,7 @@ class TouchKeyboard(QDialog):
                 background: {c['bg_tertiary']};
                 color: {c['text_secondary']};
                 border: none; border-radius: 17px;
-                font-size: 16px; font-weight: 700;
+                font-size: 16px; font-weight: 700; padding: 0;
             }}
             QPushButton:hover {{ background: {c['error']}; color: white; }}
         """)

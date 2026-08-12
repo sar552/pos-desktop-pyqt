@@ -278,6 +278,7 @@ def get_component_styles():
                 background: {colors['bg_primary']};
                 color: {colors['text_primary']};
             }}
+            QLabel {{ background: transparent; border: none; }}
         """,
 
         "payment_method_button": f"""
@@ -387,6 +388,7 @@ def get_component_styles():
                 background: {colors['bg_primary']};
                 color: {colors['text_primary']};
             }}
+            QLabel {{ background: transparent; border: none; }}
         """,
 
         "closing_summary_card": f"""
@@ -464,6 +466,7 @@ def get_component_styles():
                 background: {colors['bg_primary']};
                 color: {colors['text_primary']};
             }}
+            QLabel {{ background: transparent; border: none; }}
         """,
 
         "list_table": f"""

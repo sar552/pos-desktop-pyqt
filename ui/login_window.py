@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import pyqtSignal, Qt, QThread
 from PyQt6.QtGui import QColor
 from core.api import FrappeAPI
-from core.config import save_credentials, load_config
+from core.config import save_credentials, load_config, is_laptop_mode
 from core.i18n import tr, i18n, SUPPORTED_LANGUAGES
 from core.logger import get_logger
 from ui.components.dialogs import ClickableLineEdit
@@ -278,6 +278,10 @@ class LoginWindow(QWidget):
             QPushButton:hover {{ background: {_c['bg_hover']}; }}
         """)
         self.kb_toggle_btn.clicked.connect(self._toggle_keyboard_panel)
+        # Laptop rejimida (oldingi sinxrondan config'da saqlangan) ekran
+        # klaviaturasi kerak emas — tugmani ham ko'rsatmaymiz.
+        if is_laptop_mode():
+            self.kb_toggle_btn.setVisible(False)
         layout.addWidget(self.kb_toggle_btn)
 
         self.login_btn = QPushButton(tr("KIRISH"))
@@ -374,6 +378,8 @@ class LoginWindow(QWidget):
             self._card_scroll.ensureWidgetVisible(widget, 50, 80)
 
     def _open_keyboard_for(self, widget, title: str):
+        if is_laptop_mode():
+            return
         is_password = widget is self.password_input
         kb = self._kb
         if kb is not None:

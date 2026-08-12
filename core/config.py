@@ -35,6 +35,23 @@ def load_config() -> dict:
     return config
 
 
+def get_ui_mode() -> str:
+    """POS UI rejimi: "Sensor" (default) yoki "Laptop".
+
+    Qiymat POS Profile'dagi posa_ui_mode maydonidan sinxron paytida
+    config.json'ga yoziladi (database/sync.py). Birinchi ishga tushirishda
+    (hali sinxron bo'lmagan) default "Sensor" — klaviatura faqat foydalanuvchi
+    harakati bilan ochiladi, xalaqit bermaydi.
+    """
+    mode = (load_config().get("ui_mode") or "Sensor").strip()
+    return mode if mode in ("Sensor", "Laptop") else "Sensor"
+
+
+def is_laptop_mode() -> bool:
+    """Laptop rejimida ekran klaviaturasi butunlay o'chiriladi."""
+    return get_ui_mode() == "Laptop"
+
+
 def save_config(data: dict):
     with _config_lock:
         config = {}

@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import pyqtSignal, Qt, QThread, QTimer
 from PyQt6.QtGui import QDoubleValidator
 from core.api import FrappeAPI
+from core.config import is_laptop_mode
 from core.logger import get_logger
 from core.printer import print_closing_shift_receipt, print_async
 from database.models import PosShift, db
@@ -599,8 +600,9 @@ class PosClosingDialog(QDialog):
 
         # Right Panel - Numpad
         right = QWidget()
+        right.setObjectName("closingNumpadPanel")
         right.setStyleSheet(f"""
-            QWidget {{
+            QWidget#closingNumpadPanel {{
                 background: {colors['bg_secondary']};
                 border-radius: 8px;
             }}
@@ -625,6 +627,10 @@ class PosClosingDialog(QDialog):
         right_layout.addStretch()
 
         main_h.addWidget(right, 1)
+
+        # Laptop rejimida sensor numpad paneli yashiriladi.
+        if is_laptop_mode():
+            right.setVisible(False)
 
     def _load_closing_data(self):
         if not self.opening_entry:
@@ -670,16 +676,20 @@ class PosClosingDialog(QDialog):
     def _build_stat_card(self, title: str, value: str, subtitle: str = "") -> QWidget:
         colors = self.colors
         card = QFrame()
+        # QLabel ham QFrame avlodi — selektorni objectName bilan cheklamasak,
+        # karta foni ichidagi yozuvlarga ham chizilib, matn orqasida
+        # to'rtburchak dog'lar ko'rinardi (ayniqsa hover paytida).
+        card.setObjectName("statCard")
         card.setStyleSheet(f"""
-            QFrame {{
+            QFrame#statCard {{
                 background: {colors['bg_secondary']};
                 border-radius: 8px;
                 border: none;
             }}
-            QFrame:hover {{
+            QFrame#statCard:hover {{
                 background: {colors['bg_tertiary']};
-                border: none;
             }}
+            QLabel {{ background: transparent; border: none; }}
         """)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 16, 18, 16)

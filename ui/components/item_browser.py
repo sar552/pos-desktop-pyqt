@@ -14,7 +14,7 @@ from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPainterPath
 from database.models import Item, ItemPrice, db
 from peewee import fn
 from core.api import FrappeAPI
-from core.config import load_config
+from core.config import load_config, is_laptop_mode
 from core.feedback import SoundFeedback
 from ui.components.keyboard import TouchKeyboard
 from core.logger import get_logger
@@ -390,6 +390,9 @@ class ItemBrowser(QWidget):
             QPushButton:pressed {{ background: {colors['accent']}; color: white; }}
         """)
         self.search_kb_btn.clicked.connect(self._toggle_search_keyboard)
+        # Laptop rejimida ekran klaviaturasi tugmasi ko'rsatilmaydi.
+        if is_laptop_mode():
+            self.search_kb_btn.setVisible(False)
         self._search_kb = None
 
         search_row = QHBoxLayout()
@@ -517,7 +520,7 @@ class ItemBrowser(QWidget):
         return f"""
             QTableWidget {{ background: {colors['bg_secondary']}; color: {colors['text_primary']}; border: 1px solid {colors['border']}; border-radius: 6px; font-size: 13px; }}
             QHeaderView::section {{ background-color: {colors['bg_tertiary']}; color: {colors['text_secondary']}; font-weight: 700; font-size: 11px; border: none; border-bottom: 2px solid {colors['border']}; padding: 10px; }}
-            QTableWidget::item {{ border-bottom: 1px solid {colors['border_light']}; padding: 10px; color: {colors['text_primary']}; font-weight: bold; }}
+            QTableWidget::item {{ border-bottom: 1px solid {colors['border_light']}; padding: 10px; color: {colors['text_primary']}; }}
             QTableWidget::item:selected {{ background-color: {colors['selection_bg']}; color: {colors['selection_text']}; }}
         """
 
@@ -772,6 +775,7 @@ class ItemBrowser(QWidget):
                 font-size: 16px;
                 border-radius: 8px;
                 border: none;
+                padding: 0;
             }}
             QPushButton:hover {{ background: {colors['accent_action']}; }}
         """)
@@ -1307,6 +1311,11 @@ class ItemBrowser(QWidget):
                     item_name_widget.setData(Qt.ItemDataRole.UserRole, item.item_code)
                     item_name_widget.setData(Qt.ItemDataRole.UserRole + 1, float(p))
                     item_name_widget.setData(Qt.ItemDataRole.UserRole + 2, cur)
+                    # List rejimida tovar nomi bold ko'rinadi (QSS ::item ichida
+                    # font-weight ishlamaydi — delegate item fontidan oladi).
+                    name_font = item_name_widget.font()
+                    name_font.setBold(True)
+                    item_name_widget.setFont(name_font)
 
                     qty_widget = QTableWidgetItem(f"{display_qty:g}")
 
@@ -1347,6 +1356,8 @@ class ItemBrowser(QWidget):
         shu sababli bu tugma orqali qo'lda ochiladi. Yozilgan harf darhol
         search_input ga tushib, ro'yxatni filtrlaydi.
         """
+        if is_laptop_mode():
+            return
         kb = self._search_kb
         if kb is not None:
             try:

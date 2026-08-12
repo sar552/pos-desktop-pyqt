@@ -10,6 +10,7 @@ from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
 from core.i18n import tr
+from ui.theme_manager import ThemeManager
 
 logger = get_logger(__name__)
 
@@ -257,15 +258,16 @@ class ShiftDetailDialog(QDialog):
         self.user_lbl.setText(user.split("@")[0] if "@" in user else user)
         self.date_lbl.setText(f"📅 {date}  ⏱ {time_str}")
 
+        colors = ThemeManager.get_theme_colors()
         if status == "Open":
             self.status_lbl.setText(tr("🟢 OCHIQ"))
-            self.status_lbl.setStyleSheet("""
-                QLabel { padding: 6px 12px; border-radius: 6px; font-size: 14px; font-weight: bold; background: #dcfce7; color: #16a34a; border: none; }
+            self.status_lbl.setStyleSheet(f"""
+                QLabel {{ padding: 6px 12px; border-radius: 6px; font-size: 14px; font-weight: bold; background: {colors['success_bg']}; color: {colors['success']}; border: none; }}
             """)
         else:
             self.status_lbl.setText(tr("🔴 YOPILGAN"))
-            self.status_lbl.setStyleSheet("""
-                QLabel { padding: 6px 12px; border-radius: 6px; font-size: 14px; font-weight: bold; background: #f1f5f9; color: #64748b; border: none; }
+            self.status_lbl.setStyleSheet(f"""
+                QLabel {{ padding: 6px 12px; border-radius: 6px; font-size: 14px; font-weight: bold; background: {colors['bg_tertiary']}; color: {colors['text_secondary']}; border: none; }}
             """)
 
         # Ochilish summalari Card
@@ -379,27 +381,28 @@ class PosShiftsWindow(QWidget):
         layout.setSpacing(10)
 
         # Header
+        colors = ThemeManager.get_theme_colors()
         hdr_row = QHBoxLayout()
 
         title = QLabel(tr("Kassa tarixi"))
-        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #1e293b;")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors['text_primary']};")
         hdr_row.addWidget(title)
 
         hint = QLabel(tr("(2× bosing — batafsil)"))
-        hint.setStyleSheet("font-size: 11px; color: #94a3b8; font-style: italic;")
+        hint.setStyleSheet(f"font-size: 11px; color: {colors['text_tertiary']}; font-style: italic;")
         hdr_row.addWidget(hint)
         hdr_row.addStretch()
 
         refresh_btn = QPushButton(tr("⟳  Yangilash"))
         refresh_btn.setMinimumHeight(38)
         refresh_btn.setMaximumHeight(48)
-        refresh_btn.setStyleSheet("""
-            QPushButton {
-                padding: 0 16px; background: #f1f5f9; color: #475569;
+        refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                padding: 0 16px; background: {colors['bg_tertiary']}; color: {colors['text_secondary']};
                 font-weight: 600; font-size: 13px;
                 border-radius: 8px; border: none;
-            }
-            QPushButton:hover { background: #e2e8f0; }
+            }}
+            QPushButton:hover {{ background: {colors['bg_hover']}; }}
         """)
         refresh_btn.clicked.connect(self.load_shifts)
         hdr_row.addWidget(refresh_btn)
@@ -407,10 +410,11 @@ class PosShiftsWindow(QWidget):
         close_btn = QPushButton("✕")
         close_btn.setMinimumSize(38, 38)
         close_btn.setMaximumSize(48, 48)
-        close_btn.setStyleSheet("""
-            QPushButton { background: #fee2e2; color: #b91c1c;
-                font-weight: 700; font-size: 14px; border-radius: 8px; border: none; }
-            QPushButton:hover { background: #fecaca; }
+        close_btn.setStyleSheet(f"""
+            QPushButton {{ background: {colors['bg_tertiary']}; color: {colors['error']};
+                font-weight: 700; font-size: 14px; border-radius: 8px; border: none;
+                padding: 0; }}
+            QPushButton:hover {{ background: {colors['error']}; color: white; }}
         """)
         close_btn.clicked.connect(self.hide)
         hdr_row.addWidget(close_btn)
