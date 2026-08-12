@@ -878,14 +878,23 @@ class MainWindow(QMainWindow):
         ko'rinadi, ikkala temada to'g'ri rangda, joylashuvi ham to'g'ri.
         Tab ko'chirilsa (movable) tugma tab bilan birga yuradi.
         """
-        btn = QToolButton(self.sales_tabs)
+        # Wrapper — tugmani tab chetiga yopishtirmasdan ~2mm ichkariga suradi.
+        wrapper = QWidget(self.sales_tabs)
+        wrapper.setStyleSheet("background: transparent;")
+        wrap_layout = QHBoxLayout(wrapper)
+        wrap_layout.setContentsMargins(0, 0, 8, 0)
+        wrap_layout.setSpacing(0)
+
+        btn = QToolButton(wrapper)
         btn.setText("✕")
         btn.setFixedSize(18, 18)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._style_tab_close_button(btn)
         btn.clicked.connect(lambda _=False, w=tab_widget: self._close_tab_by_widget(w))
+        wrap_layout.addWidget(btn)
+
         idx = self.sales_tabs.indexOf(tab_widget)
-        self.sales_tabs.tabBar().setTabButton(idx, QTabBar.ButtonPosition.RightSide, btn)
+        self.sales_tabs.tabBar().setTabButton(idx, QTabBar.ButtonPosition.RightSide, wrapper)
 
     def _style_tab_close_button(self, btn):
         colors = ThemeManager.get_theme_colors()
@@ -905,8 +914,11 @@ class MainWindow(QMainWindow):
     def _restyle_tab_close_buttons(self):
         bar = self.sales_tabs.tabBar()
         for i in range(bar.count()):
-            btn = bar.tabButton(i, QTabBar.ButtonPosition.RightSide)
-            if isinstance(btn, QToolButton):
+            holder = bar.tabButton(i, QTabBar.ButtonPosition.RightSide)
+            if holder is None:
+                continue
+            btn = holder if isinstance(holder, QToolButton) else holder.findChild(QToolButton)
+            if btn is not None:
                 self._style_tab_close_button(btn)
 
     def _close_tab_by_widget(self, tab_widget):

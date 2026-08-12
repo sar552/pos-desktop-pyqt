@@ -388,7 +388,7 @@ class CartWidget(QWidget):
         t_lbl.setStyleSheet(
             f"color: {colors['text_tertiary']}; font-size: 12px; font-weight: 600; letter-spacing: 0.5px;"
         )
-        self.total_label = QLabel("UZS 0")
+        self.total_label = QLabel(f"{self._display_currency()} 0")
         self.total_label.setFixedHeight(52)
         self.total_label.setStyleSheet(
             f"color: {colors['success']}; font-size: 22px; font-weight: 900; "
@@ -864,6 +864,20 @@ class CartWidget(QWidget):
         if current:
             return current
         return load_config().get("price_list", "") or "Standard Selling"
+
+    def _display_currency(self, item: dict | None = None) -> str:
+        """Ko'rsatish uchun valyuta: qator valyutasi -> profil -> config.
+
+        Ilgari UI matnlarida "UZS" qattiq yozilgan edi — tovar narxi qaysi
+        valyutada bo'lsa, o'sha ko'rsatiladi.
+        """
+        if item and item.get("currency"):
+            return str(item["currency"])
+        return (
+            (self._current_profile_data or {}).get("currency")
+            or load_config().get("currency")
+            or "UZS"
+        )
 
     def _resolve_item_price(self, item_code: str, price_list: str) -> tuple[float, str]:
         from database.models import ItemPrice, Item, db
@@ -2328,7 +2342,7 @@ class CartWidget(QWidget):
 
             # RATE
             rate_value = self._flt(item.get('price'), 0)
-            rate_text = f"UZS {rate_value:,.0f}" if not self._can_edit_rate() else f"{rate_value:.0f}"
+            rate_text = f"{self._display_currency(item)} {rate_value:,.0f}" if not self._can_edit_rate() else f"{rate_value:.0f}"
             rate_metrics = QFontMetrics(self.font())
             rate_width = max(96, rate_metrics.horizontalAdvance(rate_text) + 34)
             if self._can_edit_rate():
@@ -2366,7 +2380,7 @@ class CartWidget(QWidget):
             self.table.setCellWidget(current_table_row, 2, rate_widget)
 
             # AMOUNT
-            amount_text = f"UZS {amt:,.0f}"
+            amount_text = f"{self._display_currency(item)} {amt:,.0f}"
             amount_width = max(120, rate_metrics.horizontalAdvance(amount_text) + 36)
             amt_lbl = QLabel(amount_text)
             amt_lbl.setMinimumWidth(amount_width)
@@ -2419,12 +2433,13 @@ class CartWidget(QWidget):
         self.total_amount = max(self.net_total_amount - invoice_discount, 0.0)
 
         # Update totals
+        display_cur = self._display_currency()
         if hasattr(self, 'total_label'):
-            self.total_label.setText(f"UZS {self.total_amount:,.0f}")
+            self.total_label.setText(f"{display_cur} {self.total_amount:,.0f}")
         if hasattr(self, 'total_qty_label'):
             self.total_qty_label.setText(f"{total_qty:g}")
         if hasattr(self, 'discounts_label'):
-            self.discounts_label.setText(f"UZS {self.item_discount_total:,.0f}")
+            self.discounts_label.setText(f"{display_cur} {self.item_discount_total:,.0f}")
         self.table.resizeColumnToContents(2)
         self.table.resizeColumnToContents(3)
         self.table.setColumnWidth(2, max(self.table.columnWidth(2), 120))
