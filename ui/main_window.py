@@ -3,7 +3,7 @@ import time
 from PyQt6.QtWidgets import (
     QApplication, QLineEdit,
     QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget,
-    QPushButton, QSplitter, QTabWidget, QComboBox,
+    QPushButton, QSplitter, QTabWidget, QTabBar, QToolButton, QComboBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap
@@ -864,9 +864,55 @@ class MainWindow(QMainWindow):
         new_cart.price_list_changed.connect(self.item_browser.set_price_list)
         new_cart.cart_updated.connect(self._sync_item_browser_cart_view)
         tab_index = self.sales_tabs.addTab(new_cart, "")
+        self._install_tab_close_button(new_cart)
         self._renumber_sale_tabs()
         self.sales_tabs.setCurrentIndex(tab_index)
         self._sync_item_browser_cart_view()
+
+    def _install_tab_close_button(self, tab_widget):
+        """Tabga o'zimizning ✕ tugmamizni o'rnatadi.
+
+        Qt'ning standart tab close-button'i QSS bilan boshqarib bo'lmaydigan
+        (rasmsiz qoida qo'yilsa umuman ko'rinmay qoladigan) subcontrol —
+        shuning uchun uni haqiqiy QToolButton bilan almashtiramiz: har doim
+        ko'rinadi, ikkala temada to'g'ri rangda, joylashuvi ham to'g'ri.
+        Tab ko'chirilsa (movable) tugma tab bilan birga yuradi.
+        """
+        btn = QToolButton(self.sales_tabs)
+        btn.setText("✕")
+        btn.setFixedSize(18, 18)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._style_tab_close_button(btn)
+        btn.clicked.connect(lambda _=False, w=tab_widget: self._close_tab_by_widget(w))
+        idx = self.sales_tabs.indexOf(tab_widget)
+        self.sales_tabs.tabBar().setTabButton(idx, QTabBar.ButtonPosition.RightSide, btn)
+
+    def _style_tab_close_button(self, btn):
+        colors = ThemeManager.get_theme_colors()
+        btn.setStyleSheet(f"""
+            QToolButton {{
+                background: transparent;
+                color: {colors['text_tertiary']};
+                border: none; border-radius: 9px;
+                font-size: 12px; font-weight: 700; padding: 0;
+            }}
+            QToolButton:hover {{
+                background: {colors['error']};
+                color: white;
+            }}
+        """)
+
+    def _restyle_tab_close_buttons(self):
+        bar = self.sales_tabs.tabBar()
+        for i in range(bar.count()):
+            btn = bar.tabButton(i, QTabBar.ButtonPosition.RightSide)
+            if isinstance(btn, QToolButton):
+                self._style_tab_close_button(btn)
+
+    def _close_tab_by_widget(self, tab_widget):
+        idx = self.sales_tabs.indexOf(tab_widget)
+        if idx >= 0:
+            self.close_sale_tab(idx)
 
     def _renumber_sale_tabs(self):
         """Tab nomlarini tartib bilan yangilash — yopilgandan keyin
@@ -1393,18 +1439,6 @@ class MainWindow(QMainWindow):
                 background: {colors['bg_tertiary']};
                 color: {colors['text_primary']};
             }}
-            QTabBar::close-button {{
-                subcontrol-origin: padding;
-                subcontrol-position: center right;
-                width: 16px;
-                height: 16px;
-                margin-right: 6px;
-                border-radius: 8px;
-                background: transparent;
-            }}
-            QTabBar::close-button:hover {{
-                background: {colors['bg_hover']};
-            }}
         """
 
     def _show_keyboard_for(self, line_edit):
@@ -1558,6 +1592,7 @@ class MainWindow(QMainWindow):
         # Update tabs styling
         if hasattr(self, 'sales_tabs'):
             self.sales_tabs.setStyleSheet(self._sales_tabs_qss(colors))
+            self._restyle_tab_close_buttons()
         
         # Update history panel if exists
         if hasattr(self, 'history_panel'):

@@ -868,19 +868,26 @@ class CartWidget(QWidget):
     def _resolve_item_price(self, item_code: str, price_list: str) -> tuple[float, str]:
         from database.models import ItemPrice, Item, db
 
+        # Valyuta topilmasa POS profil/config valyutasi ishlatiladi — avval
+        # "UZS" qattiq yozilgan edi, USD do'konda savat "UZS 18" ko'rsatardi.
+        fallback_currency = (
+            (self._current_profile_data or {}).get("currency")
+            or load_config().get("currency")
+            or "UZS"
+        )
         db.connect(reuse_if_open=True)
         try:
             price_rec = ItemPrice.get_or_none(
                 (ItemPrice.item_code == item_code) & (ItemPrice.price_list == price_list)
             )
             if price_rec:
-                return float(price_rec.price_list_rate or 0), price_rec.currency or "UZS"
+                return float(price_rec.price_list_rate or 0), price_rec.currency or fallback_currency
 
             item = Item.get_or_none(Item.item_code == item_code)
             if item:
-                return float(item.standard_rate or 0), "UZS"
+                return float(item.standard_rate or 0), fallback_currency
 
-            return 0.0, "UZS"
+            return 0.0, fallback_currency
         finally:
             if not db.is_closed():
                 db.close()

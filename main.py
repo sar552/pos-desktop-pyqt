@@ -46,7 +46,9 @@ def main():
             windows["main"] = None
         windows["login"] = LoginWindow(shared_api)
         windows["login"].login_successful.connect(show_main)
-        windows["login"].show()
+        # showMaximized (show emas) — Windows'da oyna ba'zan kichik holatda
+        # ochilardi; tashqi chaqiruvda ham maximized holatni qat'iy qilamiz.
+        windows["login"].showMaximized()
 
     def show_main():
         if windows["login"]:
@@ -60,7 +62,7 @@ def main():
         windows["main"] = MainWindow(shared_api)
         windows["main"].logout_requested.connect(handle_logout)
         windows["main"].relaunch_requested.connect(handle_relaunch)
-        windows["main"].show()
+        windows["main"].showMaximized()
 
     def handle_relaunch():
         # Til o'zgarganda asosiy oynani yangi tilda qaytadan quramiz.

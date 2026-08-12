@@ -2,9 +2,10 @@ import json
 from datetime import datetime
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QDoubleValidator
+from PyQt6.QtGui import QColor, QDoubleValidator
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QFrame,
     QGridLayout,
@@ -91,6 +92,8 @@ class PaymentsDataWorker(QThread):
                     "customer",
                     "grand_total",
                     "outstanding_amount",
+                    "paid_amount",
+                    "change_amount",
                     "currency",
                     "status",
                     "docstatus",
@@ -300,7 +303,14 @@ class PaymentsWindow(QDialog):
 
     def _build_ui(self):
         self.setWindowTitle(tr("Klient Sverka va To'lovlar"))
-        self.resize(1520, 920)
+        # Kichik ekranlarda 1520x920 sig'may o'ng tomoni kesilib qolardi —
+        # mavjud ekran o'lchamiga moslaymiz.
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            self.resize(min(1520, avail.width() - 40), min(920, avail.height() - 60))
+        else:
+            self.resize(1520, 920)
         self.setModal(True)
         
         # Apply theme
@@ -923,13 +933,24 @@ class PaymentsWindow(QDialog):
         for invoice in self.sales_invoices:
             grand_total = float(invoice.get("grand_total") or 0.0)
             is_return = int(invoice.get("is_return") or 0)
+            # POS chekida to'lov alohida Payment Entry sifatida emas, chekning
+            # o'z ichida bo'ladi (paid_amount, qaytim change_amount'da). Uni
+            # credit qilib ko'rsatmasak, "Paid" cheklar ham balansni "Qarzdor"
+            # qilib oshirib yuborardi. Keyinroq Payment Entry bilan yopilgan
+            # qarzlar esa avvalgidek alohida PE qatorlarida credit bo'ladi —
+            # shuning uchun bu yerda faqat chek ichidagi to'lov olinadi.
+            pos_paid = 0.0
+            if not is_return:
+                paid = float(invoice.get("paid_amount") or 0.0)
+                change = float(invoice.get("change_amount") or 0.0)
+                pos_paid = min(max(paid - change, 0.0), grand_total)
             rows.append(
                 {
                     "date": invoice.get("posting_date") or "",
                     "type": "Credit Note" if is_return else "Sales Invoice",
                     "reference": invoice.get("name") or "",
                     "debit": 0.0 if is_return else grand_total,
-                    "credit": abs(grand_total) if is_return else 0.0,
+                    "credit": abs(grand_total) if is_return else pos_paid,
                     "status": self._invoice_payment_status(invoice),
                 }
             )
@@ -998,9 +1019,17 @@ class PaymentsWindow(QDialog):
             self.sverka_table.setItem(idx, 0, QTableWidgetItem(row.get("date") or ""))
             self.sverka_table.setItem(idx, 1, QTableWidgetItem(row.get("type") or ""))
             self.sverka_table.setItem(idx, 2, QTableWidgetItem(row.get("reference") or ""))
-            debit_item = QTableWidgetItem(self._money(row.get("debit")))
-            credit_item = QTableWidgetItem(self._money(row.get("credit")))
+            debit_val = float(row.get("debit") or 0.0)
+            credit_val = float(row.get("credit") or 0.0)
+            # 0 qiymatlar bo'sh qoldiriladi — jadval o'qilishi ancha oson
+            # bo'ladi; debit qizil, credit yashil rangda.
+            debit_item = QTableWidgetItem(self._money(debit_val) if debit_val else "")
+            credit_item = QTableWidgetItem(self._money(credit_val) if credit_val else "")
             balance_item = QTableWidgetItem(self._format_running_balance(running_balance))
+            if debit_val:
+                debit_item.setForeground(QColor(self.colors["error"]))
+            if credit_val:
+                credit_item.setForeground(QColor(self.colors["success"]))
             for item in (debit_item, credit_item, balance_item):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.sverka_table.setItem(idx, 3, debit_item)
